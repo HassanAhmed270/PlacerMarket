@@ -1,0 +1,135 @@
+# security.md — security checklist
+
+Read alongside `rules.md` (Section 9 makes this binding). Same convention as
+`specs.md`: **every row has a checkbox**, ticked only when that job is done.
+
+**Legend:** `[ ]` = not done · `[x]` = done
+
+**Enforced by** says what keeps a ticked row true:
+- `test` — a Jest test whose `describe`/`test` title names the SEC code
+- `hook` — a git hook (`hooks/`)
+- `review` — a human checks it at review time; tick only with a dated note in the row
+- `n/a-yet` — guards code that doesn't exist yet; can't be ticked until it does
+
+**Tick rule:** tick a row only when (a) the requirement actually holds in the
+code, and (b) its enforcement is in place. "I looked and it seemed fine" does
+not tick a `test` row. Never weaken or reword a row to make a change pass —
+propose the change to the human instead (`rules.md` Sections 1 and 9).
+
+**"Today"** = verified against the delivered code on 2026-10-11 (grep and
+`npm audit`), not assumed. Rows marked *(added)* are not on the original
+20-item list; they are the same class of problem and were added because
+the backend needs them.
+
+**Scope:** this is the backend repo. Rows tagged **Frontend repo** can't be
+verified here — they exist so the rule is written down once and copied into
+the frontend harness.
+
+**Decided:** auth uses a **JWT in the `Authorization` header** (you, 2026-10-11).
+Several rows below follow from that. Two-factor on every login is also decided (specs.md FR-83, FR-83a); its design details are not. Consolidated 2026-10-14 with the Poshaak scale and auth decisions — see `MASTER_PROJECT_CONTEXT.md`.
+
+**Decided:** the payment model is **escrow through a payment gateway**
+(2026-10-13, replaces COD) — see `Phases.md`. Section F covers webhooks and
+money integrity; expect a payments section here once Phase 4 starts.
+
+---
+
+## A. Authentication & sessions (JWT in Authorization header)
+
+- [ ] **SEC-01 Passwords hashed server-side.** argon2id (or bcrypt, cost ≥ 12). The client sends the password over TLS, never a hash; `password_hash` never appears in any response or log.
+  *Enforced by:* test · *Today:* **FAILS** — `registerUser` takes `passwordHash` from the request body (nothing hashes it server-side), and `authenticate()` is an unimplemented stub.
+- [ ] **SEC-02 JWT secret/keys are strong and external.** ≥ 32 random bytes (HS256) or an RS256 keypair, loaded from env, never committed, never a real value in `.env.example`. The app refuses to start if it's missing or too short. A rotation plan exists.
+  *Enforced by:* test · *Today:* n/a-yet (no JWT code).
+- [ ] **SEC-03 JWT verification is pinned and strict.** Fixed algorithm (reject `none` and algorithm switching), verify `exp`, `iss`, `aud`; short access-token lifetime (the value is open — specs.md FR-84a; with a second factor on every login a very short lifetime means frequent codes).
+  *Enforced by:* test · *Today:* n/a-yet.
+- [ ] **SEC-04 Token transport is the header only.** `Authorization: Bearer …`; never accept a token from a cookie or query string. This is what makes SEC-05 true.
+  *Enforced by:* test · *Today:* n/a-yet.
+- [ ] **SEC-05 CSRF.** Not applicable by design while no cookie authenticates a request. The moment any cookie-based auth is added (e.g. a refresh-token cookie, see SEC-06), CSRF protection (SameSite + Origin check) becomes mandatory on the endpoints it touches.
+  *Enforced by:* review · *Today:* holds trivially (no cookies anywhere).
+- [ ] **SEC-06 Client-side token storage.** Access token held in memory only — never `localStorage`/`sessionStorage`. **Frontend repo.** **Decided 2026-10-14:** no refresh token — one access token with a configured lifetime; the user logs in again when it expires. Adding refresh later would bring cookies and SEC-05 back. **Conflict flagged 2026-10-14 (specs.md FR-84a):** with no refresh token and memory-only storage, a page reload or new tab forces a fresh login — now with a second factor on every login. This needs a decision.
+  *Enforced by:* review · *Today:* n/a-yet (no auth code yet).
+- [ ] **SEC-07 Suspended users are rejected immediately** (FR-10), even with a valid unexpired token: check user status on each request, or keep lifetimes short enough that revocation is acceptable (decide and write it down).
+  *Enforced by:* test · *Today:* n/a-yet.
+- [ ] **SEC-08 Brute-force protection on login/register/reset.** Rate limit per IP and per account; identical error for "no such user" and "wrong password" (no user enumeration).
+  *Enforced by:* test · *Today:* n/a-yet (no auth endpoints, no limiter).
+- [ ] **SEC-09 Two-factor authentication on every login.** **Required** (decided): every login needs a second factor, and email is the code channel for ordinary buyers (specs.md FR-83, FR-83a). Methods, role rules, hardening and recovery are still DISCUSS/OPEN (FR-83b–FR-83g); admins and moderators are proposed to use a passkey or authenticator app, never email codes.
+  *Enforced by:* test · *Today:* n/a-yet (no auth code yet; design details unconfirmed).
+- [ ] **SEC-10 No default or seeded credentials.** The first admin is created by a one-time command run on the server (`npm run admin:create`, decided 2026-10-14), never by an endpoint or a hardcoded password.
+  *Enforced by:* review · *Today:* holds (`db/seed.js` creates no users) — but there is no way yet to create the first admin (`admin:create` is a Phase 0 task).
+
+## B. Authorization
+
+- [ ] **SEC-11 Every non-public route is permission-checked on the server** (`requireAuth` + `requirePermission`); hiding a button client-side is never a control.
+  *Enforced by:* test · *Today:* **PARTIAL** — the admin router is fully gated and tested. `payments` (`expected-amount`, `confirm-collection`, `reconcile`) and delivery `POST /orders/:id/status` need only a login. No courier/ops role exists in `lib/roles.js`; decided 2026-10-13: only an admin marks Delivered, through a new `order.mark_delivered` permission, and the COD payment routes are replaced in Phase 4.
+- [ ] **SEC-12 Object-level authorization (BOLA).** Every handler that takes an id (order, offer, dispute, notification, conversation, listing, …) verifies the caller is a party to it or holds a permission. Test pattern: user A cannot read or change user B's object, on every `:id` route.
+  *Enforced by:* test · *Today:* **FAILS** — no ownership check in `getDeliveryTracking`, `getNegotiationHistory` (returns every message and offer on a listing), `notifications.markRead`, and `acceptOffer` (doesn't check the caller is the other party).
+- [ ] **SEC-13 No mass assignment.** Handlers pick named fields from `req.body`; the client can never set `role`, `status`, `seller_id`, `buyer_id`, prices after agreement, or any column list. `role` changes only through admin paths.
+  *Enforced by:* review · *Today:* needs an audit — services destructure named fields, but several routes spread `...req.body` into service arguments.
+- [ ] **SEC-14 Row-level security (Postgres RLS).** Evaluated, **not adopted**: one DB role plus a modular monolith means RLS needs a per-request context on every query. Revisit if app-layer ownership tests (SEC-12) prove hard to keep complete. Awaiting your confirmation.
+  *Enforced by:* n/a-yet · *Today:* not adopted (recommendation only).
+
+## C. Input, injection & uploads
+
+- [ ] **SEC-15 SQL injection.** Every value is a bound parameter. Never concatenate or interpolate user input into SQL. A template-literal query is allowed only when built from fixed internal strings, and carries a comment saying so.
+  *Enforced by:* test (planned) · *Today:* **PASSES** — all queries parameterized. Two template-literal queries (`discovery.filterListings`, `orders.setOrderStatus`) are safe today but fragile.
+- [ ] **SEC-16 Input validation at the route boundary** *(added)*. Types, lengths, enums, UUID ids, positive amounts, rating range, pagination caps — reject before the service runs.
+  *Enforced by:* test · *Today:* **FAILS** — services trust their input.
+- [ ] **SEC-17 XSS.** The API returns JSON only; user text (listing descriptions, messages, dispute reasons, reviews) is stored raw and escaped at render; CSP and security headers set (SEC-23). **Frontend repo:** never `dangerouslySetInnerHTML`/`innerHTML` on user text.
+  *Enforced by:* review · *Today:* no helmet/CSP (see SEC-23).
+- [ ] **SEC-18 File upload validation (when built).** Allowlist MIME **and** check magic bytes, size cap, server-generated random names, no user-controlled paths, strip EXIF (GPS) from images, store in object storage — private bucket plus short-lived signed URLs for sensitive files (`id_verification_doc_url`, dispute evidence).
+  *Enforced by:* test · *Today:* n/a-yet (no upload code; the schema stores URLs only).
+- [ ] **SEC-19 User-supplied URLs.** Image/evidence URLs are accepted only if they point at our own storage host; never an arbitrary URL.
+  *Enforced by:* test · *Today:* **FAILS** — `addListingImages` and `submitAuthenticityEvidence` store whatever URL the client sends.
+- [ ] **SEC-20 SSRF.** The backend never fetches a user-supplied URL. If that ever changes: host allowlist, block private/link-local ranges (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.169.254`, `::1`), don't follow redirects, resolve then pin the IP.
+  *Enforced by:* review · *Today:* n/a-yet (no outbound fetches anywhere).
+
+## D. Transport, headers & abuse
+
+- [ ] **SEC-21 HTTPS only in production**, HSTS on, Postgres connection over TLS. *(added)*
+  *Enforced by:* review · *Today:* n/a-yet (no deployment).
+- [ ] **SEC-22 CORS is a strict allowlist.** The frontend origin(s) from env; never `*`, never reflect the `Origin` header; minimal methods and headers.
+  *Enforced by:* test · *Today:* nothing configured (browsers block cross-origin by default — it will need configuring when the frontend is on another origin).
+- [ ] **SEC-23 Security headers.** `helmet` with a real CSP.
+  *Enforced by:* test · *Today:* **FAILS** — absent from `app.js` and `package.json`.
+- [ ] **SEC-24 Rate limiting.** Global limit, stricter on auth, messaging, offers and dispute filing; correct `trust proxy` setting behind a proxy.
+  *Enforced by:* test · *Today:* **FAILS** — absent.
+- [ ] **SEC-25 Explicit request-size limit** *(added)*. `express.json({ limit })` set deliberately.
+  *Enforced by:* test · *Today:* relies on Express's 100 kB default, not stated anywhere.
+
+## E. Secrets, logging & data exposure
+
+- [ ] **SEC-26 Secrets and API keys server-side only.** None in the repo or in the frontend bundle (`VITE_*` variables are public). `.env` is never committed.
+  *Enforced by:* hook (`.env`/`node_modules`/`coverage` blocked in `pre-commit`) + review for the frontend · *Today:* holds for this repo.
+- [ ] **SEC-27 Sensitive data stays out of logs.** Never log `req.body`, the `Authorization` header, passwords or hashes, JWTs, ID documents, payout bank/wallet numbers, or phone/email in clear.
+  *Enforced by:* test · *Today:* **PARTIAL** — no request logging exists, but `errorHandler` runs `console.error(err)`, which logs full database errors (these can include row values).
+- [ ] **SEC-28 Error responses don't leak internals** *(added)*. 5xx returns a generic message plus a request id; the raw message is returned only for our own typed errors (4xx / 501).
+  *Enforced by:* test · *Today:* **FAILS** — `errorHandler` sends `err.message` for 500s, so raw Postgres error text reaches clients.
+- [ ] **SEC-29 Responses never include internal columns** *(added)*. No `RETURNING *` / `SELECT *` passed straight to a client on `users`; payout fields only to the owner or a permitted admin role; explicit column lists.
+  *Enforced by:* test · *Today:* **FAILS** — `POST /users/register` returns the full `users` row including `password_hash`; `suspendSeller` does the same. (The public seller card picks named fields — that part passes.)
+- [ ] **SEC-30 Payout and ID data protection.** `payout_bank_account`, `payout_wallet_number` and `id_verification_doc_url` are visible only to the owner and permitted roles. Application-level encryption of CNIC numbers and payout account details is decided (ciphertext + last digits for display + a blind index if lookup is needed — specs.md FR-79f); key management is open.
+  *Enforced by:* review · *Today:* plain `TEXT` columns, access control not yet verified.
+
+## F. Supply chain, webhooks & money
+
+- [ ] **SEC-31 Dependencies.** `npm audit --omit=dev` is clean before every release; dev-tree findings are triaged; the lockfile is committed.
+  *Enforced by:* review (no CI yet) · *Today:* production deps **0 vulnerabilities**; dev tree **33** (5 moderate, 28 high), all in the jest/supertest chain, never shipped.
+- [ ] **SEC-32 Source maps.** The production frontend build ships no public source maps. **Frontend repo.**
+  *Enforced by:* review · *Today:* n/a here.
+- [ ] **SEC-33 Webhook signature verification (when a provider is added).** HMAC over the **raw** body, constant-time comparison, reject stale timestamps (replay), idempotency keys, parse only after verification. Decided design (specs.md FR-77b): verify the signature, store the raw event under a unique gateway event ID (an inbox), enqueue, return 200, process in the worker. Escrow is decided (a payment gateway, 2026-10-13), so this row goes live in Phase 4.
+  *Enforced by:* test · *Today:* n/a-yet (no webhooks; courier updates are manual).
+- [ ] **SEC-34 Money integrity** *(added; matters most under escrow)*. Amounts are `NUMERIC`/integer minor units, never floats; every money-state change runs inside `db.withTransaction`; operations are idempotent; the client never supplies an amount — price comes from the accepted offer. Decided (FR-79f): ledger and audit tables are append-only — the application role cannot update or delete, and corrections are reversing entries; payment creation uses idempotency keys (FR-63a, DISCUSS).
+  *Enforced by:* review + test · *Today:* needs an audit once Phase 4 starts.
+- [ ] **SEC-35 Payout-detail changes are protected** *(added)*. Changing payout details requires re-entering the password, notifies the seller on every change, and shows the admin a "details changed recently" flag when a payout is processed. No cool-off (decided 2026-10-13). The no-cool-off decision relies on this row, FR-83c and FR-83f being confirmed: otherwise a hijacked account can change payout details and be paid (for ordinary buyers email is both the second factor and, presumably, the recovery channel).
+  *Enforced by:* test · *Today:* **FAILS** — `updateSellerPayoutMethod` changes details with no re-authentication and no notification.
+
+- [ ] **SEC-36 Private, money and auth routes are never cached** *(added)*. They send `Cache-Control: private, no-store`; public routes never set cookies; money values are never read from a cache (specs.md FR-73b–FR-73d, DISCUSS).
+  *Enforced by:* test (a route walker, planned) · *Today:* n/a-yet (no caching layer yet).
+- [ ] **SEC-37 The database is locked down** *(added)*. Private network only, TLS with certificate verification, least-privilege roles (web, worker, migrator, read-only, backup), no PII in logs or slow-query logs, staging never receives raw production data (specs.md FR-79g, decided).
+  *Enforced by:* review · *Today:* n/a-yet (no deployment).
+
+---
+
+## Open security decisions
+
+Logged in `open-questions.md`; an agent must not guess these (`rules.md` Section 1):
+the details of two-factor login (SEC-09), how a session survives a page reload (SEC-06 / FR-84a), key management for the encrypted fields (SEC-30), and RLS (SEC-14).

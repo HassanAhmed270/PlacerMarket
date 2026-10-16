@@ -1,0 +1,23 @@
+#!/usr/bin/env node
+// rules.md Section 8, part 2: reject commit messages not in "<FR-code(s)>: ..." / "chore:" / "docs:" form.
+const fs = require('fs');
+const path = require('path');
+const { validateCommitMessage, allCodes } = require('./lib/fr');
+
+const message = fs.readFileSync(process.argv[2], 'utf8');
+let knownCodes;
+try {
+  knownCodes = allCodes(fs.readFileSync(path.join(process.cwd(), 'specs.md'), 'utf8'));
+} catch (_) {
+  knownCodes = undefined; // no specs.md at the repo root: skip the "does this FR exist" check
+}
+
+const result = validateCommitMessage(message, knownCodes);
+if (!result.ok) {
+  console.error(`\ncommit rejected: ${result.reason}\n`);
+  console.error('  FR-45a, FR-50a: add partial-refund guard to dispute resolution');
+  console.error('  chore: bump jest');
+  console.error('  docs: clarify rules.md Section 5\n');
+  console.error('(rules.md Section 8)\n');
+  process.exit(1);
+}

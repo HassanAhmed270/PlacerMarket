@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+// rules.md Section 8, parts 3 and 4:
+//  - an FR newly ticked in specs.md must come with a test (staged in this same commit) whose title names it
+//  - node_modules/, .env, coverage/ must never be committed, even with `git add -f`
+// Assumes the repo root is this folder (specs.md and test/ at the top level).
+const { execFileSync } = require('child_process');
+const { findUnbackedTicks, forbiddenStagedPaths } = require('./lib/fr');
+
+const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const staged = git('diff', '--cached', '--name-only', '--diff-filter=ACMR').split('\n').filter(Boolean);
+const problems = [];
+
+const forbidden = forbiddenStagedPaths(staged);
+if (forbidden.length) {
+  problems.push(`never commit these (rules.md Section 8):\n  ${forbidden.join('\n  ')}`);
+}
+
+if (staged.includes('specs.md')) {
+  const stagedSpecs = git('show', ':specs.md');
+  let headSpecs = '';
+  try { headSpecs = git('show', 'HEAD:specs.md'); } catch (_) { /* first commit: nothing was ticked before */ }
+  const stagedTestSources = staged.filter((f) => /^test\/.*\.test\.js$/.test(f)).map((f) => git('show', `:${f}`));
+  const unbacked = findUnbackedTicks({ headSpecs, stagedSpecs, stagedTestSources });
+  if (unbacked.length) {
+    problems.push(
+      `specs.md ticks ${unbacked.join(', ')} but no test staged in this commit has a title naming it.\n` +
+      '  Stage the test that asserts the FR (title starts with the FR code), or untick the box. (rules.md Sections 1, 8)'
+    );
+  }
+}
+
+if (problems.length) {
+  console.error(`\ncommit rejected:\n\n${problems.join('\n\n')}\n`);
+  process.exit(1);
+}
