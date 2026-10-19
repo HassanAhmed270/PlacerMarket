@@ -83,13 +83,12 @@ dead-letter, webhook inbox), object storage and a CDN are required from day one
 (replacing "added as needed"). Notifications listeners enqueue jobs; the in-process
 EventEmitter stays for wiring. Managed Postgres with failover and point-in-time
 backups (lose ≤ ~5 min, recover ≤ ~1 h); real versioned migrations
-(expand → switch → contract) replace `db/migrate.js`; PgBouncer for web, workers
-connect directly; no read replica initially; application-level encryption of CNIC and
+(expand → switch → contract) replace `db/migrate.js`; PgBouncer for web; workers use direct connections only if the verified queue library needs persistent sessions or fails through transaction pooling (FR-79c, FR-77f); no read replica initially; application-level encryption of CNIC and
 payout fields; append-only ledger/audit tables. Search stays in Postgres (a
 `listing_search` table, trigram, admin synonyms, a browser-matched suggestions file).
 Public pages get worker-generated HTML snapshots; React + Vite is kept (no Next.js).
 Target load: **10K concurrent visitors**. Full requirement rows: `specs.md` sections
-13–20 (FR-60 to FR-84b).
+13–20 (FR-60 to FR-84b). **Initial hosting: Render** (decided 2026-10-17; FR-79h). PostgreSQL hosting, Redis, CDN, storage and connection configuration are chosen later; Render is not a commitment to any of them. Email: Nodemailer as the common interface behind a provider adapter, an HTTPS-API-compatible setup for the initial Render deployment, a secondary provider as fallback (FR-83e).
 
 ## 4. Payment model — escrow replaces COD (DECIDED 2026-10-13/14)
 
@@ -118,10 +117,7 @@ chargeback liability, reservation duration, held funds for an unverified seller.
   approved version stays public; optional video published on the platform's YouTube
   channel with seller opt-in and moderator play-once approval (hosting and agreement
   OPEN); optional voice-story description producing three versions (details DEFERRED).
-- **Auth:** JWT in the Authorization header; **no refresh token**; **two-factor on
-  every login**, email code for ordinary buyers; first admin via
-  `npm run admin:create`. Passkey/authenticator methods, role rules, hardening and
-  recovery are proposals (FR-83b–83g).
+- **Auth:** JWT in the Authorization header: a short-lived in-memory access token renewed by a rotating refresh-token cookie (decided 2026-10-17); **two-factor at every sign-in** — an email code for ordinary buyers, an authenticator app for admins and moderators, passkeys later (FR-83h); first admin via `npm run admin:create`. The email-code rules (FR-83d) and token lifetimes (FR-84a: access 15 min; buyer refresh 30 days absolute / 7 days inactivity; staff refresh 8 hours absolute / 30 minutes inactivity) are approved; seller rules, step-up, recovery and the rest of the hardening are still proposals (FR-83b, FR-83c, FR-83f, FR-83g, FR-83i, FR-83j).
 - **SEO-GATE:** wording and rules for titles, meta, headings, alt text, structured
   data, URLs, canonicals and snapshots are discussion-gated (FR-82–82d, `rules.md`
   Section 10); mechanical plumbing may be built.
@@ -141,8 +137,7 @@ in code in this consolidation.
 1. **Refresh token.** The handoff *proposed* a rotating refresh-token cookie; the human
    *decided* "no refresh token" on 2026-10-14. Decision wins. **But** memory-only token
    storage + no refresh + two-factor on every login means a page reload forces a fresh
-   login with a second factor. Logged as OPEN, `specs.md` FR-84a — needs a decision
-   before auth is built.
+   login with a second factor. Logged as OPEN, `specs.md` FR-84a. **Resolved 2026-10-17:** a rotating refresh-token cookie replaces "no refresh token" (FR-84).
 2. **Other open offers on accept.** The scale discussion recommended auto-closing them;
    the Marketplace chat assumed freezing them. Neither was confirmed; the human deferred
    it. Recorded as DEFERRED (FR-63b), both options listed.
@@ -185,7 +180,7 @@ in code in this consolidation.
 
 ## 9. What this consolidation changed
 
-Updated: `specs.md` (97 → 178 FR rows; escrow/scale/media/auth/SEO sections 13–20; COD
+Updated: `specs.md` (97 → 183 FR rows; escrow/scale/media/auth/SEO sections 13–20; COD
 rows superseded or revised; new tags), `rules.md` (source-of-truth note, DISCUSS /
 SUPERSEDED tags, Sections 10 SEO-GATE and 11 scale rules), `agent.md`, `security.md`
 (SEC-36, SEC-37 added; SEC-03/06/09/30/33/34 updated), `Phases.md` (integrated the
@@ -197,6 +192,8 @@ with 9 new tests in `test/unit/git-hooks.test.js`; `test/unit/specs-checkboxes.t
 **Not changed in the consolidation itself:** all `src/` code, `db/`, `package.json`, dependencies, and every other test.
 
 **2026-10-16 follow-up (code):** Express 4 → 5.3.0 (`package.json`, lockfile); all 67 `asyncHandler` wrappers and `lib/asyncHandler.js` removed (verified: the 184 existing tests passed unchanged on Express 5 before the edit); a one-line `req.body ??= {}` shim in `app.js` because Express 5 leaves `req.body` undefined; `db.one` / `db.many` helpers in `db.service.js`; 8 new tests (db helpers, transactions, empty body, unwrapped async errors); `rules.md` Section 12. Existing query call sites were deliberately not converted.
+
+**2026-10-17 follow-up (documents only):** approved FR-83d (email codes, 3 attempts per code), FR-84a (token lifetimes), the queue strategy (new FR-77f, FR-79c revised), Render for initial hosting (FR-79h) and the email architecture (FR-83e); remaining email proposals split into FR-83i/FR-83j; SEC-38 added. No application code was changed. Verification of the queue library and the provider choices stay open (`open-questions.md`).
 
 ## 10. Where to look
 

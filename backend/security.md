@@ -40,19 +40,19 @@ money integrity; expect a payments section here once Phase 4 starts.
   *Enforced by:* test · *Today:* **FAILS** — `registerUser` takes `passwordHash` from the request body (nothing hashes it server-side), and `authenticate()` is an unimplemented stub.
 - [ ] **SEC-02 JWT secret/keys are strong and external.** ≥ 32 random bytes (HS256) or an RS256 keypair, loaded from env, never committed, never a real value in `.env.example`. The app refuses to start if it's missing or too short. A rotation plan exists.
   *Enforced by:* test · *Today:* n/a-yet (no JWT code).
-- [ ] **SEC-03 JWT verification is pinned and strict.** Fixed algorithm (reject `none` and algorithm switching), verify `exp`, `iss`, `aud`; short access-token lifetime (the value is open — specs.md FR-84a; with a second factor on every login a very short lifetime means frequent codes).
+- [ ] **SEC-03 JWT verification is pinned and strict.** Fixed algorithm (reject `none` and algorithm switching), verify `exp`, `iss`, `aud`; short access-token lifetime (values are configurable; approved defaults in specs.md FR-84a — access token 15 minutes).
   *Enforced by:* test · *Today:* n/a-yet.
-- [ ] **SEC-04 Token transport is the header only.** `Authorization: Bearer …`; never accept a token from a cookie or query string. This is what makes SEC-05 true.
+- [ ] **SEC-04 Token transport is the Authorization header.** `Authorization: Bearer …` on every API request. The only cookie is the refresh-token cookie, scoped to the refresh endpoint and never accepted for authorization anywhere else (decided 2026-10-17). SEC-05 depends on that.
   *Enforced by:* test · *Today:* n/a-yet.
-- [ ] **SEC-05 CSRF.** Not applicable by design while no cookie authenticates a request. The moment any cookie-based auth is added (e.g. a refresh-token cookie, see SEC-06), CSRF protection (SameSite + Origin check) becomes mandatory on the endpoints it touches.
-  *Enforced by:* review · *Today:* holds trivially (no cookies anywhere).
-- [ ] **SEC-06 Client-side token storage.** Access token held in memory only — never `localStorage`/`sessionStorage`. **Frontend repo.** **Decided 2026-10-14:** no refresh token — one access token with a configured lifetime; the user logs in again when it expires. Adding refresh later would bring cookies and SEC-05 back. **Conflict flagged 2026-10-14 (specs.md FR-84a):** with no refresh token and memory-only storage, a page reload or new tab forces a fresh login — now with a second factor on every login. This needs a decision.
+- [ ] **SEC-05 CSRF.** Live on the refresh endpoint only (rotating refresh-token cookie, decided 2026-10-17): SameSite=Strict plus an Origin check. No other endpoint accepts a cookie, so no other endpoint needs CSRF protection.
+  *Enforced by:* test · *Today:* n/a-yet.
+- [ ] **SEC-06 Client-side token storage.** The access token is held in memory only — never `localStorage`/`sessionStorage`. **Frontend repo.** Decided 2026-10-17: a rotating refresh-token cookie (httpOnly, Secure, SameSite=Strict, refresh endpoint only) renews it, so a page reload does not force a new login; the second factor is needed at sign-in only.
   *Enforced by:* review · *Today:* n/a-yet (no auth code yet).
 - [ ] **SEC-07 Suspended users are rejected immediately** (FR-10), even with a valid unexpired token: check user status on each request, or keep lifetimes short enough that revocation is acceptable (decide and write it down).
   *Enforced by:* test · *Today:* n/a-yet.
-- [ ] **SEC-08 Brute-force protection on login/register/reset.** Rate limit per IP and per account; identical error for "no such user" and "wrong password" (no user enumeration).
+- [ ] **SEC-08 Brute-force protection on login/register/reset.** Rate limit per IP and per account; identical error for "no such user" and "wrong password" (no user enumeration). Email verification codes: 3 attempts per code, a resend cooldown and sending caps (specs.md FR-83d, approved 2026-10-17).
   *Enforced by:* test · *Today:* n/a-yet (no auth endpoints, no limiter).
-- [ ] **SEC-09 Two-factor authentication on every login.** **Required** (decided): every login needs a second factor, and email is the code channel for ordinary buyers (specs.md FR-83, FR-83a). Methods, role rules, hardening and recovery are still DISCUSS/OPEN (FR-83b–FR-83g); admins and moderators are proposed to use a passkey or authenticator app, never email codes.
+- [ ] **SEC-09 Two-factor authentication on every login.** **Required** (decided): every login needs a second factor, and email is the code channel for ordinary buyers (specs.md FR-83, FR-83a). Decided 2026-10-17: email codes for ordinary buyers, an authenticator app (never email) for admins and moderators, passkeys later (FR-83h). Code hardening, seller rules, step-up and recovery are still DISCUSS/OPEN (FR-83b–FR-83g).
   *Enforced by:* test · *Today:* n/a-yet (no auth code yet; design details unconfirmed).
 - [ ] **SEC-10 No default or seeded credentials.** The first admin is created by a one-time command run on the server (`npm run admin:create`, decided 2026-10-14), never by an endpoint or a hardcoded password.
   *Enforced by:* review · *Today:* holds (`db/seed.js` creates no users) — but there is no way yet to create the first admin (`admin:create` is a Phase 0 task).
@@ -127,9 +127,12 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [ ] **SEC-37 The database is locked down** *(added)*. Private network only, TLS with certificate verification, least-privilege roles (web, worker, migrator, read-only, backup), no PII in logs or slow-query logs, staging never receives raw production data (specs.md FR-79g, decided).
   *Enforced by:* review · *Today:* n/a-yet (no deployment).
 
+- [ ] **SEC-38 Refresh tokens rotate and are revocable** *(added)*. Every refresh issues a new single-use token; reuse of an old one revokes its whole family and forces sign-in; absolute and inactivity expiry are enforced server-side; tokens are stored hashed (specs.md FR-84, FR-84a, approved 2026-10-17).
+  *Enforced by:* test · *Today:* n/a-yet.
+
 ---
 
 ## Open security decisions
 
 Logged in `open-questions.md`; an agent must not guess these (`rules.md` Section 1):
-the details of two-factor login (SEC-09), how a session survives a page reload (SEC-06 / FR-84a), key management for the encrypted fields (SEC-30), and RLS (SEC-14).
+the remaining details of two-factor login (SEC-09), token lifetimes (FR-84a), key management for the encrypted fields (SEC-30), and RLS (SEC-14).

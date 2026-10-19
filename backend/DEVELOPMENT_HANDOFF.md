@@ -25,10 +25,7 @@ Reading order: `MASTER_PROJECT_CONTEXT.md` → `agent.md` → `rules.md` → `Ph
 
 ## 3. What to do next (Phase 0)
 
-Do not start Phase 0 code until these are decided (all in `open-questions.md`,
-"Needed by Phase 0"): how a session survives a page reload and the access-token
-lifetime (FR-84a); hosting approach and providers; the email provider; confirmation
-of the two-factor design (FR-83b–FR-83f). Then Phase 0a (real-Postgres tests,
+Decided on 2026-10-17: sessions (a rotating refresh-token cookie) and their lifetimes (FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the queue strategy (FR-77f) and Render for initial hosting (FR-79h). Still open for Phase 0: the resend-cooldown and sending-cap values, the queue library verification (before a library is committed) and the SEC-07 choice. Then Phase 0a (real-Postgres tests,
 migration runner, fix the schema/code mismatches), 0b (queue + worker), 0c (JWT +
 two-factor + hardening). The frontend scaffold runs in parallel.
 
@@ -55,7 +52,7 @@ two-factor + hardening). The frontend scaffold runs in parallel.
 - `schema.sql` is the COD-era baseline (26 tables). New SQL belongs in migrations.
 - Hooks assume the repo root is `backend/`; they are local-only (`--no-verify` skips
   them) and there is no CI yet.
-- The session-persistence conflict (FR-84a) must be resolved before building auth.
+- Sessions: a rotating refresh-token cookie with the approved lifetimes (FR-84, FR-84a). Free Render web services block outbound SMTP and free Render PostgreSQL has no recovery — see FR-83e and FR-79h before deploying anything.
 - Returns, refunds and disputes (including lost parcels, FR-72e, and the FR-45g payout pause) are deferred by the human to a later discussion — don't design or build them until it happens.
 - FR-45a/50a/71 (partial refunds) are Claude's recommendation, not confirmed.
 - The container resets between sessions; files persist only in the delivered ZIP.

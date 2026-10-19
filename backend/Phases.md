@@ -43,10 +43,7 @@ Redis, object storage and a CDN from day one; managed Postgres with failover; a
 real migration runner; Postgres full-text search; worker-generated HTML
 snapshots; edits to live listings go through moderation (FR-73–FR-81d).
 
-**Auth.** JWT in the Authorization header, no refresh token, two-factor on every
-login with email as the ordinary-buyer channel, first admin via
-`npm run admin:create` (FR-83, FR-83a, FR-84). **Known conflict:** how a session
-survives a page reload is open (FR-84a) and must be settled before auth is built.
+**Auth.** JWT in the Authorization header: a short-lived access token in memory plus a rotating refresh-token cookie; two-factor at every sign-in (email code for buyers, authenticator app for admins and moderators, passkeys later); first admin via `npm run admin:create` (FR-83, FR-83a, FR-83h, FR-84).
 
 ---
 
@@ -58,8 +55,7 @@ feature phases is ticked until this gate holds. Phase 0 is large; split it only
 by the human's decision (renumbering would touch every reference).
 
 **Backend — 0a data and tests**
-- Real-Postgres test setup (`db:setup` against a throwaway database) plus
-  integration tests; fix the schema/code mismatches listed in `agent.md`; audit
+- Real-Postgres test setup — the tests start their own Postgres from an npm package (`embedded-postgres`; verified on Linux, no Docker needed) — plus integration tests; fix the schema/code mismatches listed in `agent.md`; audit
   every column.
 - Versioned migration runner replacing `db/migrate.js` (FR-79b); separate
   read/write entry points on `db.service.js` (FR-79e); pool, statement, idle and
@@ -68,16 +64,14 @@ by the human's decision (renumbering would touch every reference).
 - Already done (2026-10-16): Express 5 and the `db.one` / `db.many` helpers. New code uses the helpers; existing call sites are converted only when a module is touched (`rules.md` Section 12).
 
 **Backend — 0b queue and worker**
-- `worker.js` and `lib/queue.js` with outbox, leases, retries, dead-letter
-  (FR-77, FR-77a); notification listeners enqueue instead of sending inline
+- `worker.js` and `lib/queue.js` with outbox, leases, retries, dead-letter (FR-77, FR-77a, FR-77f — the library is verified against PostgreSQL + PgBouncer before it is committed); notification listeners enqueue instead of sending inline
   (FR-77d); Redis for cache and rate-limit state. Real-Postgres tests for the
   queue guarantees (two workers claiming, crash after an effect, duplicate
   delivery).
 
 **Backend — 0c auth and hardening**
-- JWT login with server-side password hashing, suspended users rejected
-  immediately (FR-01, FR-02, FR-10, FR-84); two-factor on every login with the
-  email channel (FR-83, FR-83a); `npm run admin:create` (FR-84).
+- JWT login with server-side password hashing, the refresh-cookie flow, suspended users rejected immediately (FR-01, FR-02, FR-10, FR-84); two-factor at sign-in: email code for buyers, authenticator app for admins and moderators (FR-83, FR-83a, FR-83h); `npm run admin:create` with authenticator enrollment (FR-84).
+- Email sending behind a provider adapter: Nodemailer as the common interface, an HTTPS-API-compatible provider for the initial Render deployment, and a secondary-provider failover implemented and tested before production (FR-83a, FR-83e).
 - Hardening: helmet, CORS allowlist, rate limiting, explicit body limit, an error
   handler that never leaks, responses that never include `password_hash`, an
   input-validation layer; CI running tests and `npm audit`.
@@ -89,12 +83,9 @@ by the human's decision (renumbering would touch every reference).
   Tick nothing from the gap list yet other than the login flow row.
 
 **Security rows to close:** SEC-01, 02, 03, 04, 07, 08, 10, 15, 16 (framework),
-22, 23, 24, 25, 27, 28, 29, and SEC-09 for the confirmed part (FR-83, FR-83a).
+22, 23, 24, 25, 27, 28, 29, 38, and SEC-09 for the confirmed part (FR-83, FR-83a).
 
-**Decisions needed first:** how a session survives a reload and the access-token
-lifetime (FR-84a); hosting approach and providers (managed Postgres, Redis);
-email provider(s); confirm the two-factor design rows FR-83b–FR-83f (including
-how the first admin enrolls a second factor).
+**Decisions:** decided 2026-10-17 — sessions and token lifetimes (FR-84, FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the queue strategy (FR-77f) and Render for initial hosting (FR-79h). Still open for Phase 0: the resend-cooldown and sending-cap values, the queue library verification (before a library is committed), and the SEC-07 choice. Hosting details and the email provider are chosen before the first deployment / real login, not before Phase 0.
 
 **Gate**
 - [ ] Backend 0a, 0b, 0c done, with real-Postgres integration tests
@@ -282,8 +273,8 @@ discussion. "Automatic cash-remittance reconciliation" is obsolete (no COD).
 
 | Needed | Before |
 |---|---|
-| Hosting approach; managed Postgres, Redis host | Phase 0 |
-| Email provider(s) for two-factor codes (+ a second for failover) | Phase 0 |
+| Initial hosting is Render (decided); PostgreSQL hosting, Redis if required, CDN, storage, connection configuration | Before the first deployment |
+| Email provider(s) for two-factor codes (+ a second for failover) | Before the first real login |
 | Object storage provider | Phase 2 |
 | CDN provider | Phase 3 |
 | Payment gateway provider, legal advice on holding funds, sandbox account | Phase 4 |

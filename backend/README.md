@@ -90,5 +90,8 @@ security.md               security checklist — binding via rules.md Section 9
 Phases.md                 build order, backend + frontend in parallel, gate per phase
 MASTER_PROJECT_CONTEXT.md full project state: architecture, built vs planned, decisions, verification
 DEVELOPMENT_HANDOFF.md    how a new Claude conversation resumes from here
+HANDOFF.md                concise handoff: state, approved decisions, open questions, next actions
+AGENTS.md                 instructions the Codex agent reads automatically (implementer rules)
+WORKFLOW.md               who does what: you, the Claude window, Codex; the review loop
 open-questions.md         register of open, deferred and resolved decisions
 ```

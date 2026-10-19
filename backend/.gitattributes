@@ -1,0 +1,7 @@
+# Keep line endings LF on every OS. The git hooks are shebang scripts (#!/usr/bin/env node);
+# CRLF line endings (Windows) would break them.
+* text=auto eol=lf
+hooks/commit-msg text eol=lf
+hooks/pre-commit text eol=lf
+*.zip binary
+*.png binary

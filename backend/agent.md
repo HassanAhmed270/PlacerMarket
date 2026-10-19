@@ -8,7 +8,7 @@ JavaScript (no TypeScript, no DI framework). This is a **website backend**
 
 **Project name:** Poshaak is the single, current name (earlier files and chats
 say "Marketplace" — same project). **Reading order for a new session:**
-`DEVELOPMENT_HANDOFF.md` → `MASTER_PROJECT_CONTEXT.md` → this file → `rules.md`
+`HANDOFF.md` → `DEVELOPMENT_HANDOFF.md` → `MASTER_PROJECT_CONTEXT.md` → this file → `rules.md`
 → `Phases.md` → `security.md` → `specs.md` → `open-questions.md`.
 
 ## Planned, NOT built — don't assume any of this exists
@@ -152,6 +152,9 @@ purpose so the schema works whichever way this eventually gets decided.
 - `MASTER_PROJECT_CONTEXT.md` — the full project state: architecture, what is
   built vs planned, decisions register, verification results.
   `DEVELOPMENT_HANDOFF.md` — how a new Claude conversation resumes from here.
+- `AGENTS.md` — the implementer rules Codex reads automatically; `WORKFLOW.md` — the
+  loop between the human, the Claude window and Codex, and the review checklist.
+- `.gitattributes` — forces LF line endings (the git hooks break with CRLF).
 - `db/migrate.js`, `db/seed.js` — see README.md "Setup". `db/seed.js`
   specifically seeds `platform_settings` — skipping it means
   `settlement.getSetting()` throws `NotFoundError` for several functions
@@ -213,10 +216,6 @@ purpose so the schema works whichever way this eventually gets decided.
   COD-era `delivery`/`orders` behavior are rewritten in Phases 4–5
   (`Phases.md`). Don't extend any COD path (`cod_collections`,
   `confirmCodCollection`, cash reconciliation).
-- **A session can't survive a page reload under the current decisions
-  (`specs.md` FR-84a).** JWT in memory only + no refresh token + two-factor on
-  every login means a reload or new tab forces a fresh login with a second
-  factor. Undecided; resolve before building auth.
 - **Express 5 specifics.** Async errors reach the error handler without a wrapper;
   `req.body` is `{}` for body-less requests only because of a one-line shim in
   `app.js` (Express 5 leaves it undefined). Library, data-access and load

@@ -204,8 +204,8 @@ human has made since, the human's decision wins — log the conflict in
   the code they guard exists.
 - Never weaken, reword or delete a row to make a change pass. If a row blocks
   the work, stop and ask (Section 1) — don't route around it.
-- A security decision `security.md` marks OPEN (the details of two-factor login,
-  how a session survives a page reload, RLS) is logged in `open-questions.md` and not built
+- A security decision `security.md` marks OPEN (the remaining details of two-factor
+  login, token lifetimes, RLS) is logged in `open-questions.md` and not built
   until a human answers it.
 - Nothing automated checks `security.md` yet (checklist-only so far); the
   rows that say `test` are intended to get tests, and until they do they rely
@@ -230,8 +230,7 @@ None of the code below exists yet; these are stated now so the first
 implementation follows them (`specs.md` sections 14–20).
 
 - `lib/queue.js` owns the queue tables (jobs, archive, dead-letter, outbox,
-  webhook inbox, effects log) and may hold its own `pg` connection, because
-  `LISTEN/NOTIFY` needs a real session. This is the one named exception to
+  webhook inbox, effects log) and may hold its own `pg` connection — a direct one if the verified queue library needs a persistent session (e.g. for `LISTEN/NOTIFY`), per FR-79c and FR-77f. This is the one named exception to
   "`db.service.js` is the only file that imports `pg`" and to
   one-table-one-owner, and only for those tables. Nothing else touches them.
 - Private, money and auth routes send `Cache-Control: private, no-store`;
