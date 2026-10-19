@@ -200,16 +200,16 @@ purpose so the schema works whichever way this eventually gets decided.
   that already has the tables, and has no way to evolve `schema.sql` over
   time without a manual `ALTER`. Replace with a real migration tool
   (e.g. `node-pg-migrate`) before this matters in practice.
-- **Some queries don't match `schema.sql`, and the tests can't tell.**
-  Verified: `users.updateSellerPayoutMethod` writes a `payout_details` column
-  that doesn't exist (schema has `payout_bank_account` and
-  `payout_wallet_number`) and validates `bank_transfer`/`mobile_wallet`
-  while the schema enum is `bank`/`easypaisa`/`jazzcash`;
-  `listings.addListingImages` and `submitAuthenticityEvidence` write a `url`
-  column where the schema has `image_url` / `evidence_url`. These would fail
-  on a real Postgres. The unit tests mock `db.service`, so they pass anyway.
-  Not every column has been audited — add a real-Postgres integration layer
-  (`db:setup` against a throwaway database) before trusting the SQL.
+- **Schema/code mismatch audit:** see [`SCHEMA_CODE_AUDIT.md`](SCHEMA_CODE_AUDIT.md)
+  for the full service-SQL comparison, evidence, confirmed matches, and
+  expected-failure probes. No mismatch is fixed by that report. The tests mock
+  `db.service`, so use the real-Postgres integration harness before trusting SQL.
+- **Real-Postgres integration harness:** set `TEST_DATABASE_URL` to a disposable
+  PostgreSQL database whose name contains `test`, then run
+  `npm run test:integration`. Setup refuses missing/unsafe URLs, recreates the
+  database's `public` schema, applies `schema.sql`, and runs `db/seed.js`.
+  Never point it at the application database. Plain `npm test` ignores these
+  tests and does not connect to PostgreSQL.
 - **Escrow replaces COD (decided 2026-10-13); `specs.md` was revised on
   2026-10-14, but the CODE and `schema.sql` still describe COD.** Modules 7
   (payments), 9a (payout hold) and 10 (settlement), `cod_collections` and the
