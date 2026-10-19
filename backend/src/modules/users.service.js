@@ -27,7 +27,7 @@ const { NotFoundError, ForbiddenError, ValidationError, NotImplementedError } = 
 /** FR-01: register a new user, buyer role by default. */
 async function registerUser({ name, phone, email, passwordHash, cityId }) {
   const { rows } = await db.query(
-    `INSERT INTO users (name, phone, email, password_hash, city_id, role)
+    `INSERT INTO users (full_name, phone, email, password_hash, city_id, role)
      VALUES ($1, $2, $3, $4, $5, 'buyer') RETURNING *`,
     [name, phone, email, passwordHash, cityId]
   );
@@ -96,7 +96,7 @@ async function reviewSellerApplication(applicationId, { decision, reason, review
   }
   const { rows } = await db.query(
     `UPDATE seller_applications
-     SET status = $1, decision_reason = $2, reviewed_by = $3, reviewed_at = now()
+     SET status = $1, rejection_reason = $2, reviewed_by = $3, reviewed_at = now()
      WHERE id = $4 RETURNING *`,
     [decision, reason || null, reviewerId, applicationId]
   );
@@ -186,7 +186,7 @@ async function updateSellerPayoutMethod(userId, { method, details }) {
 
 /** FR-10: admin can suspend/revoke seller approval. Moderator CANNOT (FR-05a) — enforced at route level via lib/roles.js. */
 async function suspendSeller(userId, { adminId, reason }) {
-  const { rows } = await db.query(`UPDATE users SET status = 'suspended' WHERE id = $1 RETURNING *`, [userId]);
+  const { rows } = await db.query(`UPDATE users SET is_suspended = true WHERE id = $1 RETURNING *`, [userId]);
   if (!rows[0]) throw new NotFoundError('user', userId);
   eventBus.emit(events.SELLER_SUSPENDED, { userId, adminId, reason });
   return rows[0];

@@ -13,7 +13,7 @@
  */
 
 const db = require('../db.service');
-const { NotFoundError, ValidationError } = require('../lib/errors');
+const { NotFoundError, ValidationError, NotImplementedError } = require('../lib/errors');
 
 const CONDITION_TYPES = Object.freeze(['brand_new', 'pre_owned', 'custom_made', 'replica']); // FR-13
 
@@ -75,7 +75,7 @@ function assertNotRentalListing({ listingType }) {
 /** FR-15a: admin-defined measurement fields for a sub-category. */
 async function getMeasurementFieldDefs(subCategoryId) {
   const { rows } = await db.query(
-    'SELECT * FROM measurement_field_defs WHERE sub_category_id = $1 ORDER BY sort_order',
+    'SELECT * FROM measurement_field_defs WHERE sub_category_id = $1 ORDER BY display_order',
     [subCategoryId]
   );
   return rows;
@@ -83,17 +83,27 @@ async function getMeasurementFieldDefs(subCategoryId) {
 
 /** FR-15a: admin replaces the measurement field set for a sub-category. */
 async function setMeasurementFieldDefs(subCategoryId, fieldDefs, adminId) {
-  // fieldDefs: [{ fieldName, unit, required }, ...] — admin-defined, extensible over time.
+  // The schema has no `required` column. Reject that contract explicitly before
+  // deleting current definitions; do not silently lose the caller's setting.
+  if (fieldDefs.some((def) => Object.prototype.hasOwnProperty.call(def, 'required'))) {
+    throw new NotImplementedError('Persisting measurement required flags requires a schema/API decision');
+  }
+
+  // fieldDefs: [{ fieldName, unit }, ...] — admin-defined, extensible over time.
   return db.withTransaction(async (client) => {
     await client.query('DELETE FROM measurement_field_defs WHERE sub_category_id = $1', [subCategoryId]);
     for (const [i, def] of fieldDefs.entries()) {
       await client.query(
-        `INSERT INTO measurement_field_defs (sub_category_id, field_name, unit, required, sort_order)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [subCategoryId, def.fieldName, def.unit, def.required, i]
+        `INSERT INTO measurement_field_defs (sub_category_id, field_name, unit, display_order)
+         VALUES ($1, $2, $3, $4)`,
+        [subCategoryId, def.fieldName, def.unit, i]
       );
     }
-    return getMeasurementFieldDefs(subCategoryId);
+    const { rows } = await client.query(
+      'SELECT * FROM measurement_field_defs WHERE sub_category_id = $1 ORDER BY display_order',
+      [subCategoryId]
+    );
+    return rows;
   });
 }
 

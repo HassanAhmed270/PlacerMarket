@@ -12,6 +12,15 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 
 ## Open
 
+### Needed by Phase 0a follow-up / Phase 1
+- 2026-10-19 · Engineering discrepancy · `src/lib/asyncHandler.js` is still tracked although `rules.md` says it was removed on 2026-10-16. Confirm whether the rule or repository state is stale; file left unchanged.
+- 2026-10-19 · FR-06 · `submitSellerApplication` accepts name/phone/city while the schema only stores `user_id`, reason, and what-will-sell. Decide whether those identity fields should come from the existing `users` row or whether schema/API needs a migration.
+- 2026-10-19 · FR-07 / FR-08 · Confirm whether approving an application must also set `seller_profiles.is_approved` and `approved_at`.
+- 2026-10-19 · FR-15a · `setMeasurementFieldDefs` accepts `required`, but `measurement_field_defs` has no such column. The service now explicitly rejects definitions containing `required` before replacing existing rows; ordinary field definitions persist normally. Decide whether `required` belongs in a schema migration/column or should be removed from the persisted API. No schema or product decision was made.
+- 2026-10-19 · FR-09a · Confirm Phase 1 scope and intended mapping/storage for `updateSellerPayoutMethod`; current API values differ from the schema enum and columns.
+- 2026-10-19 · FR-08b · `held_pending_id` is not in the listing status enum. Decide whether the listing schema should gain this state or the hold should be represented another way.
+- 2026-10-19 · FR-24 · `filterListings` accepts `cityId`, but listings have no city column. Decide whether seller city should drive the filter or the listing data model should change.
+
 ### Needed by Phase 0
 - 2026-10-17 · FR-77f, FR-79c · **Queue library verification (open; deadline: before a library is committed, start of Phase 0b).** Test the candidate against the actual PostgreSQL + PgBouncer configuration — job claiming, concurrent workers, transaction handling, retries, pooling compatibility. Workers use direct connections only if the library needs persistent sessions or fails through transaction pooling; if it is incompatible, choose a compatible architecture. Critical operations (order + its job) need a transactional outbox or equivalent.
 - 2026-10-17 · FR-83d · Resend-cooldown and email-sending-cap values (configurable; set when the login is built, so that total guesses per hour stay negligible).

@@ -1,26 +1,45 @@
-function getTestDatabaseUrl() {
-  const testDatabaseUrl = process.env.TEST_DATABASE_URL;
-  if (!testDatabaseUrl) {
-    throw new Error(
-      'TEST_DATABASE_URL is required for integration tests. Set it to a disposable PostgreSQL database whose name contains "test".'
-    );
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+const TEST_DATABASE_NAME = /(^|[_-])test($|[_-])/i;
+
+function validateTestDatabaseUrl(value, { allowRemote = false } = {}) {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error('TEST_DATABASE_URL is required and cannot be empty.');
   }
 
+  let parsed;
   let databaseName;
   try {
-    const parsed = new URL(testDatabaseUrl);
-    if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) throw new Error('protocol');
-    databaseName = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+    parsed = new URL(value);
+    databaseName = decodeURIComponent(parsed.pathname.slice(1));
   } catch {
-    throw new Error('TEST_DATABASE_URL must be a valid PostgreSQL connection URL.');
+    throw new Error('TEST_DATABASE_URL must be a valid postgres:// or postgresql:// URL.');
   }
-  if (!databaseName.toLowerCase().includes('test')) {
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
+    throw new Error('TEST_DATABASE_URL protocol must be postgres:// or postgresql://.');
+  }
+
+  if (!TEST_DATABASE_NAME.test(databaseName)) {
     throw new Error(
-      `Refusing integration tests: database name "${databaseName}" must contain "test".`
+      'TEST_DATABASE_URL database name must contain "test" as a complete underscore- or hyphen-delimited token.'
     );
   }
 
-  return testDatabaseUrl;
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (!LOCAL_HOSTS.has(host) && !allowRemote) {
+    throw new Error(
+      'TEST_DATABASE_URL must use localhost, 127.0.0.1, or ::1; set TEST_DATABASE_ALLOW_REMOTE=1 to explicitly allow a remote test database.'
+    );
+  }
+
+  return { url: value, databaseName, host, port: parsed.port || '5432' };
+}
+
+function getTestDatabaseUrl() {
+  return validateTestDatabaseUrl(process.env.TEST_DATABASE_URL, {
+    allowRemote: process.env.TEST_DATABASE_ALLOW_REMOTE === '1',
+  }).url;
 }
 
 module.exports = getTestDatabaseUrl;
+module.exports.getTestDatabaseUrl = getTestDatabaseUrl;
+module.exports.validateTestDatabaseUrl = validateTestDatabaseUrl;

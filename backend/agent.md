@@ -201,15 +201,34 @@ purpose so the schema works whichever way this eventually gets decided.
   time without a manual `ALTER`. Replace with a real migration tool
   (e.g. `node-pg-migrate`) before this matters in practice.
 - **Schema/code mismatch audit:** see [`SCHEMA_CODE_AUDIT.md`](SCHEMA_CODE_AUDIT.md)
-  for the full service-SQL comparison, evidence, confirmed matches, and
-  expected-failure probes. No mismatch is fixed by that report. The tests mock
-  `db.service`, so use the real-Postgres integration harness before trusting SQL.
+  for the full service-SQL comparison, classifications, evidence, passing
+  regression tests, and remaining expected-failure probes. Phase 0a-2a repaired
+  the audited users/catalog SQL covered there; other phase rows remain unfixed.
+  The unit tests mock `db.service`, so use the real-Postgres integration harness
+  before trusting SQL behavior.
+- **Measurement definition `required` flag:** `measurement_field_defs` has no
+  `required` column. `setMeasurementFieldDefs` currently accepts definitions
+  without that property and rejects definitions that include it before changing
+  existing rows. Do not silently drop the flag or add a schema column. Resolve
+  whether this is a schema/API change before implementing persistence.
 - **Real-Postgres integration harness:** set `TEST_DATABASE_URL` to a disposable
-  PostgreSQL database whose name contains `test`, then run
-  `npm run test:integration`. Setup refuses missing/unsafe URLs, recreates the
-  database's `public` schema, applies `schema.sql`, and runs `db/seed.js`.
-  Never point it at the application database. Plain `npm test` ignores these
-  tests and does not connect to PostgreSQL.
+  PostgreSQL database whose decoded name contains `test` as a complete
+  underscore-/hyphen-delimited token (`poshaak_test`, not `latest` or
+  `poshaak_prod`). By default only `localhost`, `127.0.0.1`, and `::1` are
+  accepted. Remote test databases require the explicit
+  `TEST_DATABASE_ALLOW_REMOTE=1` override; treat that as permission to run the
+  destructive harness against the named remote test database. Unix-socket URLs
+  are unsupported. Before any connection or SQL, global setup validates both
+  database name and host.
+- **Integration schema-reset lock:** a lock-holder child process acquires a
+  PostgreSQL session advisory lock on one dedicated live `Client` connection
+  before the setup pool can drop `public`. A second run fails fast before reset
+  if that lock is held. Jest global setup and teardown do not share a connection:
+  setup writes a random-token localhost control endpoint to a temp state file;
+  global teardown asks that child to close its client, which releases the lock,
+  then waits for the state file to disappear. Setup failures release/terminate
+  the exact child it started. Plain `npm test` ignores integration tests and
+  does not connect to PostgreSQL.
 - **Escrow replaces COD (decided 2026-10-13); `specs.md` was revised on
   2026-10-14, but the CODE and `schema.sql` still describe COD.** Modules 7
   (payments), 9a (payout hold) and 10 (settlement), `cod_collections` and the

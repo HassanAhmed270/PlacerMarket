@@ -1,36 +1,56 @@
-# Schema/code mismatch audit — Phase 0a-1
+# Schema/code audit — Phase 0a-1b
 
-Read-only comparison of SQL in service modules with `schema.sql` (2026-10-19).
-Probes for inexpensive, reproducible mismatches are in
-`test/integration/known-mismatches.test.js` and use Jest 29 `test.failing`.
+Comparison of service behavior and SQL with `schema.sql` and the current project
+requirements. Phase 0a-2a users/catalog repairs are marked in the evidence; no
+schema or migration changes were made. Classifications follow the intended
+implementation sequence: `fix-0a-2a` is users/catalog SQL
+repair; `fix-0a-2b` is listing SQL and behavior repair; `fix-0a-2c` is discovery
+repair and regression tests; `defer-Phase-1` is payout functionality;
+`superseded-4-5` is explicitly superseded COD/payment/delivery behavior;
+`needs-decision` is an unresolved requirement or schema/API contract; and
+`no-mismatch-static-only` means static inspection found no mismatch. These labels
+do not authorize or start a repair phase.
 
-| file | function | problem | evidence |
-|---|---|---|---|
-| `src/modules/users.service.js` | `registerUser` | Inserts `users.name`; schema requires `users.full_name`. | `users.service.js:30`; `schema.sql:39-53` |
-| `src/modules/users.service.js` | `suspendSeller` | Writes `users.status = 'suspended'`; schema has boolean `is_suspended`, with no `status` column. | `users.service.js:189`; `schema.sql:39-53` |
-| `src/modules/users.service.js` | `submitSellerApplication` | Inserts `name`, `phone`, `city_id`; these columns are not in `seller_applications`. The schema stores `user_id`, `reason_for_selling`, and `what_will_sell`. | `users.service.js:82`; `schema.sql:57-69` |
-| `src/modules/users.service.js` | `reviewSellerApplication` | Writes `decision_reason`; schema column is `rejection_reason`. | `users.service.js:98`; `schema.sql:57-69` |
-| `src/modules/users.service.js` | `updateSellerPayoutMethod` | Writes absent `payout_details`; accepts `bank_transfer` / `mobile_wallet`, but enum values are `bank` / `easypaisa` / `jazzcash` and storage is split across `payout_bank_account` / `payout_wallet_number`. **Superseded by Phases 4-5, do not fix.** | `users.service.js:177-185`; `schema.sql:30-31,71-88` |
-| `src/modules/catalog.service.js` | `getMeasurementFieldDefs` | Orders by absent `sort_order`; schema has `display_order`. | `catalog.service.js:78`; `schema.sql:108-118` |
-| `src/modules/catalog.service.js` | `setMeasurementFieldDefs` | Inserts absent `required` and `sort_order`; schema defines `display_order` and no `required`. | `catalog.service.js:91-93`; `schema.sql:108-118` |
-| `src/modules/listings.service.js` | `saveListingMeasurements` | Inserts `listing_measurements.field_name`; schema requires `field_def_id` referencing `measurement_field_defs(id)`. | `listings.service.js:68`; `schema.sql:156-161` |
-| `src/modules/listings.service.js` | `createListing` | Omits `listings.title`, which is `NOT NULL` with no default, so a normal create fails before measurement writes. | `listings.service.js:41-48`; `schema.sql:126-154` |
-| `src/modules/listings.service.js` | `addListingImages` | Inserts `url` and `sort_order`; schema columns are `image_url` and `display_order`. | `listings.service.js:78`; `schema.sql:163-168` |
-| `src/modules/listings.service.js` | `submitAuthenticityEvidence` | Inserts `url` and `submitted_by`; schema has `evidence_url`, `evidence_type`, and no submitter column. | `listings.service.js:91`; `schema.sql:170-176` |
-| `src/modules/listings.service.js` | `approveListing` | Uses enum value `live` (not in `listing_status`) and absent columns `approved_by`, `approved_at`; schema has `published`, `reviewed_by`, `published_at`. | `listings.service.js:147`; `schema.sql:121-154` |
-| `src/modules/listings.service.js` | `holdListingPendingIdVerification` | Uses enum value `held_pending_id`, absent from `listing_status`. | `listings.service.js:157`; `schema.sql:121-125` |
-| `src/modules/listings.service.js` | `rejectOrUnpublishListing` | Writes absent `decision_reason`; schema has `rejection_reason`. | `listings.service.js:178`; `schema.sql:126-154` |
-| `src/modules/discovery.service.js` | `searchListings`, `filterListings` | Filter on enum value `live`; schema has `published` instead. | `discovery.service.js:28,45`; `schema.sql:121-125` |
-| `src/modules/discovery.service.js` | `getSellerPublicCard` | Reads `profile.display_name`; schema names the column `display_alias`. | `discovery.service.js:94`; `schema.sql:71-88` |
-| `src/modules/notifications.service.js` | `registerListeners` | Reads `seller_applications.user_id`, listing seller IDs, and order participants. These referenced columns exist; no schema mismatch found. | `notifications.service.js:66-99`; `schema.sql:57-69,126-154,245-263,402-410` |
-| `src/modules/negotiation.service.js` | all SQL functions | Referenced conversation, message, and offer columns/status values match schema. No mismatch found. | `negotiation.service.js:29-108`; `schema.sql:195-228` |
-| `src/modules/orders.service.js` | order and review queries | Referenced columns/statuses match the COD-era schema. COD-shaped order behavior and `total_cod_amount` reads are **superseded by Phases 4-5, do not fix**. | `orders.service.js:35-180`; `schema.sql:230-277` |
-| `src/modules/delivery.service.js` | all SQL functions | Delivery partner and status-log names/status values match schema. Cash-collection-shaped courier assumption is **superseded by Phases 4-5, do not fix**. | `delivery.service.js:33-81`; `schema.sql:295-320` |
-| `src/modules/payments.service.js` | COD collection functions | SQL matches the COD-era `cod_collections` table; payments/COD behavior is **superseded by Phases 4-5, do not fix**. | `payments.service.js:41-65`; `schema.sql:279-293` |
-| `src/modules/payout.service.js` | hold and release functions | Referenced payout-hold columns and enum values match schema; COD-order release flow is **superseded by Phases 4-5, do not fix**. | `payout.service.js:40-139`; `schema.sql:354-372` |
-| `src/modules/settlement.service.js` | settings and settlement functions | Referenced platform settings and settlement columns match schema; COD-era settlement flow is **superseded by Phases 4-5, do not fix**. | `settlement.service.js:25-113`; `schema.sql:374-400` |
-| `src/modules/disputes.service.js` | all SQL functions | Referenced orders, disputes, and evidence columns/statuses match schema. Its COD-shaped order dependencies are **superseded by Phases 4-5, do not fix**. | `disputes.service.js:44-160`; `schema.sql:245-263,322-352` |
-| `src/modules/admin.service.js` | all functions | No direct SQL; delegates SQL work to owning services. | `admin.service.js:1-117` |
+Evidence labels distinguish actual PostgreSQL reproductions from static review.
+PostgreSQL messages below were captured by temporary pin tests against
+PostgreSQL 18.6. Corrected users/catalog behaviors are now covered by normal
+passing integration tests with valid foreign-key fixtures and cleanup. Other
+unfixed mismatches remain positive Jest 29 `test.failing` probes.
 
-No `src/`, `db/`, or schema files were changed. This audit compares identifiers and
-enum values statically; passing matches are not claimed as end-to-end behavior proof.
+| Classification | File | Function / area | Finding | Evidence level and evidence |
+|---|---|---|---|---|
+| `fix-0a-2a` | `src/modules/users.service.js` | `registerUser` | **Fixed:** maps the input `name` to `users.full_name`. | **Passing PostgreSQL regression:** `registration persists the supplied name in the user full_name field`. The pre-repair pin had reproduced `42703`, column `name` did not exist. |
+| `fix-0a-2a` | `src/modules/users.service.js` | `suspendSeller` | **Fixed:** sets `users.is_suspended = true`. | **Passing PostgreSQL regression:** `seller suspension updates the is_suspended flag`. The pre-repair pin had reproduced `42703`, column `status` did not exist. |
+| `needs-decision` | `src/modules/users.service.js` | `submitSellerApplication` | FR-06 expects name, phone, and city input, while schema stores `user_id`, `reason_for_selling`, and `what_will_sell`. Decide whether values come from the user row or the schema/API needs a migration. | **Reproduced SQL error:** `42703`, `column "name" of relation "seller_applications" does not exist`. Conflict with FR-06 is also confirmed by static comparison. Service line 82; schema lines 57–69; `specs.md` FR-06. |
+| `fix-0a-2a` | `src/modules/users.service.js` | `reviewSellerApplication` | **Fixed:** writes the supplied reason to `rejection_reason`; no additional seller-approval behavior was added. | **Passing PostgreSQL regression:** `seller application rejection stores its rejection reason`. The pre-repair pin had reproduced `42703`, column `decision_reason` did not exist. |
+| `needs-decision` | `src/modules/users.service.js` | `reviewSellerApplication` | On approval, creates a seller profile and promotes the user but does not set `seller_profiles.is_approved` or `approved_at`. Confirm whether approval requires setting these fields. | **Static only:** service flow compared with existing profile fields and approval requirement. Service lines 106–110; schema lines 71–88. The earlier SQL error prevents this branch from being reached in the current implementation. |
+| `defer-Phase-1` | `src/modules/users.service.js` | `updateSellerPayoutMethod` | Writes absent `payout_details`; accepted method values `bank_transfer` / `mobile_wallet` differ from the schema enum (`bank`, `easypaisa`, `jazzcash`) and split storage columns. | **Reproduced first SQL error:** `42703`, `column "payout_details" of relation "seller_profiles" does not exist`. Further enum/storage behavior is statically compared. Service lines 177–185; schema lines 30–31, 71–88. |
+| `fix-0a-2a` | `src/modules/catalog.service.js` | `getMeasurementFieldDefs` | **Fixed:** orders by existing `display_order`. | **Passing PostgreSQL regression:** `measurement definition lookup returns fields ordered by display_order`. The pre-repair pin had reproduced `42703`, `sort_order` did not exist. |
+| `fix-0a-2a` | `src/modules/catalog.service.js` | `setMeasurementFieldDefs` | Replaces definitions without a `required` property, writes `display_order`, and returns the new rows from the same transaction. | **Passing PostgreSQL regression:** `measurement definition replacement persists supported fields in display order`. |
+| `needs-decision` | `src/modules/catalog.service.js` | `setMeasurementFieldDefs` `required` input | The schema has no `required` column. Definitions containing `required` explicitly fail before existing rows are deleted; support remains unresolved. Options are approve a schema migration/column or decide that `required` is not part of the persisted API. | **Passing PostgreSQL regression:** `measurement required flags fail before replacing existing definitions` verifies the explicit error and that existing definitions remain intact. No requirement was discarded and no schema/product decision was made. |
+| `fix-0a-2b` | `src/modules/listings.service.js` | `createListing` | Omits required `listings.title`, which has no default; it also omits `replica_disclosure`, so replica disclosure accepted by validation is not persisted. | **Reproduced title failure:** `23502`, `null value in column "title" of relation "listings" violates not-null constraint`. A scratch-copy PostgreSQL probe after bypassing the title failure found disclosure stored as `null`. Service lines 41–48; schema lines 126–154; `specs.md` FR-14. |
+| `fix-0a-2b` | `src/modules/listings.service.js` | `saveListingMeasurements` | Inserts `listing_measurements.field_name`; schema requires `field_def_id`. | **Scratch-copy PostgreSQL reproduction after bypassing the title failure:** `42703`, column `field_name` does not exist. Service line 68; schema lines 156–161. |
+| `fix-0a-2b` | `src/modules/listings.service.js` | `addListingImages` | Uses `url` and `sort_order`; schema uses `image_url` and `display_order`. | **Reproduced:** `42703`, `column "url" of relation "listing_images" does not exist`. Service line 78; schema lines 163–168. |
+| `fix-0a-2b` | `src/modules/listings.service.js` | `submitAuthenticityEvidence` | Uses `url` and `submitted_by`; schema has `evidence_url`, `evidence_type`, and no submitter column. | **Reproduced first SQL error:** `42703`, `column "url" of relation "listing_evidence" does not exist`. Service line 91; schema lines 170–176. |
+| `fix-0a-2b` | `src/modules/listings.service.js` | `approveListing` | Uses invalid `listing_status` value `live`, plus absent `approved_by` / `approved_at`; schema has `published`, `reviewed_by`, `published_at`. | **Reproduced enum error first:** `22P02`, `invalid input value for enum listing_status: "live"`. Missing reviewer/timestamp columns are **static** and masked by enum coercion. Service line 147; schema lines 121–154. |
+| `needs-decision` | `src/modules/listings.service.js` | `holdListingPendingIdVerification` | Uses `held_pending_id`, absent from `listing_status`; schema has no equivalent listing hold state. Decide the intended representation before changing the enum or behavior. | **Reproduced:** `22P02`, `invalid input value for enum listing_status: "held_pending_id"`. Service line 157; schema lines 121–125; FR-08b. |
+| `fix-0a-2b` | `src/modules/listings.service.js` | `rejectOrUnpublishListing` | Writes absent `decision_reason`; schema has `rejection_reason`. | **Reproduced:** `42703`, `column "decision_reason" of relation "listings" does not exist`. Service line 178; schema lines 126–154. |
+| `needs-decision` | `src/modules/discovery.service.js` | `filterListings` | Accepts `cityId` but never applies it; schema has no listing city column. Decide whether filtering should follow seller city or require another data-model change. | **Static only:** parameter is destructured but not used; no city column exists on `listings`. Service lines 37–46; schema lines 126–154. |
+| `fix-0a-2c` | `src/modules/discovery.service.js` | `searchListings`, `filterListings` | Filter on enum value `live`; schema uses `published`. | **Reproduced search error:** `22P02`, `invalid input value for enum listing_status: "live"`. Filter has the same static value. Service lines 28, 45; schema lines 121–125. |
+| `fix-0a-2c` | `src/modules/discovery.service.js` | `getSellerPublicCard` | Reads `profile.display_name`; schema names the column `display_alias`. | **Real-database result probe:** no SQL error; profile query returns `display_alias` and card `displayName` is `undefined`. Service line 94; schema lines 71–88. |
+| `fix-0a-2b` | `src/modules/listings.service.js` | `updateOwnListing` | Checks ownership but ignores `patch`, updates only `updated_at`, and returns the raw `db.query` result rather than the updated listing row. | **Static only:** source inspection; not an SQL/schema error. Service lines 168–173. |
+| `no-mismatch-static-only` | `src/modules/notifications.service.js` | SQL/listener queries | Referenced seller application, listing, order, and notification columns exist in schema. | **Static only:** identifier comparison; not a complete integration proof. Service lines 26–99; schema corresponding tables. |
+| `no-mismatch-static-only` | `src/modules/negotiation.service.js` | SQL functions | Conversation, message, and offer identifiers/statuses match schema. | **Static only:** identifier and enum comparison. Service lines 29–108; schema lines 195–228. |
+| `superseded-4-5` | `src/modules/orders.service.js` | COD-shaped order functions | Referenced columns/statuses match the COD-era schema; COD-shaped order/payment behavior is superseded. **Do not fix here.** | **Static only:** SQL/schema comparison. Service lines 35–180; schema lines 230–277. |
+| `superseded-4-5` | `src/modules/delivery.service.js` | Delivery partner/status functions | Referenced delivery columns/statuses match; cash-collection-shaped assumptions are superseded. **Do not fix here.** | **Static only:** SQL/schema comparison. Service lines 33–81; schema lines 295–320. |
+| `superseded-4-5` | `src/modules/payments.service.js` | COD collection functions | SQL matches the COD-era table. Payments/COD behavior is superseded. **Do not fix here.** | **Static only:** SQL/schema comparison. Service lines 41–65; schema lines 279–293. |
+| `superseded-4-5` | `src/modules/payout.service.js` | Hold/release functions | Referenced hold columns/statuses match; COD-order release flow is superseded. **Do not fix here.** | **Static only:** SQL/schema comparison. Service lines 40–139; schema lines 354–372. |
+| `superseded-4-5` | `src/modules/settlement.service.js` | Settings/settlement functions | Referenced columns match; COD-era settlement flow is superseded. **Do not fix here.** | **Static only:** SQL/schema comparison. Service lines 25–113; schema lines 374–400. |
+| `superseded-4-5` | `src/modules/disputes.service.js` | Dispute SQL/order dependencies | Referenced columns/statuses match; COD-shaped order dependencies belong to the later rewrite. **Do not fix here.** | **Static only:** SQL/schema comparison. Service lines 44–160; schema lines 245–263, 322–352. |
+| `no-mismatch-static-only` | `src/modules/admin.service.js` | All functions | No direct SQL; delegates to owning services. | **Static only:** source inspection. Service lines 1–117. |
+
+The persistent integration suite does not claim every row is reproduced. Current
+database error pins are temporary; retained fixed and expected-failure probes
+assert positive service behavior using real PostgreSQL rows and valid isolated
+fixtures. `fix-0a-2a` identifies the phase; rows marked **Fixed** are repaired and covered by passing
+PostgreSQL regression tests in Phase 0a-2a.
