@@ -11,12 +11,13 @@ say "Marketplace" — same project). **Reading order for a new session:**
 `HANDOFF.md` → `DEVELOPMENT_HANDOFF.md` → `MASTER_PROJECT_CONTEXT.md` → this file → `rules.md`
 → `Phases.md` → `security.md` → `specs.md` → `open-questions.md`.
 
-## Planned, NOT built — don't assume any of this exists
+## Phase status — implemented foundation and planned follow-up
 
 Decided in the scale/escrow/auth program (see `specs.md` sections 13–20 and
-`MASTER_PROJECT_CONTEXT.md`), none of it written yet: `worker.js` and
-`lib/queue.js` (Postgres-backed queue, outbox, webhook inbox), Redis, object
-storage and the image/video/story pipeline, a CDN and cache headers, PgBouncer,
+`MASTER_PROJECT_CONTEXT.md`): Phase 0b now has `worker.js`, `lib/queue.js`
+(PostgreSQL queue with transactional notification enqueue), and a Redis
+connection lifecycle. Payment webhook inbox, object storage and the
+image/video/story pipeline, a CDN and cache headers, PgBouncer,
 the `listing_search` table and
 suggestions, worker-generated HTML snapshots, JWT auth with two-factor login,
 escrow payments through a gateway, versioned listing content, encrypted
@@ -210,6 +211,14 @@ purpose so the schema works whichever way this eventually gets decided.
 - **FR-79c partial:** the web pool is bounded and has connection, statement,
   idle-transaction and lock timeouts; pool-acquisition timeouts map to 503.
   PgBouncer and deployed transaction-pool verification remain Phase 6 work.
+- Queue integration tests and FR-77 completion remain pending an
+  owner-confirmed disposable PostgreSQL test database. Do not mark FR-77/77a/77d
+  complete until the real-Postgres tests pass. The Phase 0b selection is pinned
+  to pg-boss 12.38.0; see `Phases.md` and `open-questions.md` for the stage-only
+  FR-77f resolution and open deployment verification.
+- Redis is connected by the web and worker entry points; cache and rate-limit
+  consumers are not implemented in this stage yet. Scheduled job processing is
+  enabled in the worker but no Phase 0b recurring job is registered.
 - **Discovery gaps:** FR-24 city filtering remains unresolved because
   listings have no city column; see `open-questions.md`. Do not treat seller
   city as listing city without a decision.

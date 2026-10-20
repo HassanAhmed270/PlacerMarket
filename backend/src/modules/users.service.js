@@ -95,16 +95,16 @@ async function reviewSellerApplication(applicationId, { decision, reason, review
   if (!['approved', 'rejected'].includes(decision)) {
     throw new ValidationError('decision must be "approved" or "rejected"');
   }
-  const { rows } = await db.query(
-    `UPDATE seller_applications
-     SET status = $1, rejection_reason = $2, reviewed_by = $3, reviewed_at = now()
-     WHERE id = $4 RETURNING *`,
-    [decision, reason || null, reviewerId, applicationId]
-  );
-  if (!rows[0]) throw new NotFoundError('seller_application', applicationId);
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `UPDATE seller_applications
+       SET status = $1, rejection_reason = $2, reviewed_by = $3, reviewed_at = now()
+       WHERE id = $4 RETURNING *`,
+      [decision, reason || null, reviewerId, applicationId]
+    );
+    if (!rows[0]) throw new NotFoundError('seller_application', applicationId);
 
-  if (decision === 'approved') {
-    await db.withTransaction(async (client) => {
+    if (decision === 'approved') {
       await client.query(
         `INSERT INTO seller_profiles (user_id, is_approved, approved_at)
          VALUES ($1, true, now())
@@ -112,11 +112,10 @@ async function reviewSellerApplication(applicationId, { decision, reason, review
         [rows[0].user_id]
       );
       await client.query(`UPDATE users SET role = 'seller' WHERE id = $1`, [rows[0].user_id]);
-    });
-  }
-
-  eventBus.emit(events.SELLER_APPLICATION_STATUS_CHANGED, { applicationId, decision, reason });
-  return rows[0];
+    }
+    await eventBus.emitAsync(events.SELLER_APPLICATION_STATUS_CHANGED, { applicationId, decision, reason }, { transaction: client });
+    return rows[0];
+  });
 }
 
 /** FR-07b: the review queue itself — UI places this under Admin -> Users, this is just the data. */

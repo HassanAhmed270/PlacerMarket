@@ -72,6 +72,7 @@ async function transitionListingToReview(listingId, sellerId, expectedStatus) {
        WHERE id = $2 RETURNING *`,
       [requiresId, listingId]
     );
+    await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: 'pending_review' }, { transaction: client });
     return updated[0];
   });
 }
@@ -255,9 +256,9 @@ async function approveListing(listingId, reviewerId) {
        WHERE id = $2 AND status = 'pending_review' RETURNING *`,
       [reviewerId, listingId]
     );
+    await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: 'published' }, { transaction: client });
     return published[0];
   });
-  eventBus.emit(events.LISTING_STATUS_CHANGED, { listingId, status: 'published' });
   return updated;
 }
 
@@ -337,21 +338,23 @@ async function updateOwnListing(listingId, sellerId, patch) {
 
 /** FR-21: admin can unpublish/reject a live listing post-publication, with a reason. */
 async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
-  const { rows } = await db.query(
-    `UPDATE listings
-     SET status = CASE WHEN status = 'published' THEN 'unpublished'::listing_status ELSE 'rejected'::listing_status END,
-         rejection_reason = $1, updated_at = now()
-     WHERE id = $2 AND status IN ('pending_review', 'published')
-     RETURNING *`,
-    [reason, listingId]
-  );
-  if (!rows[0]) {
-    const { rows: existing } = await db.query('SELECT id FROM listings WHERE id = $1', [listingId]);
-    if (!existing[0]) throw new NotFoundError('listing', listingId);
-    throw new ValidationError('Only listings pending review or published can be rejected or unpublished');
-  }
-  eventBus.emit(events.LISTING_STATUS_CHANGED, { listingId, status: rows[0].status, reason });
-  return rows[0];
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `UPDATE listings
+       SET status = CASE WHEN status = 'published' THEN 'unpublished'::listing_status ELSE 'rejected'::listing_status END,
+           rejection_reason = $1, updated_at = now()
+       WHERE id = $2 AND status IN ('pending_review', 'published')
+       RETURNING *`,
+      [reason, listingId]
+    );
+    if (!rows[0]) {
+      const { rows: existing } = await client.query('SELECT id FROM listings WHERE id = $1', [listingId]);
+      if (!existing[0]) throw new NotFoundError('listing', listingId);
+      throw new ValidationError('Only listings pending review or published can be rejected or unpublished');
+    }
+    await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: rows[0].status, reason }, { transaction: client });
+    return rows[0];
+  });
 }
 
 /** FR-21a: rejected listings can be resubmitted after edits, reviewed case-by-case, no cooldown. */

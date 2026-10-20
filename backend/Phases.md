@@ -65,10 +65,28 @@ by the human's decision (renumbering would touch every reference).
 - Already done (2026-10-16): Express 5 and the `db.one` / `db.many` helpers. New code uses the helpers; existing call sites are converted only when a module is touched (`rules.md` Section 12).
 
 **Backend — 0b queue and worker**
-- `worker.js` and `lib/queue.js` with outbox, leases, retries, dead-letter (FR-77, FR-77a, FR-77f — the library is verified against PostgreSQL + PgBouncer before it is committed); notification listeners enqueue instead of sending inline
+- `worker.js` and `lib/queue.js` with outbox, leases, retries, dead-letter (FR-77, FR-77a, FR-77f); notification listeners enqueue instead of sending inline
   (FR-77d); Redis for cache and rate-limit state. Real-Postgres tests for the
   queue guarantees (two workers claiming, crash after an effect, duplicate
   delivery).
+
+The Phase 0b queue selection review is recorded below; completion still
+requires the applicable integration tests against an owner-confirmed disposable
+PostgreSQL database. Do not tick FR-77/77a/77d until those checks pass. FR-77b/c/e
+jobs remain for the phases that implement payments, reservations, and media.
+
+**Stage-specific FR-77f resolution (owner-approved 2026-10-20):** Phase 0b may
+select and implement a queue without waiting for final PgBouncer provisioning.
+`pg-boss@12.38.0` is selected after official-document review. It supports
+PostgreSQL 13+ and Node.js 22.12+, transactional enqueue and transactional
+workers, durable PostgreSQL storage, concurrent claiming, retry/dead-letter
+handling, and optional LISTEN/NOTIFY with polling fallback. Its worker will use
+a direct PostgreSQL connection when LISTEN/NOTIFY is enabled. Actual behavior
+with the deployed PgBouncer transaction-pool configuration remains unverified
+and must be checked before Phase 6 deployment (or sooner if configured
+earlier). Real-PostgreSQL integration tests remain blocked until an
+owner-confirmed disposable database is available. FR-77f is not fully satisfied
+by this stage resolution.
 
 **Backend — 0c auth and hardening**
 - JWT login with server-side password hashing, the refresh-cookie flow, suspended users rejected immediately (FR-01, FR-02, FR-10, FR-84); two-factor at sign-in: email code for buyers, authenticator app for admins and moderators (FR-83, FR-83a, FR-83h); `npm run admin:create` with authenticator enrollment (FR-84).
@@ -86,7 +104,7 @@ by the human's decision (renumbering would touch every reference).
 **Security rows to close:** SEC-01, 02, 03, 04, 07, 08, 10, 15, 16 (framework),
 22, 23, 24, 25, 27, 28, 29, 38, and SEC-09 for the confirmed part (FR-83, FR-83a).
 
-**Decisions:** decided 2026-10-17 — sessions and token lifetimes (FR-84, FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the queue strategy (FR-77f) and Render for initial hosting (FR-79h). Still open for Phase 0: the resend-cooldown and sending-cap values, the queue library verification (before a library is committed), and the SEC-07 choice. Hosting details and the email provider are chosen before the first deployment / real login, not before Phase 0.
+**Decisions:** decided 2026-10-17 — sessions and token lifetimes (FR-84, FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the Phase 0b queue selection gate (stage-specific FR-77f resolution below), and Render for initial hosting (FR-79h). Still open for Phase 0: the resend-cooldown and sending-cap values, actual deployment-level PgBouncer compatibility (required before Phase 6), and the SEC-07 choice. Hosting details and the email provider are chosen before the first deployment / real login, not before Phase 0.
 
 **Gate**
 - [ ] Backend 0a, 0b, 0c done, with real-Postgres integration tests

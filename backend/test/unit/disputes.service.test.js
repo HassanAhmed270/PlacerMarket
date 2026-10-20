@@ -1,4 +1,7 @@
-jest.mock('../../src/db.service');
+jest.mock('../../src/db.service', () => ({
+  query: jest.fn(),
+  withTransaction: jest.fn(async (callback) => callback({ query: jest.fn() })),
+}));
 const db = require('../../src/db.service');
 const disputes = require('../../src/modules/disputes.service');
 const { NotYetSpecifiedError } = require('../../src/lib/errors');
@@ -20,7 +23,8 @@ describe('disputes.service.resolveDispute — FR-45a guard', () => {
 
   test('full refund to buyer (amount = order total) is allowed', async () => {
     mockDisputeLookup();
-    db.query.mockResolvedValueOnce({ rows: [{ id: disputeId, status: 'resolved_refund' }] }); // UPDATE result
+    db.withTransaction.mockImplementationOnce(async (callback) => callback({ query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{ id: disputeId, status: 'resolved_refund' }] }) }));
 
     await expect(
       disputes.resolveDispute(disputeId, { resolutionAmountToBuyer: agreedItemPrice, resolvedBy: 'admin-1' })
@@ -29,7 +33,8 @@ describe('disputes.service.resolveDispute — FR-45a guard', () => {
 
   test('full release to seller (amount = 0) is allowed', async () => {
     mockDisputeLookup();
-    db.query.mockResolvedValueOnce({ rows: [{ id: disputeId, status: 'resolved_release' }] }); // UPDATE result
+    db.withTransaction.mockImplementationOnce(async (callback) => callback({ query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{ id: disputeId, status: 'resolved_release' }] }) }));
 
     await expect(
       disputes.resolveDispute(disputeId, { resolutionAmountToBuyer: 0, resolvedBy: 'admin-1' })

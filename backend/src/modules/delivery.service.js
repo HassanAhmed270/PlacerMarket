@@ -64,13 +64,15 @@ async function logDeliveryStatus(orderId, { status, deliveryPartnerId, enteredBy
   if (!STATUS_VALUES.includes(status)) {
     throw new ValidationError(`status must be one of: ${STATUS_VALUES.join(', ')}`);
   }
-  const { rows } = await db.query(
-    `INSERT INTO delivery_status_log (order_id, delivery_partner_id, status, entered_by, note)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [orderId, deliveryPartnerId || null, status, enteredBy, note || null]
-  );
-  eventBus.emit(events.DELIVERY_STATUS_CHANGED, { orderId, status });
-  return rows[0];
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO delivery_status_log (order_id, delivery_partner_id, status, entered_by, note)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [orderId, deliveryPartnerId || null, status, enteredBy, note || null]
+    );
+    await eventBus.emitAsync(events.DELIVERY_STATUS_CHANGED, { orderId, status }, { transaction: client });
+    return rows[0];
+  });
 }
 
 // ---- FR-42: tracking view ----

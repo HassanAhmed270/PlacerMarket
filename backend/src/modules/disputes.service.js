@@ -138,14 +138,20 @@ async function resolveDispute(disputeId, { resolutionAmountToBuyer, resolvedBy, 
   }
 
   const resolutionStatus = amount === full ? 'resolved_refund' : 'resolved_release';
-  const { rows } = await db.query(
-    `UPDATE disputes
-     SET status = $1, resolution_amount_to_buyer = $2, resolved_by = $3, resolution_note = $4, resolved_at = now()
-     WHERE id = $5 RETURNING *`,
-    [resolutionStatus, amount, resolvedBy, resolutionNote || null, disputeId]
-  );
-  eventBus.emit(events.DISPUTE_RESOLVED, { disputeId, orderId: dispute.order_id, resolutionStatus, resolutionAmountToBuyer: amount });
-  return rows[0];
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `UPDATE disputes
+       SET status = $1, resolution_amount_to_buyer = $2, resolved_by = $3, resolution_note = $4, resolved_at = now()
+       WHERE id = $5 RETURNING *`,
+      [resolutionStatus, amount, resolvedBy, resolutionNote || null, disputeId]
+    );
+    await eventBus.emitAsync(
+      events.DISPUTE_RESOLVED,
+      { disputeId, orderId: dispute.order_id, resolutionStatus, resolutionAmountToBuyer: amount },
+      { transaction: client }
+    );
+    return rows[0];
+  });
 }
 
 /** FR-45f: the synchronous check payout.service.js's force-release MUST call before overriding a hold. */

@@ -50,13 +50,15 @@ async function sendMessage(conversationId, senderId, body) {
 
 /** FR-29: no fixed Buy Now path — this is the only way a sale starts. */
 async function makeOffer(conversationId, listingId, buyerId, amount) {
-  const { rows } = await db.query(
-    `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status)
-     VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
-    [conversationId, listingId, buyerId, amount]
-  );
-  eventBus.emit(events.OFFER_CREATED, { offerId: rows[0].id, listingId });
-  return rows[0];
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status)
+       VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
+      [conversationId, listingId, buyerId, amount]
+    );
+    await eventBus.emitAsync(events.OFFER_CREATED, { offerId: rows[0].id, listingId }, { transaction: client });
+    return rows[0];
+  });
 }
 
 /** FR-29: either party can counter; chained via parent_offer_id. */

@@ -31,4 +31,13 @@ const eventBus = new EventEmitter();
 // to the same event name over time; revisit if this warning ever fires.
 eventBus.setMaxListeners(30);
 
+/** Dispatch and await listeners that must participate in the caller's transaction. */
+eventBus.emitAsync = async function emitAsync(eventName, ...args) {
+  const listeners = this.rawListeners(eventName);
+  for (const listener of listeners) {
+    await listener.apply(this, args);
+  }
+  return listeners.length > 0;
+};
+
 module.exports = eventBus;

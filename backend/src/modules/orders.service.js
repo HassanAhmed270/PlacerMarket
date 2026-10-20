@@ -66,21 +66,23 @@ async function checkoutFromBag(orderId, buyerId, { deliveryAddress, paymentMetho
   if (!['cash', 'digital_transfer'].includes(paymentMethodPreference)) {
     throw new ValidationError('paymentMethodPreference must be "cash" or "digital_transfer" (FR-36a)');
   }
-  const { rows } = await db.query('SELECT * FROM orders WHERE id = $1', [orderId]);
-  const order = rows[0];
-  if (!order) throw new NotFoundError('order', orderId);
-  if (order.buyer_id !== buyerId) throw new ForbiddenError('Not your bag entry');
-  if (order.status !== 'bag') throw new ValidationError('Order is not in "bag" state');
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query('SELECT * FROM orders WHERE id = $1 FOR UPDATE', [orderId]);
+    const order = rows[0];
+    if (!order) throw new NotFoundError('order', orderId);
+    if (order.buyer_id !== buyerId) throw new ForbiddenError('Not your bag entry');
+    if (order.status !== 'bag') throw new ValidationError('Order is not in "bag" state');
 
-  const { rows: updated } = await db.query(
-    `UPDATE orders
-     SET delivery_address = $1, payment_method_preference = $2, delivery_fee = $3,
-         status = 'order_placed', checkout_completed_at = now()
-     WHERE id = $4 RETURNING *`,
-    [deliveryAddress, paymentMethodPreference, deliveryFee, orderId]
-  );
-  eventBus.emit(events.ORDER_STATUS_CHANGED, { orderId, status: 'order_placed' });
-  return updated[0];
+    const { rows: updated } = await client.query(
+      `UPDATE orders
+       SET delivery_address = $1, payment_method_preference = $2, delivery_fee = $3,
+           status = 'order_placed', checkout_completed_at = now()
+       WHERE id = $4 RETURNING *`,
+      [deliveryAddress, paymentMethodPreference, deliveryFee, orderId]
+    );
+    await eventBus.emitAsync(events.ORDER_STATUS_CHANGED, { orderId, status: 'order_placed' }, { transaction: client });
+    return updated[0];
+  });
 }
 
 // ---- FR-33: lifecycle ----
@@ -95,13 +97,15 @@ async function checkoutFromBag(orderId, buyerId, { deliveryAddress, paymentMetho
 async function setOrderStatus(orderId, newStatus, meta = {}) {
   const timestampColumn = { delivered: 'delivered_at', completed: 'completed_at' }[newStatus];
   const setClause = timestampColumn ? `, ${timestampColumn} = now()` : '';
-  const { rows } = await db.query(
-    `UPDATE orders SET status = $1 ${setClause} WHERE id = $2 RETURNING *`,
-    [newStatus, orderId]
-  );
-  if (!rows[0]) throw new NotFoundError('order', orderId);
-  eventBus.emit(events.ORDER_STATUS_CHANGED, { orderId, status: newStatus, ...meta });
-  return rows[0];
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `UPDATE orders SET status = $1 ${setClause} WHERE id = $2 RETURNING *`,
+      [newStatus, orderId]
+    );
+    if (!rows[0]) throw new NotFoundError('order', orderId);
+    await eventBus.emitAsync(events.ORDER_STATUS_CHANGED, { orderId, status: newStatus, ...meta }, { transaction: client });
+    return rows[0];
+  });
 }
 
 /** FR-33a: free cancellation before handover to delivery partner, no fee. */

@@ -1,6 +1,8 @@
 const { Router } = require('express');
 const admin = require('../modules/admin.service');
+const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { ValidationError } = require('../lib/errors');
 
 const router = Router();
 router.use(requireAuth);
@@ -34,6 +36,18 @@ router.post('/listings/:id/verified-badge', requirePermission('listing.grant_ver
 
 router.get('/operations-overview', requirePermission('operations.view'), async (req, res) => {
   res.json(await admin.getOperationsOverview()); // FR-55
+});
+
+router.get('/queue/dead-letters', requirePermission('operations.view'), async (req, res) => {
+  const limit = req.query.limit === undefined ? 50 : Number(req.query.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ValidationError('limit must be an integer from 1 to 100');
+  }
+  res.json({ deadLetters: await queue.listDeadLetters({ limit, after: req.query.after }) }); // FR-77a
+});
+
+router.get('/queue/health', requirePermission('operations.view'), async (_req, res) => {
+  res.json({ queues: await queue.getQueueHealth() }); // FR-77c
 });
 
 router.post('/disputes/:id/resolve', requirePermission('dispute.resolve'), async (req, res) => {

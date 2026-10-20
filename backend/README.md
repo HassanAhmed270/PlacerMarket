@@ -20,9 +20,11 @@ requirements). This README only covers running the thing.
 
 ```bash
 npm install
-cp .env.example .env    # fill in DATABASE_URL at minimum
+cp .env.example .env    # fill in DATABASE_URL and REDIS_URL
 npm run db:setup        # applies schema.sql, then seeds platform_settings
 npm start                # or: npm run dev (auto-restart on file change)
+# in another process, run the worker:
+npm run worker
 ```
 
 The setup command expects an empty database. For a database that already has
@@ -49,13 +51,18 @@ npm test
 ```
 
 Jest. `test/unit/` covers pure logic and mocked service behavior. The real
-PostgreSQL suite is `npm run test:integration`; its guard requires a disposable
-local database whose name contains `test` as a delimited token, then resets
-only that database's `public` schema.
+PostgreSQL suite is `npm run test:integration`; its guard requires a confirmed
+disposable local database URL whose name contains `test` as a delimited token,
+then resets only that database's `public` schema. Never point it at an ordinary
+development database.
 
 Coverage today is intentionally partial — it proves the pattern and covers
 the two OPEN-item guards (FR-45a/FR-50a) and the FR-05a permission matrix,
 not every function. Extend it as you build out each module's real logic.
+
+The PostgreSQL queue integration suite covers durable enqueue, transaction
+rollback, concurrent workers/FIFO, and transactional effect retry. It requires
+the guarded disposable test database above.
 
 ## Git hooks
 
@@ -74,6 +81,10 @@ this folder is the repo root.
   an Admin-only stand-in) — see agent.md's "Known gaps" section.
 - Full expand/switch/contract migration compatibility checks, worker backfills,
   and deployed PgBouncer behavior are still future work.
+- The Phase 0b queue uses pinned `pg-boss@12.38.0` and Redis. Set
+  `QUEUE_DATABASE_URL` to a direct PostgreSQL URL when web `DATABASE_URL` uses
+  transaction pooling. Actual deployment PgBouncer compatibility is still an
+  open Phase 6 verification.
 
 ## Project layout
 
