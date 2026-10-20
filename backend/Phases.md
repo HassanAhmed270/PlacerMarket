@@ -33,9 +33,10 @@ through a licensed gateway; an order becomes Funded only from a verified webhook
 (FR-60, FR-61). Flow (FR-62): offer accepted → Bag (listing reserved for that
 buyer, with a payment window) → Funded → ship → Delivered (only an admin marks
 it, FR-68) → hold and complaint window → Completed. The platform absorbs the
-gateway fee (FR-64); payouts are manual at launch (FR-65); a seller is
-ID-verified before their first payout (FR-66); no cool-off on payout-detail
-changes (FR-67). Partial refunds (FR-71) are Claude's recommendation, unconfirmed.
+gateway fee (FR-64); payouts are manual at launch (FR-65); a seller's registered
+email must be verified before their first payout under the temporary policy (FR-66);
+no cool-off on payout-detail changes (FR-67). Partial refunds (FR-71) are Claude's
+recommendation, unconfirmed.
 
 **Scale program (10K concurrent visitors).** One codebase, two processes:
 `server.js` and `worker.js`; a Postgres-backed queue behind `lib/queue.js`;
@@ -96,10 +97,15 @@ by the human's decision (renumbering would touch every reference).
 
 ## Phase 1 — Identity, catalog, seller onboarding
 
-**Backend:** Module 1 beyond what Phase 0 built (FR-03–FR-09, FR-05a, FR-07a/b;
-FR-08b stays OPEN), Module 2 (FR-11–FR-14a), cities (FR-04), admin seller-application
+**Backend:** Module 1 beyond what Phase 0 built (FR-03–FR-09, FR-05a, FR-07a/b),
+Module 2 (FR-11–FR-14a), cities (FR-04), admin seller-application
 review (FR-53), application-level encryption for payout details (FR-79f) and the
 role rules for sellers if confirmed (FR-83c).
+
+Before Phase 2 begins, implement and test the temporary registered-email verification
+requirement for high-value listings and first payouts (FR-08a, FR-08b, FR-19b, FR-66).
+It verifies control of the email address, not legal identity; do not set
+`seller_profiles.id_verified` or add a listing status for it.
 
 **Frontend:** Kids' as a third main category · Condition/Type set with Replica
 disclosure · seller-application review sub-tab in Admin → Users · Bank vs Mobile
@@ -112,6 +118,7 @@ encrypted fields; confirm SEC-35.
 
 **Gate**
 - [ ] Backend FRs above ticked
+- [ ] Temporary email verification above implemented and tested before Phase 2
 - [ ] Frontend items above ticked
 - [ ] SEC rows above ticked
 - [ ] Decisions above resolved
@@ -121,8 +128,8 @@ encrypted fields; confirm SEC-35.
 
 **Backend:** Module 3 (FR-15–FR-21a), versioned listing content with moderated edits (FR-73, FR-73a; price-edit rule FR-73e once confirmed), 3–6 photos with required shots and the image pipeline —
 presigned uploads, worker variants, private originals (FR-74, FR-74d, and FR-74a/c
-once confirmed), listing moderation (FR-19, FR-54 listing actions), the ID gate
-(FR-08a, FR-19b), the manual hold for FR-08b, the manual Verified badge (FR-18/18a).
+once confirmed), listing moderation (FR-19, FR-54 listing actions), the temporary
+email-verification gate (FR-08a, FR-19b), the manual Verified badge (FR-18/18a).
 **Not built until discussed:** video (FR-75–FR-75c) and story/voice (FR-76, FR-76a).
 
 **Frontend:** structured measurement fields · fabric/material, brand, color,
@@ -211,7 +218,7 @@ general-notification channel.
 (FR-43–FR-45 and the return flow for a full refund; partial refunds FR-71 once
 confirmed), admin-triggered idempotent gateway refunds (FR-69), Module 10
 (FR-46–FR-50a: commission on what the seller receives, manual payouts FR-48/FR-65,
-ID-verified before the first payout FR-66), the settlement reconciliation job
+registered email verified before the first payout under the temporary policy FR-66), the settlement reconciliation job
 (FR-70), append-only ledger writes (FR-79f), two-way reviews after Completed (FR-27b).
 
 **Frontend:** buyer "report an issue" · admin HELD view with countdown and
@@ -223,7 +230,7 @@ settlement and payout screens · two-way reviews from the completed Orders page.
 **Decisions needed first:** confirm partial refunds (FR-45a, FR-50a, FR-71) ·
 lost-parcel recovery (FR-72e) · refusal/return flow and return shipping cost (FR-33b) · delivery fee on a full
 refund (FR-72a) · chargeback liability (FR-72b) · funds held for a seller who never
-verifies (FR-72c).
+completes the required temporary email verification (FR-72c).
 
 **Gate**
 - [ ] Backend FRs above ticked

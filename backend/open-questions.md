@@ -19,7 +19,6 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-19 · FR-15a · `setMeasurementFieldDefs` accepts `required`, but `measurement_field_defs` has no such column. The service now explicitly rejects definitions containing `required` before replacing existing rows; ordinary field definitions persist normally. Decide whether `required` belongs in a schema migration/column or should be removed from the persisted API. No schema or product decision was made.
 - 2026-10-19 · FR-15a · Replacing measurement definitions fails with PostgreSQL `23503` when an existing `listing_measurements` row references a definition; the transaction rolls back and preserves both rows. Decide intended behavior for referenced definitions, such as updating in place or defining explicit removal/replacement rules. These are options only; no implementation or permanent restriction is approved.
 - 2026-10-19 · FR-09a · Confirm Phase 1 scope and intended mapping/storage for `updateSellerPayoutMethod`; current API values differ from the schema enum and columns.
-- 2026-10-19 · FR-08b · `held_pending_id` is not in the listing status enum. Decide whether the listing schema should gain this state or the hold should be represented another way.
 - 2026-10-19 · FR-24 · `filterListings` accepts `cityId`, but listings have no city column. Decide whether seller city should drive the filter or the listing data model should change.
 
 ### Needed by Phase 0
@@ -82,6 +81,7 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 
 ## Resolved
 
+- 2026-10-20 · FR-08a / FR-08b / FR-19b / FR-66 · **Temporary email-verification policy approved:** verify control of the seller's registered email wherever verification is required for the current project stage. High-value listings still follow the existing per-listing threshold and cannot publish before email verification; sellers must verify email before first payout. This does not prove legal identity, does not set `seller_profiles.id_verified`, and introduces no listing status or manual identity review. Complete implementation before Phase 2; see `specs.md` and `Phases.md`.
 - 2026-10-17 · FR-83d · **Buyer email codes approved:** six digits, five-minute expiry, single use, only a hash stored, at most 3 verification attempts per code, resend cooldown and sending caps (values open above), identical responses whether or not the account exists.
 - 2026-10-17 · FR-84a · **Token lifetimes approved (configurable defaults):** access token 15 minutes in memory; buyer refresh 30-day absolute / 7-day inactivity; staff refresh 8-hour absolute / 30-minute inactivity; rotation on every refresh; reuse revokes the token family; enforced server-side.
 - 2026-10-17 · FR-77f / FR-79c · **Queue strategy approved:** verify the library against the real PostgreSQL + PgBouncer configuration before committing (the verification itself stays open); direct worker connections only when the library requires them; if incompatible, choose a compatible architecture; a transactional outbox or equivalent keeps an order and its job consistent; jobs are retryable and safe against duplicate execution.

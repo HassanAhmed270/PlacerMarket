@@ -103,11 +103,15 @@ async function reviewSellerApplication(applicationId, { decision, reason, review
   if (!rows[0]) throw new NotFoundError('seller_application', applicationId);
 
   if (decision === 'approved') {
-    await db.query(
-      `INSERT INTO seller_profiles (user_id) VALUES ($1) ON CONFLICT (user_id) DO NOTHING`,
-      [rows[0].user_id]
-    );
-    await db.query(`UPDATE users SET role = 'seller' WHERE id = $1`, [rows[0].user_id]);
+    await db.withTransaction(async (client) => {
+      await client.query(
+        `INSERT INTO seller_profiles (user_id, is_approved, approved_at)
+         VALUES ($1, true, now())
+         ON CONFLICT (user_id) DO UPDATE SET is_approved = true, approved_at = now()`,
+        [rows[0].user_id]
+      );
+      await client.query(`UPDATE users SET role = 'seller' WHERE id = $1`, [rows[0].user_id]);
+    });
   }
 
   eventBus.emit(events.SELLER_APPLICATION_STATUS_CHANGED, { applicationId, decision, reason });
@@ -127,8 +131,16 @@ async function getSellerApplicationQueue({ status = 'pending' } = {}) {
 
 /** FR-08: gate for seller-only tools (listing creation, dashboard, offers). */
 async function isApprovedSeller(userId) {
-  const role = await getUserRole(userId);
-  return role === 'seller';
+  const { rows } = await db.query(
+    `SELECT u.role, u.is_suspended, sp.is_approved
+     FROM users u JOIN seller_profiles sp ON sp.user_id = u.id
+     WHERE u.id = $1`,
+    [userId]
+  );
+  return Boolean(rows[0]
+    && rows[0].role === 'seller'
+    && !rows[0].is_suspended
+    && rows[0].is_approved);
 }
 
 /** FR-08a: ID verification is required only once a listing crosses the admin-configurable threshold. */
@@ -146,23 +158,6 @@ async function isIdVerified(userId) {
 /** FR-08a: mark a seller ID-verified. */
 async function markIdVerified(userId, adminId) {
   await db.query('UPDATE seller_profiles SET id_verified = true WHERE user_id = $1', [userId]);
-}
-
-/**
- * FR-08b (OPEN): a high-value listing submitted before ID verification is
- * complete has NO automatic rule — this is confirmed to be a manual,
- * case-by-case admin/moderator call (hold / approve-but-unpublished /
- * reject). That decision itself is settled; what's NOT settled is any
- * automatic criteria, so this function intentionally has no automatic
- * branch — it just records whichever manual choice the admin makes.
- * See listings.service.js `holdListingPendingIdVerification()` for the
- * listing-side state transition this drives.
- */
-async function recordManualIdVerificationDecision(userId, { decision, adminId, note }) {
-  // decision: 'hold' | 'approve_unpublished' | 'reject' — chosen by a human,
-  // not derived here. No NotYetSpecifiedError: the *process* is decided
-  // (manual, case-by-case); only a future automatic rule is open.
-  return { userId, decision, adminId, note, recordedAt: new Date().toISOString() };
 }
 
 /** FR-09: individual seller profile (must read as an individual, not a storefront). */
@@ -206,7 +201,6 @@ module.exports = {
   isIdVerificationRequired,
   isIdVerified,
   markIdVerified,
-  recordManualIdVerificationDecision,
   getSellerProfile,
   updateSellerPayoutMethod,
   suspendSeller,

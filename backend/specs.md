@@ -18,8 +18,8 @@
 - [ ] FR-07a Rejected seller applications can be resubmitted; reviewed case-by-case, no automatic cooldown/retry rule.
 - [ ] FR-07b Seller-application review queue lives as a sub-tab inside Admin → Users (not a separate top-level nav item).
 - [ ] FR-08 Only approved sellers can access seller tools (listing creation, seller dashboard, offer management).
-- [ ] FR-08a CNIC/ID verification is required only when a listing's price crosses an admin-configurable high-value threshold — triggered per-listing, not per-seller-upfront. Seller record needs a separate "ID verified" flag.
-- [ ] FR-08b **(OPEN)** Handling of a high-value listing submitted before ID verification is complete: no automatic rule — admin/moderator decides case-by-case (hold / approve-but-unpublished / reject). UI needs to support a manual holding state here.
+- [ ] FR-08a Temporary policy: verify control of the seller's registered email only when a listing's price crosses the admin-configurable high-value threshold — triggered per-listing, not per-seller-upfront. Email verification is not proof of legal identity and must not set `seller_profiles.id_verified`.
+- [ ] FR-08b Until stronger verification is approved, a high-value listing whose seller's registered email is unverified remains `pending_review` and cannot be published. No manual identity review or new listing status is used for this temporary policy.
 - [ ] FR-09 Approved sellers maintain an individual seller profile (name/alias, rating, join date, item count) — must read as an individual, not a shop/storefront.
 - [ ] FR-09a Seller profile captures payout method: bank transfer OR mobile wallet (Easypaisa/JazzCash), seller's choice, switchable.
 - [ ] FR-10 Admin can suspend/revoke a seller's approval.
@@ -39,9 +39,9 @@
 - [ ] FR-17 Sellers can optionally submit authenticity evidence (receipts, tags, docs) for a listing.
 - [ ] FR-18 Admin/Moderator can review evidence and grant a "Verified Listing" badge — independent of item condition.
 - [ ] FR-18a **(OPEN)** Verified-badge grant criteria not yet defined — to be decided later by admin.
-- [ ] FR-19 All new listings enter ONE unified moderation queue, requiring approval before going live. High-value (CNIC-required) and evidence-submitted listings are flagged/badged inline within this same queue, not split into separate queues.
+- [ ] FR-19 All new listings enter ONE unified moderation queue, requiring approval before going live. High-value (email-verification-required under the temporary policy) and evidence-submitted listings are flagged/badged inline within this same queue, not split into separate queues.
 - [ ] FR-19a Listing approval (go-live) and Verified-badge grant are separate, independent decisions — a listing can be approved to go live without the Verified badge.
-- [ ] FR-19b Listings above the high-value threshold additionally require the seller's ID verification before approval (see FR-08a/FR-08b).
+- [ ] FR-19b Listings above the high-value threshold additionally require the seller's registered email to be verified before approval under the temporary policy (see FR-08a/FR-08b).
 - [ ] FR-20 Sellers can edit, pause, or remove their own listings. Edits to a LIVE listing go through moderation (FR-73) and the approved version stays public meanwhile; pausing or removing is immediate, except while the listing is reserved (FR-63a, DISCUSS). *(Revised 2026-10-15: removes the clash with FR-73.)*
 - [ ] FR-21 Admin can unpublish/reject a listing post-publication if it violates policy, with a reason.
 - [ ] FR-21a Rejected listings can be resubmitted after edits; reviewed case-by-case, no automatic cooldown.
@@ -140,7 +140,7 @@
 - [ ] FR-63c **(DISCUSS)** Reservation hoarding: an admin-configurable cap on a buyer's active reservations (value open). Reservations are created by a seller accepting, so this only matters when many sellers accept the same buyer; FR-32b's single-item rule applies to checkout.
 - [ ] FR-64 The platform absorbs the gateway processing fee out of its own commission; the actual fee is stored on each payment record.
 - [ ] FR-65 Seller payouts are MANUAL at launch: an admin initiates the bank / mobile-wallet transfer (FR-48). No payout automation through the gateway.
-- [ ] FR-66 A seller must be ID-verified before their FIRST payout, regardless of listing price (extends FR-08a).
+- [ ] FR-66 Under the temporary policy, a seller's registered email must be verified before their FIRST payout, regardless of listing price. This confirms email control, not legal identity.
 - [ ] FR-67 No cool-off period when a seller changes payout details (protective controls are tracked in security.md SEC-35).
 - [ ] FR-68 Only an ADMIN may mark an order Delivered (this starts the complaint window), through a dedicated `order.mark_delivered` permission rather than a hard-coded role check. Manual delivery status entry is admin-only for now. Because this is a permission, an ops role can take it over later without code changes.
 - [ ] FR-69 **(DISCUSS)** Refunds are admin-triggered, idempotent, and sent through the gateway to the original payment method.
@@ -149,7 +149,7 @@
 - [ ] FR-72 **(DEFERRED)** Seller no-ship policy: what happens when a seller never hands the item to the courier after the buyer has paid.
 - [ ] FR-72a **(DEFERRED)** Delivery fee on a full refund: refunded or kept.
 - [ ] FR-72b **(DEFERRED)** Chargeback liability: who bears a card chargeback after the seller has been paid.
-- [ ] FR-72c **(OPEN)** Held funds for a seller who never completes ID verification (FR-66).
+- [ ] FR-72c **(OPEN)** Handling of funds for a seller who never completes the required temporary email verification (FR-66).
 - [ ] FR-72e **(DEFERRED)** Order handed over but never delivered (a lost parcel): the buyer cannot cancel (FR-33a) and cannot dispute (FR-43 needs a delivered order), and nothing starts the clock — how the buyer recovers paid money is undecided. Discuss with returns, refunds and disputes.
 
 ## 14. Listing content versioning & caching  (scale program, Point 1)
@@ -158,7 +158,7 @@
 - [ ] FR-73b **(DISCUSS)** Hardening: latest_version vs published_version pointers; drafts served privately with no-store; invalid version values return a short-cached 404; take-down purges immediately; status read from Redis (one batch call for list pages) with a "Check availability" fallback and stale-if-error; private files (ID documents, dispute evidence) in a private bucket with short-lived signed links; video embed follows status; operations that move money or accept offers (offer, accept, checkout, payment, refund, payout) always read the live database — the displayed asking price may lag the cached status by up to the status cache lifetime; the offer action always checks the live database.
 - [ ] FR-73c **(DISCUSS)** Starting cache values, tuned in load tests: status 5–10 s, list/search pages ~60 s, content up to ~1 day, images 1 year immutable via content-hashed URLs; public routes never set cookies; hit-rate target above 90%.
 - [ ] FR-73d **(DISCUSS)** A Jest test walks all routes and fails if a private or money route lacks `Cache-Control: private, no-store` (public routes use an allow-list).
-- [ ] FR-73e **(DISCUSS)** Price edits on a live listing: a decrease takes effect immediately; an increase goes through moderation; an edit that raises the price above the high-value threshold requires the seller's ID verification (FR-08a) before it goes live.
+- [ ] FR-73e **(DISCUSS)** Price edits on a live listing: a decrease takes effect immediately; an increase goes through moderation; an edit that raises the price above the high-value threshold requires the seller's registered email to be verified under the temporary policy (FR-08a) before it goes live.
 
 ## 15. Listing media — photos, video, story  (scale program Point 2; listing-submission decisions)
 - [ ] FR-74 A listing needs at least 3 and at most 6 photos; the three required photos cover the front, the back and the other piece(s) of the outfit (a close-up detail for single-piece outfits).
@@ -247,7 +247,6 @@
 ## Open product decisions still blocking full spec (tracked, not yet resolved)
 - [ ] Dispute resolution granularity (binary vs. partial/split) — FR-45a (Claude recommended partial, FR-71; awaiting confirmation)
 - [ ] Verified-badge grant criteria — FR-18a
-- [ ] Handling of high-value listing pending ID verification — FR-08b
 - [ ] Delivery-partner count and city-based assignment — FR-40a
 - [ ] COD refusal-at-the-door flow (major gap) — FR-33b (parked; now a refund/return question under escrow)
 - Full register of open, deferred and parked decisions: `open-questions.md`.
@@ -263,7 +262,7 @@
 - [ ] Add structured per-sub-category measurement fields to the Sell form.
 - [ ] Add fabric/material, brand, color, embellishment/handwork fields to the Sell form.
 - [ ] Add authenticity-evidence upload step + Verified badge display on ProductCard/Product detail.
-- [ ] Reframe `/verification` screen: CNIC trigger tied to per-listing price threshold, not a blanket requirement.
+- [ ] Reframe `/verification` screen: explain temporary registered-email verification for high-value listings; it is not a legal-identity check or blanket signup requirement.
 - [ ] Rework payout field into explicit Bank vs. Mobile Wallet (Easypaisa/JazzCash) choice.
 - [ ] Build payout-hold/dispute-window UI (buyer "report an issue" action + admin/ops HELD view with countdown and open-dispute flag).
 - [ ] Build dedicated seller-application review sub-tab inside Admin → Users (approve/reject + reason + resubmission tracking).
