@@ -1,6 +1,6 @@
 /** FR-77: the separate worker process consumes durable PostgreSQL jobs. */
 
-const { createQueueClient, QUEUES } = require('./src/lib/queue');
+const { createQueueClient, QUEUES, WORKER_CONCURRENCY } = require('./src/lib/queue');
 const { createRedisClient } = require('./src/lib/redis');
 const notifications = require('./src/modules/notifications.service');
 
@@ -13,7 +13,7 @@ async function startWorker() {
     await queue.start();
     await queue.boss.work(
       QUEUES.NOTIFICATIONS,
-      { batchSize: 1, localConcurrency: queueLib.WORKER_CONCURRENCY[QUEUES.NOTIFICATIONS], transactional: true },
+      { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.NOTIFICATIONS], transactional: true },
       async ([job], transactionDb) => notifications.processNotificationJob(job.data, transactionDb)
     );
     // eslint-disable-next-line no-console
