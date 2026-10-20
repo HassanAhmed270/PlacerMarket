@@ -94,16 +94,34 @@ describe('FR-79b PostgreSQL migration runner', () => {
     try {
       await createSchema(schema);
       fs.writeFileSync(migrationPath, 'CREATE TABLE retry_probe (id integer); SELECT 1 / 0;');
-      await expect(runMigrations({ databaseUrl, schema, migrationsDir: dir })).rejects.toThrow();
+      let migrationError;
+      try {
+        await runMigrations({ databaseUrl, schema, migrationsDir: dir });
+      } catch (error) {
+        migrationError = error;
+      }
+      expect(migrationError).toEqual(expect.objectContaining({
+        message: expect.stringMatching(/division by zero/i),
+        code: '22012',
+      }));
+
       const afterFailure = await db.query(
         "SELECT to_regclass($1) AS relation", [`${schema}.retry_probe`]
       );
       expect(afterFailure.rows[0].relation).toBeNull();
+      const historyAfterFailure = await db.query(
+        `SELECT name FROM "${schema}".schema_migrations WHERE name = $1`, ['001_retry']
+      );
+      expect(historyAfterFailure.rows).toEqual([]);
 
       fs.writeFileSync(migrationPath, 'CREATE TABLE retry_probe (id integer);');
       await expect(runMigrations({ databaseUrl, schema, migrationsDir: dir })).resolves.toHaveLength(1);
       const afterRetry = await db.query(`SELECT to_regclass($1) AS relation`, [`${schema}.retry_probe`]);
       expect(afterRetry.rows[0].relation).not.toBeNull();
+      const historyAfterRetry = await db.query(
+        `SELECT name FROM "${schema}".schema_migrations WHERE name = $1`, ['001_retry']
+      );
+      expect(historyAfterRetry.rows).toEqual([{ name: '001_retry' }]);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
