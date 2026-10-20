@@ -160,6 +160,15 @@ async function addListingImages(listingId, sellerId, imageUrls) {
   });
 }
 
+/** FR-25: expose a listing's ordered photo rows to public detail reads. */
+async function getListingImages(listingId) {
+  const { rows } = await db.read(
+    'SELECT id, image_url, display_order FROM listing_images WHERE listing_id = $1 ORDER BY display_order, id',
+    [listingId]
+  );
+  return rows;
+}
+
 /** FR-19: sellers explicitly submit a draft after completing its required photos. */
 async function submitListingForReview(listingId, sellerId) {
   return transitionListingToReview(listingId, sellerId, 'draft');
@@ -353,6 +362,7 @@ async function resubmitListing(listingId, sellerId) {
 module.exports = {
   createListing,
   addListingImages,
+  getListingImages,
   submitListingForReview,
   submitAuthenticityEvidence,
   setVerifiedBadge,

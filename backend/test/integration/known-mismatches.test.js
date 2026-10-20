@@ -5,6 +5,8 @@ const listings = require('../../src/modules/listings.service');
 const { ForbiddenError, ValidationError } = require('../../src/lib/errors');
 const discovery = require('../../src/modules/discovery.service');
 const { createFixture } = require('./fixtures');
+const request = require('supertest');
+const app = require('../../src/app');
 
 let fixture;
 let registrationPhone;
@@ -67,23 +69,28 @@ describe('known schema and service mismatches', () => {
     expect(stored.rows[0]).toEqual({ status: 'rejected', rejection_reason: 'Does not meet criteria' });
   });
 
-  test('seller application approval promotes the user and creates a profile', async () => {
+  test('FR-07, FR-08: seller application approval promotes the user and creates an approved profile', async () => {
     await db.query('DELETE FROM seller_profiles WHERE user_id = $1', [fixture.userId]);
     await db.query("UPDATE users SET role = 'buyer' WHERE id = $1", [fixture.userId]);
     const result = await users.reviewSellerApplication(fixture.applicationId, {
       decision: 'approved', reviewerId: fixture.userId,
     });
     const { rows } = await db.query(
-      `SELECT u.role, sp.user_id FROM users u LEFT JOIN seller_profiles sp ON sp.user_id = u.id WHERE u.id = $1`,
+      `SELECT u.role, sp.user_id, sp.is_approved, sp.approved_at
+       FROM users u LEFT JOIN seller_profiles sp ON sp.user_id = u.id WHERE u.id = $1`,
       [fixture.userId]
     );
     expect(result.status).toBe('approved');
-    expect(rows[0]).toEqual({ role: 'seller', user_id: fixture.userId });
+    expect(rows[0]).toEqual({
+      role: 'seller', user_id: fixture.userId, is_approved: true, approved_at: expect.any(Date),
+    });
   });
 
-  test.failing('seller public card returns the configured display alias', async () => {
+  test('FR-27a: public seller card contains only rating and join date', async () => {
     const card = await discovery.getSellerPublicCard(fixture.userId);
-    expect(card.displayName).toBe(`Fixture alias ${fixture.suffix}`);
+    expect(card).toEqual({
+      joinDate: expect.any(Date), averageRating: 0, ratingCount: 0,
+    });
   });
 
   test('measurement definition lookup returns fields ordered by display_order', async () => {
@@ -486,9 +493,64 @@ describe('known schema and service mismatches', () => {
     )).rejects.toBeInstanceOf(ForbiddenError);
   });
 
-  test.failing('listing search finds published listings', async () => {
+  test('FR-23: keyword search matches title or description on published listings only', async () => {
     await db.query("UPDATE listings SET status = 'published', description = 'searchable probe phrase' WHERE id = $1", [fixture.listingId]);
-    const results = await discovery.searchListings('searchable probe phrase');
+    const { rows: hidden } = await db.query(
+      `INSERT INTO listings (seller_id, main_category_id, sub_category_id, condition, title, description, asking_price, status)
+       VALUES ($1, $2, $3, 'brand_new', 'Hidden match', 'searchable probe phrase', 10, 'pending_review') RETURNING id`,
+      [fixture.userId, fixture.categoryId, fixture.subCategoryId]
+    );
+    const descriptionResults = await discovery.searchListings('searchable probe phrase');
+    expect(descriptionResults.map((row) => row.id)).toContain(fixture.listingId);
+    expect(descriptionResults.map((row) => row.id)).not.toContain(hidden[0].id);
+    const titleResults = await discovery.searchListings('Fixture listing');
+    expect(titleResults.map((row) => row.id)).toContain(fixture.listingId);
+  });
+
+  test('FR-24: category, condition, and inclusive price filters include zero minimum', async () => {
+    await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
+    const results = await discovery.filterListings({
+      mainCategoryId: fixture.categoryId, subCategoryId: fixture.subCategoryId,
+      condition: 'brand_new', minPrice: '0', maxPrice: '10',
+    });
     expect(results.map((row) => row.id)).toContain(fixture.listingId);
+  });
+
+  test('FR-25: listing details hide non-published content and include ordered images and limited seller summary', async () => {
+    expect(await discovery.getListingDetail(fixture.listingId)).toBeNull();
+    await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
+    await db.query(
+      `INSERT INTO listing_images (listing_id, image_url, display_order)
+       VALUES ($1, 'https://images.invalid/second.jpg', 1), ($1, 'https://images.invalid/first.jpg', 0)`,
+      [fixture.listingId]
+    );
+    const detail = await discovery.getListingDetail(fixture.listingId);
+    expect(detail).toMatchObject({ id: fixture.listingId, images: [
+      { image_url: 'https://images.invalid/first.jpg', display_order: 0 },
+      { image_url: 'https://images.invalid/second.jpg', display_order: 1 },
+    ], seller: { joinDate: expect.any(Date), averageRating: 0, ratingCount: 0 } });
+    expect(detail).not.toHaveProperty('reviewed_by');
+    expect(detail).not.toHaveProperty('seller_id');
+    expect(detail.seller).not.toHaveProperty('displayName');
+    await db.query("UPDATE listings SET status = 'rejected' WHERE id = $1", [fixture.listingId]);
+    expect(await discovery.getListingDetail(fixture.listingId)).toBeNull();
+  });
+
+  test('FR-22: public listing-detail route serves published listing photos without authentication', async () => {
+    await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
+    await db.query(
+      'INSERT INTO listing_images (listing_id, image_url, display_order) VALUES ($1, $2, 0)',
+      [fixture.listingId, 'https://images.invalid/public.jpg']
+    );
+    const response = await request(app).get(`/api/discovery/listings/${fixture.listingId}`).expect(200);
+    expect(response.body.images).toEqual([
+      expect.objectContaining({ image_url: 'https://images.invalid/public.jpg', display_order: 0 }),
+    ]);
+    await request(app).get('/api/discovery/search?q=Fixture').expect(200);
+    await request(app).get(`/api/discovery/filter?mainCategoryId=${fixture.categoryId}`).expect(200);
+  });
+
+  test('FR-23: search rejects an empty keyword instead of returning every public listing', async () => {
+    await expect(discovery.searchListings('  ')).rejects.toBeInstanceOf(ValidationError);
   });
 });

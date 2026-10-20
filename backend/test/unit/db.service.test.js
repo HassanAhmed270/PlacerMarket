@@ -9,10 +9,34 @@ jest.mock('pg', () => ({
   })),
 }));
 const db = require('../../src/db.service');
+const { Pool } = require('pg');
+const constructedPoolConfig = Pool.mock.calls[0]?.[0];
 
 beforeEach(() => jest.clearAllMocks());
 
 describe('db.service helpers', () => {
+  test('FR-79c: pool has bounded size and short connection, statement, idle, and lock timeouts', () => {
+    expect(constructedPoolConfig).toEqual(expect.objectContaining({
+      max: 10, connectionTimeoutMillis: 1000, idleTimeoutMillis: 30000,
+      statement_timeout: 5000, idle_in_transaction_session_timeout: 10000, lock_timeout: 1000,
+    }));
+  });
+
+  test('FR-79e: read and write entry points use the current shared pool', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }] });
+    await expect(db.read('SELECT 1')).resolves.toEqual({ rows: [{ id: 1 }] });
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1 });
+    await expect(db.write('UPDATE t SET x = 1')).resolves.toEqual({ rows: [], rowCount: 1 });
+  });
+
+  test('FR-79c: pool acquisition timeout becomes a 503 service error', async () => {
+    mockQuery.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
+    await expect(db.read('SELECT 1')).rejects.toMatchObject({
+      name: 'ServiceUnavailableError', statusCode: 503,
+      message: 'Database connection is temporarily unavailable',
+    });
+  });
+
   test('query passes the full result through', async () => {
     mockQuery.mockResolvedValueOnce({ rows: [{ id: 1 }], rowCount: 1 });
     await expect(db.query('SELECT 1', [])).resolves.toEqual({ rows: [{ id: 1 }], rowCount: 1 });

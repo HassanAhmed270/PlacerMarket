@@ -66,4 +66,15 @@ class ForbiddenError extends Error {
   }
 }
 
-module.exports = { NotYetSpecifiedError, NotImplementedError, NotFoundError, ValidationError, ForbiddenError };
+class ServiceUnavailableError extends Error {
+  constructor(message = 'Database connection is temporarily unavailable') {
+    super(message);
+    this.name = 'ServiceUnavailableError';
+    this.statusCode = 503;
+  }
+}
+
+module.exports = {
+  NotYetSpecifiedError, NotImplementedError, NotFoundError, ValidationError, ForbiddenError,
+  ServiceUnavailableError,
+};

@@ -16,8 +16,8 @@ say "Marketplace" — same project). **Reading order for a new session:**
 Decided in the scale/escrow/auth program (see `specs.md` sections 13–20 and
 `MASTER_PROJECT_CONTEXT.md`), none of it written yet: `worker.js` and
 `lib/queue.js` (Postgres-backed queue, outbox, webhook inbox), Redis, object
-storage and the image/video/story pipeline, a CDN and cache headers, a
-versioned migration runner, PgBouncer, the `listing_search` table and
+storage and the image/video/story pipeline, a CDN and cache headers, PgBouncer,
+the `listing_search` table and
 suggestions, worker-generated HTML snapshots, JWT auth with two-factor login,
 escrow payments through a gateway, versioned listing content, encrypted
 CNIC/payout fields and append-only ledger tables. What IS built is the
@@ -53,7 +53,7 @@ later): `disputes.service.fileDispute()` (reads `orders`),
 | 1. Identity & Users | FR-01–10 | `modules/users.service.js` | cities, users, seller_applications, seller_profiles |
 | 2. Catalog | FR-11–14a | `modules/catalog.service.js` | main_categories, sub_categories, measurement_field_defs |
 | 3. Listings | FR-15–21a | `modules/listings.service.js` | listings, listing_measurements, listing_images, listing_evidence |
-| 4. Search & Discovery | FR-22–27b | `modules/discovery.service.js` | favorites (reviews read via orders.service.js, see below) |
+| 4. Search & Discovery | FR-22–27b | `modules/discovery.service.js` | favorites (listing images read via listings.service.js; reviews read via orders.service.js) |
 | 5. Messaging & Negotiation | FR-28–31 | `modules/negotiation.service.js` | conversations, messages, offers |
 | 6. Orders | FR-32–34 | `modules/orders.service.js` | orders, reviews (FR-27b lives here, not in module 4) |
 | 7. Payments & COD (escrow replaces COD; the code is still COD-shaped) | FR-36–38 | `modules/payments.service.js` | cod_collections (also owns FR-41a reconciliation — see correction note below) |
@@ -65,7 +65,7 @@ later): `disputes.service.fileDispute()` (reads `orders`),
 | 12. Administration | FR-52–59 | `modules/admin.service.js` | **none** — thin orchestration only |
 
 Root-level, not tied to one module:
-- `db.service.js` — the only file that imports `pg` directly; exports `query`, `many`, `one`, `withTransaction` (one planned, named exception: `lib/queue.js`, `rules.md` Section 11).
+- `db.service.js` — the only file that imports `pg` directly; exports `read`, `write`, compatibility `query`, `many`, `one`, `withTransaction` (one planned, named exception: `lib/queue.js`, `rules.md` Section 11).
 - `lib/errors.js` — shared error classes (`NotYetSpecifiedError`, `NotImplementedError`, `NotFoundError`, `ValidationError`, `ForbiddenError`) — which to use when is in `rules.md` Section 4.
 - `lib/events.js` — the only place event-name strings are defined.
 - `lib/eventBus.js` — shared in-process `EventEmitter` (notification decoupling — user's chosen pattern over direct calls).
@@ -195,11 +195,24 @@ purpose so the schema works whichever way this eventually gets decided.
 - `payout.service.checkAndReleaseDuePayouts()` is written to be called by a
   cron/worker — nothing schedules it yet. `payout.routes.js` exposes it as
   a POST route ONLY for manual testing during development.
-- **`db/migrate.js` is single-shot, not real migrations** — fine for a
-  fresh dev database, will break if you try to re-run it against a database
-  that already has the tables, and has no way to evolve `schema.sql` over
-  time without a manual `ALTER`. Replace with a real migration tool
-  (e.g. `node-pg-migrate`) before this matters in practice.
+- **Migration runner foundation:** `db/migrate.js` uses pinned
+  `node-pg-migrate@9.0.0` (Node.js >=20.11.0). It fits this plain-`pg`
+  PostgreSQL project: it tracks ordered SQL migrations and provides the
+  PostgreSQL advisory lock without introducing an ORM. Ordered SQL migrations,
+  migration history, transactional application and an advisory lock. A
+  legacy schema is never replayed by normal migration; `npm run
+  db:migrate:baseline` checks expected tables, columns and enum labels and
+  records the initial migration without changing application rows.
+  `schema.sql` is generated with `npm run db:generate-schema`; check it with
+  `npm run db:check-schema`. This is the runner foundation, not the full
+  FR-79b gate: expand/switch/contract reviews, concurrent-index handling,
+  worker backfills and old/new application compatibility checks remain.
+- **FR-79c partial:** the web pool is bounded and has connection, statement,
+  idle-transaction and lock timeouts; pool-acquisition timeouts map to 503.
+  PgBouncer and deployed transaction-pool verification remain Phase 6 work.
+- **Discovery gaps:** FR-24 city filtering remains unresolved because
+  listings have no city column; see `open-questions.md`. Do not treat seller
+  city as listing city without a decision.
 - **Schema/code mismatch audit:** see [`SCHEMA_CODE_AUDIT.md`](SCHEMA_CODE_AUDIT.md)
   for the full service-SQL comparison, classifications, evidence, passing
   regression tests, and remaining expected-failure probes. Phase 0a-2a repaired

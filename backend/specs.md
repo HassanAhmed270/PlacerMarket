@@ -47,15 +47,15 @@
 - [ ] FR-21a Rejected listings can be resubmitted after edits; reviewed case-by-case, no automatic cooldown.
 
 ## 4. Search & Discovery
-- [ ] FR-22 Pure browsing (viewing marketplace, listing details, images) is fully public — no login required.
+- [x] FR-22 Pure browsing (viewing marketplace, listing details, images) is fully public — no login required.
 - [ ] FR-22a Login required the moment a user favorites a listing, messages a seller, or makes an offer.
 - [ ] FR-22b Redirect-and-return login pattern: logged-out user attempting a gated action is sent to /login, then returned to the exact action after successful login (no inline modal).
-- [ ] FR-23 Buyers can search listings by keyword.
+- [x] FR-23 Buyers can search listings by keyword.
 - [ ] FR-24 Buyers can filter by main category, sub-category/occasion, condition, price range, city.
-- [ ] FR-25 Buyers can view full listing details, seller profile summary, images.
+- [x] FR-25 Buyers can view full listing details, seller profile summary, images.
 - [ ] FR-26 Buyers can favorite/save listings (requires login).
 - [ ] FR-27 Buyers can share a listing (external link, no login required).
-- [ ] FR-27a Seller's public profile card (buyer-facing) shows ONLY rating + join date — no sales count, no verified badge, no response-time stats. (Seller's own private dashboard may show richer stats to themselves.)
+- [x] FR-27a Seller's public profile card (buyer-facing) shows ONLY rating + join date — no sales count, no verified badge, no response-time stats. (Seller's own private dashboard may show richer stats to themselves.)
 - [ ] FR-27b Two-way rating system: after order completion, both buyer and seller can rate each other. Feeds FR-27a.
 
 ## 5. Messaging & Negotiation
@@ -189,7 +189,7 @@
 - [ ] FR-79b Zero-downtime migrations (expand → switch → contract, lock timeouts, concurrent index builds, backfills as worker jobs). A real versioned migration runner replaces `db/migrate.js`; it runs as a separate deploy step with an advisory lock, never at web startup; `schema.sql` becomes a snapshot generated from the migrations; migrations are linted and checked for old-code/new-schema and new-code/old-schema compatibility.
 - [ ] FR-79c PgBouncer (transaction mode) for the web process; workers use direct connections only when the selected queue library needs persistent sessions (LISTEN/NOTIFY, advisory locks) or cannot work correctly through transaction pooling — decided by testing against the real PostgreSQL + PgBouncer configuration (FR-77f); small pools; `statement_timeout`, `idle_in_transaction_session_timeout` and a short `lock_timeout`; fail fast with 503 when the pool is exhausted.
 - [ ] FR-79d Counters (views, favorites) stay off hot listing rows: buffered in Redis and flushed in batches.
-- [ ] FR-79e No read replica initially; `db.service.js` gets separate read and write entry points now so one can be added later.
+- [x] FR-79e No read replica initially; `db.service.js` gets separate read and write entry points now so one can be added later.
 - [ ] FR-79f Application-level encryption of CNIC numbers and payout account details (ciphertext + last digits for display + a blind index if lookup is needed); append-only ledger and audit tables (the application role cannot update or delete; corrections are reversing entries).
 - [ ] FR-79g Database reachable only on a private network with TLS and certificate verification; least-privilege roles (web, worker, migrator, read-only, backup); no PII in logs or slow-query logs; staging never receives raw production data.
 - [ ] FR-79h Initial deployment is hosted on Render *(decided 2026-10-17)*. The final production architecture is deferred: PostgreSQL hosting, Redis (if required), CDN, storage and connection configuration are chosen later, and Render is not a commitment to any particular database, Redis provider or CDN. Before deployment, verify backups, secrets, security settings, database limits, monitoring and recovery — including that the database plan can meet the FR-79 targets (Render documents no recovery capability for its free PostgreSQL tier: https://render.com/docs/postgresql-backups).
