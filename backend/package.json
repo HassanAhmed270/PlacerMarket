@@ -7,18 +7,18 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "worker": "node worker.js",
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --env-file-if-exists=.env --watch src/server.js",
+    "worker": "node --env-file-if-exists=.env worker.js",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
     "test:integration": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --config test/integration/jest.config.js",
     "prepare": "node hooks/install.js",
     "hooks:install": "node hooks/install.js",
-    "db:migrate": "node db/migrate.js",
-    "db:migrate:baseline": "node db/migrate.js --baseline-existing",
+    "db:migrate": "node --env-file-if-exists=.env db/migrate.js",
+    "db:migrate:baseline": "node --env-file-if-exists=.env db/migrate.js --baseline-existing",
     "db:generate-schema": "node db/generate-schema-snapshot.js",
     "db:check-schema": "node db/generate-schema-snapshot.js --check",
-    "db:seed": "node db/seed.js",
+    "db:seed": "node --env-file-if-exists=.env db/seed.js",
     "db:setup": "npm run db:migrate && npm run db:seed"
   },
   "dependencies": {
