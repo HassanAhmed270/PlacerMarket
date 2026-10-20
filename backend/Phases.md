@@ -73,9 +73,11 @@ by the human's decision (renumbering would touch every reference).
 The Phase 0b queue selection review is recorded below. On 2026-10-20, the
 applicable queue and migration integration checks passed against the owner-
 specified disposable `testing_only` database after its identity and the
-existing destructive-test guard were verified. Do not tick FR-77/77a/77d until
-the acceptance criteria are reviewed. FR-77b/c/e jobs remain for the phases
-that implement payments, reservations, and media.
+existing destructive-test guard were verified. The current implementation has
+durable notification processing, transactional enqueue, queue administration,
+and partial FR-77c health/correlation metrics. Payment webhook, reservation,
+media, cache, and other feature-specific jobs remain with the phases that
+implement those features.
 
 **Stage-specific FR-77f resolution (owner-approved 2026-10-20):** Phase 0b may
 select and implement a queue without waiting for final PgBouncer provisioning.
@@ -106,7 +108,7 @@ satisfied by this stage resolution.
 **Security rows to close:** SEC-01, 02, 03, 04, 07, 08, 10, 15, 16 (framework),
 22, 23, 24, 25, 27, 28, 29, 38, and SEC-09 for the confirmed part (FR-83, FR-83a).
 
-**Decisions:** decided 2026-10-17 — sessions and token lifetimes (FR-84, FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the Phase 0b queue selection gate (stage-specific FR-77f resolution below), and Render for initial hosting (FR-79h). SEC-07 was resolved on 2026-10-20: read current suspension state on every authenticated request. Still open for Phase 0c: FR-83d resend-cooldown and sending-cap values, and the FR-84b password hashing choice. Actual deployment-level PgBouncer compatibility is required before Phase 6. Hosting details and the email provider are chosen before the first deployment / real login, not before Phase 0.
+**Decisions:** decided 2026-10-17 — sessions and token lifetimes (FR-84, FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the Phase 0b queue selection gate (stage-specific FR-77f resolution below), and Render for initial hosting (FR-79h). Argon2id was selected for password hashing on 2026-10-20; FR-84b's bounded execution, Redis rate-limit and WAF proposals remain DISCUSS. SEC-07 was resolved on 2026-10-20: read current suspension state on every authenticated request. Still open for Phase 0c are FR-83d resend-cooldown and sending-cap values, durable refresh/TOTP/challenge persistence, and the account-recovery policy. Email delivery providers must be selected before real email login; deployment-level PgBouncer compatibility is required before Phase 6.
 
 **Gate**
 - [ ] Backend 0a, 0b, 0c done, with real-Postgres integration tests
