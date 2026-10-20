@@ -18,6 +18,13 @@ function validateTestDatabaseUrl(value, { allowRemote = false } = {}) {
     throw new Error('TEST_DATABASE_URL protocol must be postgres:// or postgresql://.');
   }
 
+  const forbiddenParameters = new Set(['host', 'hostaddr', 'dbname', 'database', 'port', 'user', 'password']);
+  for (const name of parsed.searchParams.keys()) {
+    if (forbiddenParameters.has(name.toLowerCase())) {
+      throw new Error(`TEST_DATABASE_URL query parameter "${name}" is not allowed.`);
+    }
+  }
+
   if (!TEST_DATABASE_NAME.test(databaseName)) {
     throw new Error(
       'TEST_DATABASE_URL database name must contain "test" as a complete underscore- or hyphen-delimited token.'
@@ -43,3 +50,4 @@ function getTestDatabaseUrl() {
 module.exports = getTestDatabaseUrl;
 module.exports.getTestDatabaseUrl = getTestDatabaseUrl;
 module.exports.validateTestDatabaseUrl = validateTestDatabaseUrl;
+module.exports.isSafeTestDatabaseName = (name) => TEST_DATABASE_NAME.test(name);

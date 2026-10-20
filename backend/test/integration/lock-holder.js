@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const getTestDatabaseUrl = require('./database-url');
+const { validateTestDatabaseUrl, isSafeTestDatabaseName } = require('./database-url');
 
 let client;
 let server;
@@ -38,6 +39,7 @@ async function release() {
 
 async function main() {
   const testDatabaseUrl = getTestDatabaseUrl();
+  const expectedDatabaseName = validateTestDatabaseUrl(testDatabaseUrl).databaseName;
   stateFile = process.env.INTEGRATION_LOCK_STATE_FILE;
   if (!stateFile) throw new Error('Integration lock state path was not provided.');
 
@@ -47,6 +49,11 @@ async function main() {
   const { Client } = require('pg');
   client = new Client({ connectionString: testDatabaseUrl });
   await client.connect();
+  const connected = await client.query('SELECT current_database() AS database_name');
+  const connectedDatabaseName = connected.rows[0]?.database_name;
+  if (!isSafeTestDatabaseName(connectedDatabaseName) || connectedDatabaseName !== expectedDatabaseName) {
+    throw new Error('Connected database name failed the integration safety check.');
+  }
   const result = await client.query('SELECT pg_try_advisory_lock($1, $2) AS locked', [lockKey1, lockKey2]);
   if (!result.rows[0].locked) {
     emit({ type: 'error', message: 'Another integration run already holds the PostgreSQL schema-reset lock for this database.' });
@@ -77,8 +84,9 @@ async function main() {
   emit({ type: 'ready', port, token });
 }
 
-main().catch(async (error) => {
-  emit({ type: 'error', message: error.message });
+main().catch(async () => {
+  // Never forward driver errors: some include connection information.
+  emit({ type: 'error', message: 'Integration lock holder could not connect or initialize safely.' });
   if (server) {
     await new Promise((resolve) => server.close(resolve));
   }

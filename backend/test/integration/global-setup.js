@@ -3,6 +3,7 @@ const path = require('path');
 const readline = require('readline');
 const { spawn } = require('child_process');
 const getTestDatabaseUrl = require('./database-url');
+const { isSafeTestDatabaseName } = require('./database-url');
 const lockStatePath = require('./lock-state');
 
 function waitForLockHolder(child, timeoutMs = 15000) {
@@ -86,10 +87,22 @@ module.exports = async function globalSetup() {
   let state;
   try {
     state = await waitForLockHolder(child);
+    const { validateTestDatabaseUrl } = require('./database-url');
+    const expectedDatabaseName = validateTestDatabaseUrl(testDatabaseUrl).databaseName;
     const { Pool } = require('pg');
     const pool = new Pool({ connectionString: testDatabaseUrl });
     try {
       // The lock holder owns a dedicated Client connection and already holds the advisory lock.
+      let connected;
+      try {
+        connected = await pool.query('SELECT current_database() AS database_name');
+      } catch {
+        throw new Error('Could not verify connected integration database name; refusing destructive setup.');
+      }
+      if (!isSafeTestDatabaseName(connected.rows[0]?.database_name) ||
+          connected.rows[0]?.database_name !== expectedDatabaseName) {
+        throw new Error('Connected database name failed the integration safety check; refusing destructive setup.');
+      }
       await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
       await pool.query(fs.readFileSync(path.join(root, 'schema.sql'), 'utf8'));
 

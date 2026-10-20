@@ -6,6 +6,8 @@ jest.mock('pg', () => ({ Pool: jest.fn(), Client: jest.fn() }));
 
 const childProcess = require('child_process');
 const pg = require('pg');
+const { PassThrough } = require('stream');
+const http = require('http');
 const globalSetup = require('../integration/global-setup');
 const databaseUrl = require('../integration/database-url');
 const { validateTestDatabaseUrl } = databaseUrl;
@@ -27,6 +29,16 @@ describe('test database URL validation', () => {
 
   test.each(['poshaak_test', 'app_test', 'test_app'])('accepts local test database name %s', (name) => {
     expect(validateTestDatabaseUrl(`postgres://localhost/${name}`).databaseName).toBe(name);
+  });
+
+  test.each([
+    'postgres://localhost/app_test?host=prod.example.com',
+    'postgres://localhost/app_test?port=5432',
+    'postgres://localhost/app_test?dbname=app_test',
+    'postgres://localhost/app_test?HOST=prod.example.com',
+    'postgres://localhost/app_test?DaTaBaSe=app_test',
+  ])('rejects driver connection override in %s', (url) => {
+    expect(() => validateTestDatabaseUrl(url)).toThrow(/query parameter.*not allowed/i);
   });
 
   test('does not treat username "test" as a test database name', () => {
@@ -68,16 +80,21 @@ describe('test database URL validation', () => {
     expect(validateTestDatabaseUrl(url).host).toBe(expectedHost);
   });
 
-  test('global setup rejects an unsafe URL before spawning a lock holder or creating a pool', async () => {
+  test.each([
+    ['postgres://test@localhost/contest', /database name/],
+    ['postgres://localhost/app_test?host=prod.example.com', /query parameter/],
+    ['postgres://localhost/app_test?PORT=5432', /query parameter/],
+    ['postgres://localhost/app_test?dbname=app_test', /query parameter/],
+  ])('global setup rejects unsafe URL %s before spawning a lock holder or creating a pool', async (url, error) => {
     const previous = process.env.TEST_DATABASE_URL;
     const previousRemote = process.env.TEST_DATABASE_ALLOW_REMOTE;
-    process.env.TEST_DATABASE_URL = 'postgres://test@localhost/contest';
+    process.env.TEST_DATABASE_URL = url;
     delete process.env.TEST_DATABASE_ALLOW_REMOTE;
     childProcess.spawn.mockClear();
     pg.Pool.mockClear();
     pg.Client.mockClear();
     try {
-      await expect(globalSetup()).rejects.toThrow(/database name/);
+      await expect(globalSetup()).rejects.toThrow(error);
       expect(childProcess.spawn).not.toHaveBeenCalled();
       expect(pg.Pool).not.toHaveBeenCalled();
       expect(pg.Client).not.toHaveBeenCalled();
@@ -86,6 +103,39 @@ describe('test database URL validation', () => {
       else process.env.TEST_DATABASE_URL = previous;
       if (previousRemote === undefined) delete process.env.TEST_DATABASE_ALLOW_REMOTE;
       else process.env.TEST_DATABASE_ALLOW_REMOTE = previousRemote;
+    }
+  });
+
+  test('global setup checks the connected database before issuing destructive SQL', async () => {
+    const previous = process.env.TEST_DATABASE_URL;
+    process.env.TEST_DATABASE_URL = 'postgres://localhost/app_test';
+    const stdout = new PassThrough();
+    const child = Object.assign(new (require('events').EventEmitter)(), {
+      stdout, channel: { unref: jest.fn() }, pid: 123, unref: jest.fn(), kill: jest.fn(),
+    });
+    childProcess.spawn.mockReturnValueOnce(child);
+    const pool = { query: jest.fn().mockResolvedValue({ rows: [{ database_name: 'production' }] }), end: jest.fn() };
+    pg.Pool.mockImplementationOnce(() => pool);
+    const request = { on: jest.fn().mockReturnThis(), end: jest.fn(() => {
+      const response = new (require('events').EventEmitter)();
+      response.statusCode = 200;
+      response.resume = jest.fn();
+      process.nextTick(() => { httpRequestCallback(response); response.emit('end'); });
+    }) };
+    let httpRequestCallback;
+    const originalRequest = http.request;
+    http.request = jest.fn((_options, callback) => { httpRequestCallback = callback; return request; });
+    try {
+      setImmediate(() => stdout.write('{"type":"ready","port":32123,"token":"fixture"}\n'));
+      await expect(globalSetup()).rejects.toThrow(/Connected database name failed/);
+      expect(pool.query).toHaveBeenCalledTimes(1);
+      expect(pool.query.mock.calls[0][0]).toBe('SELECT current_database() AS database_name');
+      expect(pool.query.mock.calls[0][0]).not.toMatch(/DROP|CREATE SCHEMA/i);
+      expect(pool.end).toHaveBeenCalled();
+    } finally {
+      http.request = originalRequest;
+      if (previous === undefined) delete process.env.TEST_DATABASE_URL;
+      else process.env.TEST_DATABASE_URL = previous;
     }
   });
 });

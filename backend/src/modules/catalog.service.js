@@ -13,7 +13,7 @@
  */
 
 const db = require('../db.service');
-const { NotFoundError, ValidationError, NotImplementedError } = require('../lib/errors');
+const { NotFoundError, ValidationError } = require('../lib/errors');
 
 const CONDITION_TYPES = Object.freeze(['brand_new', 'pre_owned', 'custom_made', 'replica']); // FR-13
 
@@ -86,7 +86,7 @@ async function setMeasurementFieldDefs(subCategoryId, fieldDefs, adminId) {
   // The schema has no `required` column. Reject that contract explicitly before
   // deleting current definitions; do not silently lose the caller's setting.
   if (fieldDefs.some((def) => Object.prototype.hasOwnProperty.call(def, 'required'))) {
-    throw new NotImplementedError('Persisting measurement required flags requires a schema/API decision');
+    throw new ValidationError('Persisting measurement required flags requires a schema/API decision');
   }
 
   // fieldDefs: [{ fieldName, unit }, ...] — admin-defined, extensible over time.

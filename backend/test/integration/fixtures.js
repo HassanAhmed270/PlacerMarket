@@ -1,4 +1,5 @@
 const db = require('../../src/db.service');
+require('../../src/modules/notifications.service');
 
 async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {}) {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -44,6 +45,7 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
     applicationId: applicationRows[0].id,
     fieldDefId: fieldRows[0].id,
     async cleanup() {
+      await global.drainIntegrationListeners(5000);
       await db.query('DELETE FROM notifications WHERE user_id = $1', [userId]);
       await db.query('DELETE FROM listing_images WHERE listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
       await db.query('DELETE FROM listing_evidence WHERE listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);

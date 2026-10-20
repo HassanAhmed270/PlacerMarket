@@ -14,8 +14,13 @@ do not authorize or start a repair phase.
 Evidence labels distinguish actual PostgreSQL reproductions from static review.
 PostgreSQL messages below were captured by temporary pin tests against
 PostgreSQL 18.6. Corrected users/catalog behaviors are now covered by normal
-passing integration tests with valid foreign-key fixtures and cleanup. Other
-unfixed mismatches remain positive Jest 29 `test.failing` probes.
+passing integration tests with valid foreign-key fixtures and cleanup. The
+retained `test.failing` probes cover known behavior gaps. Separate passing
+error-code pin tests explicitly record these known mismatches:
+`updateSellerPayoutMethod` (`42703`, deferred to Phase 1) and
+`holdListingPendingIdVerification` (`22P02`, needs a decision). Other findings
+are represented by static or scratch-copy evidence where a valid isolated
+regression fixture is not appropriate; the probe set is not exhaustive.
 
 | Classification | File | Function / area | Finding | Evidence level and evidence |
 |---|---|---|---|---|
@@ -26,8 +31,9 @@ unfixed mismatches remain positive Jest 29 `test.failing` probes.
 | `needs-decision` | `src/modules/users.service.js` | `reviewSellerApplication` | On approval, creates a seller profile and promotes the user but does not set `seller_profiles.is_approved` or `approved_at`. Confirm whether approval requires setting these fields. | **Static only:** service flow compared with existing profile fields and approval requirement. Service lines 106–110; schema lines 71–88. The earlier SQL error prevents this branch from being reached in the current implementation. |
 | `defer-Phase-1` | `src/modules/users.service.js` | `updateSellerPayoutMethod` | Writes absent `payout_details`; accepted method values `bank_transfer` / `mobile_wallet` differ from the schema enum (`bank`, `easypaisa`, `jazzcash`) and split storage columns. | **Reproduced first SQL error:** `42703`, `column "payout_details" of relation "seller_profiles" does not exist`. Further enum/storage behavior is statically compared. Service lines 177–185; schema lines 30–31, 71–88. |
 | `fix-0a-2a` | `src/modules/catalog.service.js` | `getMeasurementFieldDefs` | **Fixed:** orders by existing `display_order`. | **Passing PostgreSQL regression:** `measurement definition lookup returns fields ordered by display_order`. The pre-repair pin had reproduced `42703`, `sort_order` did not exist. |
-| `fix-0a-2a` | `src/modules/catalog.service.js` | `setMeasurementFieldDefs` | Replaces definitions without a `required` property, writes `display_order`, and returns the new rows from the same transaction. | **Passing PostgreSQL regression:** `measurement definition replacement persists supported fields in display order`. |
-| `needs-decision` | `src/modules/catalog.service.js` | `setMeasurementFieldDefs` `required` input | The schema has no `required` column. Definitions containing `required` explicitly fail before existing rows are deleted; support remains unresolved. Options are approve a schema migration/column or decide that `required` is not part of the persisted API. | **Passing PostgreSQL regression:** `measurement required flags fail before replacing existing definitions` verifies the explicit error and that existing definitions remain intact. No requirement was discarded and no schema/product decision was made. |
+| `fix-0a-2a` | `src/modules/catalog.service.js` | `setMeasurementFieldDefs` | **Fixed in part:** ordering, transaction-read, and explicit `required` rejection repairs are addressed. Replacement still fails when any existing `listing_measurements` row references a definition because the FK blocks deleting the definition. Intended behavior for referenced definitions needs a decision. | Passing PostgreSQL tests cover ordering, transactional replacement, `required` rejection, duplicate-name rollback (`23505`), empty replacement when unreferenced, and the referenced-definition FK limitation (`23503`) with rollback. |
+| `needs-decision` | `src/modules/catalog.service.js` | `setMeasurementFieldDefs` `required` input | The schema has no `required` column. Definitions containing `required` explicitly fail before existing rows are deleted; support remains unresolved. Options are approve a schema migration/column or decide that `required` is not part of the persisted API. | **Passing PostgreSQL regression:** `measurement required flags fail before replacing existing definitions` verifies the `ValidationError` (400), preserved message, and original definitions. No requirement was discarded and no schema/product decision was made. |
+| `needs-decision` | `src/modules/catalog.service.js` | `setMeasurementFieldDefs` with referencing measurements | Deleting and recreating a definition fails with `23503` when `listing_measurements.field_def_id` references it. The transaction rolls back and both the original definition and referencing measurement remain intact. Future decision needed: update definitions in place, or define explicit removal/replacement rules. These are options only, not an approved implementation. | Passing PostgreSQL regression: `measurement replacement with a referencing listing measurement fails 23503 and rolls back`. |
 | `fix-0a-2b` | `src/modules/listings.service.js` | `createListing` | Omits required `listings.title`, which has no default; it also omits `replica_disclosure`, so replica disclosure accepted by validation is not persisted. | **Reproduced title failure:** `23502`, `null value in column "title" of relation "listings" violates not-null constraint`. A scratch-copy PostgreSQL probe after bypassing the title failure found disclosure stored as `null`. Service lines 41–48; schema lines 126–154; `specs.md` FR-14. |
 | `fix-0a-2b` | `src/modules/listings.service.js` | `saveListingMeasurements` | Inserts `listing_measurements.field_name`; schema requires `field_def_id`. | **Scratch-copy PostgreSQL reproduction after bypassing the title failure:** `42703`, column `field_name` does not exist. Service line 68; schema lines 156–161. |
 | `fix-0a-2b` | `src/modules/listings.service.js` | `addListingImages` | Uses `url` and `sort_order`; schema uses `image_url` and `display_order`. | **Reproduced:** `42703`, `column "url" of relation "listing_images" does not exist`. Service line 78; schema lines 163–168. |
@@ -49,8 +55,9 @@ unfixed mismatches remain positive Jest 29 `test.failing` probes.
 | `superseded-4-5` | `src/modules/disputes.service.js` | Dispute SQL/order dependencies | Referenced columns/statuses match; COD-shaped order dependencies belong to the later rewrite. **Do not fix here.** | **Static only:** SQL/schema comparison. Service lines 44–160; schema lines 245–263, 322–352. |
 | `no-mismatch-static-only` | `src/modules/admin.service.js` | All functions | No direct SQL; delegates to owning services. | **Static only:** source inspection. Service lines 1–117. |
 
-The persistent integration suite does not claim every row is reproduced. Current
-database error pins are temporary; retained fixed and expected-failure probes
-assert positive service behavior using real PostgreSQL rows and valid isolated
-fixtures. `fix-0a-2a` identifies the phase; rows marked **Fixed** are repaired and covered by passing
-PostgreSQL regression tests in Phase 0a-2a.
+The persistent integration suite does not claim every row is reproduced. The two
+restored exact-error probes remain explicitly classified as known mismatches;
+other findings have the evidence level stated in their rows. `fix-0a-2a`
+identifies the phase; repaired behavior is covered by passing PostgreSQL
+regression tests in Phase 0a-2a, with the `setMeasurementFieldDefs` FK limitation
+remaining unresolved.

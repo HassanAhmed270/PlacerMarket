@@ -207,10 +207,15 @@ purpose so the schema works whichever way this eventually gets decided.
   The unit tests mock `db.service`, so use the real-Postgres integration harness
   before trusting SQL behavior.
 - **Measurement definition `required` flag:** `measurement_field_defs` has no
-  `required` column. `setMeasurementFieldDefs` currently accepts definitions
-  without that property and rejects definitions that include it before changing
-  existing rows. Do not silently drop the flag or add a schema column. Resolve
-  whether this is a schema/API change before implementing persistence.
+  `required` column. `setMeasurementFieldDefs` rejects definitions that include
+  it with a `ValidationError` before changing existing rows. Do not silently
+  drop the flag or add a schema column. Resolve whether this is a schema/API
+  change before implementing persistence.
+- **Measurement definition replacement with references:** deleting a definition
+  referenced by `listing_measurements.field_def_id` fails with PostgreSQL `23503`
+  and rolls back. Decide whether referenced definitions should be updated in
+  place or whether explicit removal/replacement rules should apply; neither option
+  is approved implementation guidance yet.
 - **Real-Postgres integration harness:** set `TEST_DATABASE_URL` to a disposable
   PostgreSQL database whose decoded name contains `test` as a complete
   underscore-/hyphen-delimited token (`poshaak_test`, not `latest` or
