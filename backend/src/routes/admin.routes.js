@@ -47,7 +47,7 @@ router.get('/queue/dead-letters', requirePermission('operations.view'), async (r
 });
 
 router.get('/queue/health', requirePermission('operations.view'), async (_req, res) => {
-  res.json({ queues: await queue.getQueueHealth() }); // FR-77c
+  res.json(await queue.getQueueHealth()); // FR-77c
 });
 
 router.post('/disputes/:id/resolve', requirePermission('dispute.resolve'), async (req, res) => {

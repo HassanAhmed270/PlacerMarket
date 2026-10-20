@@ -65,8 +65,14 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
   });
 
   test('FR-77a: concurrent workers preserve per-key FIFO and process each durable job once', async () => {
+    const sourceName = `fifo-probe-${Date.now()}`;
+    let queueCreated = false;
     const first = queueLib.createQueueClient({ connectionString: databaseUrl, worker: true });
     const second = queueLib.createQueueClient({ connectionString: databaseUrl, worker: true });
+    await producer.boss.createQueue(sourceName, {
+      policy: 'key_strict_fifo', retryLimit: 1, retryDelay: 1, retryBackoff: false,
+    });
+    queueCreated = true;
     await Promise.all([first.start(), second.start()]);
     const order = [];
     let active = 0;
@@ -85,16 +91,16 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
       if (processed === 2) resolveFinished();
     };
     await Promise.all([
-      first.boss.work(queueLib.QUEUES.NOTIFICATIONS, { localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 0.5, notifyPollingIntervalSeconds: 0.5 }, handler),
-      second.boss.work(queueLib.QUEUES.NOTIFICATIONS, { localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 0.5, notifyPollingIntervalSeconds: 0.5 }, handler),
+      first.boss.work(sourceName, { localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 0.5, notifyPollingIntervalSeconds: 0.5 }, handler),
+      second.boss.work(sourceName, { localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 0.5, notifyPollingIntervalSeconds: 0.5 }, handler),
     ]);
 
     const orderingKey = `fifo:${Date.now()}`;
-    await producer.enqueue(queueLib.QUEUES.NOTIFICATIONS, { sequence: 1 }, {
-      idempotencyKey: `${orderingKey}:1`, orderingKey,
+    await producer.boss.send(sourceName, { sequence: 1 }, {
+      id: queueLib.deterministicJobId(sourceName, `${orderingKey}:1`), singletonKey: orderingKey,
     });
-    await producer.enqueue(queueLib.QUEUES.NOTIFICATIONS, { sequence: 2 }, {
-      idempotencyKey: `${orderingKey}:2`, orderingKey,
+    await producer.boss.send(sourceName, { sequence: 2 }, {
+      id: queueLib.deterministicJobId(sourceName, `${orderingKey}:2`), singletonKey: orderingKey,
     });
     try {
       await withTimeout(finished, 10000, 'Workers timed out');
@@ -102,16 +108,23 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
       expect(order).toEqual(['start:1', 'end:1', 'start:2', 'end:2']);
     } finally {
       await Promise.all([first.stop(), second.stop()]);
+      if (queueCreated) await producer.boss.deleteQueue(sourceName);
     }
   });
 
   test('FR-77a: transactionally completed effects are rolled back on failure and applied once after retry', async () => {
+    const sourceName = `retry-probe-${Date.now()}`;
     const worker = queueLib.createQueueClient({ connectionString: databaseUrl, worker: true });
     await worker.start();
+    let queueCreated = false;
+    await producer.boss.createQueue(sourceName, {
+      retryLimit: 1, retryDelay: 1, retryBackoff: false,
+    });
+    queueCreated = true;
     let attempts = 0;
     let resolveFinished;
     const finished = new Promise((resolve) => { resolveFinished = resolve; });
-    await worker.boss.work(queueLib.QUEUES.NOTIFICATIONS, {
+    await worker.boss.work(sourceName, {
       localConcurrency: 1, batchSize: 1, transactional: true, pollingIntervalSeconds: 0.5,
       notifyPollingIntervalSeconds: 0.5,
     }, async ([job], tx) => {
@@ -125,9 +138,9 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
     });
 
     const key = `retry:${Date.now()}`;
-    await producer.enqueue(queueLib.QUEUES.NOTIFICATIONS, { idempotencyKey: key }, {
-      idempotencyKey: key,
-      orderingKey: key,
+    await producer.boss.send(sourceName, { idempotencyKey: key }, {
+      id: queueLib.deterministicJobId(sourceName, key),
+      singletonKey: key,
       retryLimit: 1,
       retryDelay: 1,
       retryBackoff: false,
@@ -139,6 +152,7 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
       expect(rows[0].count).toBe(1);
     } finally {
       await worker.stop();
+      if (queueCreated) await producer.boss.deleteQueue(sourceName);
     }
   });
 
@@ -186,5 +200,16 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
         await producer.boss.deleteQueue(sourceName);
       }
     }
+  });
+
+  test('FR-77c: PostgreSQL queue health reports backlog age and dead-letter visibility', async () => {
+    const health = await producer.getQueueHealth();
+
+    expect(health.queues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: queueLib.QUEUES.NOTIFICATIONS, readyCount: expect.any(Number) }),
+      expect.objectContaining({ name: queueLib.QUEUES.DEAD_LETTER, totalCount: expect.any(Number) }),
+    ]));
+    expect(health.deadLetterCount).toEqual(expect.any(Number));
+    expect(health.queues.every(({ oldestReadySeconds }) => oldestReadySeconds === null || typeof oldestReadySeconds === 'number')).toBe(true);
   });
 });

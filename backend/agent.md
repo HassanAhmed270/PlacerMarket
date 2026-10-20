@@ -224,6 +224,12 @@ purpose so the schema works whichever way this eventually gets decided.
 - Redis is connected by the web and worker entry points; cache and rate-limit
   consumers are not implemented in this stage yet. Scheduled job processing is
   enabled in the worker but no Phase 0b recurring job is registered.
+- **FR-77c observability is partial.** The admin queue-health response exposes
+  queue depth, oldest ready-job age, created/completed/terminal-failure deltas,
+  dead-letter count, and request ID correlation on HTTP-enqueued jobs. Retry
+  attempt rate is not tracked: pg-boss's persisted deltas count terminal
+  failures, not retry attempts. Payment/reservation reconciliation sweeps and
+  external-service rate limits remain tied to their later feature phases.
 - **Discovery gaps:** FR-24 city filtering remains unresolved because
   listings have no city column; see `open-questions.md`. Do not treat seller
   city as listing city without a decision.

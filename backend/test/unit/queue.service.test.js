@@ -1,6 +1,7 @@
 const { EventEmitter } = require('events');
 
 const queue = require('../../src/lib/queue');
+const requestContext = require('../../src/lib/requestContext');
 
 function fakeBossFactory() {
   const instance = new EventEmitter();
@@ -24,7 +25,18 @@ function fakeBossFactory() {
       this.findJobsOptions = options;
       return [{ id: 'job', sourceName: 'media', sourceId: 'source', sourceRetryCount: 5, createdOn: 'date', state: 'created', data: { secret: 'omit' }, output: { message: 'omit' } }];
     }
-    async getQueues() { return [{ name: 'notifications', readyCount: 2, activeCount: 1, failedCount: 0 }]; }
+    async getQueues() {
+      return [
+        {
+          name: 'notifications', readyCount: 2, activeCount: 1, failedCount: 0, totalCount: 7,
+          readyOldestSeconds: 12, createdDelta: 5, completedDelta: 3, failedDelta: 1, deltaSeconds: 60,
+        },
+        {
+          name: 'dead-letter', readyCount: 2, activeCount: 0, failedCount: 0, totalCount: 2,
+          readyOldestSeconds: 18, createdDelta: 0, completedDelta: 0, failedDelta: 0, deltaSeconds: 60,
+        },
+      ];
+    }
   };
 }
 
@@ -62,6 +74,42 @@ describe('FR-77, FR-77a: PostgreSQL queue configuration and durable enqueue API'
     }));
     await client.boss.sent[0].options.db.executeSql('select 1', []);
     expect(transaction.query).toHaveBeenCalledWith('select 1', []);
+    await client.stop();
+  });
+
+  test('FR-77c: queue jobs carry the originating HTTP request ID for correlation', async () => {
+    const client = queue.createQueueClient({ connectionString: 'postgres://local/db', PgBossClass: fakeBossFactory() });
+    await client.start();
+
+    await requestContext.withRequestId('request-correlation-123', () => client.enqueue(
+      queue.QUEUES.NOTIFICATIONS,
+      { eventName: 'listing.status_changed' },
+      { idempotencyKey: 'listing:42:published', orderingKey: 'listing:42' }
+    ));
+
+    expect(client.boss.sent[0].data).toEqual({
+      eventName: 'listing.status_changed',
+      traceId: 'request-correlation-123',
+    });
+    await client.stop();
+  });
+
+  test('FR-77c: queue health exposes backlog age, persisted deltas, and dead-letter count', async () => {
+    const client = queue.createQueueClient({ connectionString: 'postgres://local/db', PgBossClass: fakeBossFactory() });
+    await client.start();
+
+    const health = await client.getQueueHealth();
+
+    expect(health).toEqual({
+      queues: [
+        expect.objectContaining({
+          name: 'notifications', readyCount: 2, activeCount: 1, oldestReadySeconds: 12,
+          createdDelta: 5, completedDelta: 3, terminalFailureDelta: 1, deltaSeconds: 60,
+        }),
+        expect.objectContaining({ name: 'dead-letter', totalCount: 2 }),
+      ],
+      deadLetterCount: 2,
+    });
     await client.stop();
   });
 

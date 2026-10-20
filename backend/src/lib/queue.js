@@ -1,6 +1,7 @@
 /** FR-77, FR-77a: PostgreSQL-backed job queues shared by web and worker processes. */
 
 const crypto = require('crypto');
+const requestContext = require('./requestContext');
 let defaultPgBossPromise;
 
 async function loadPgBoss() {
@@ -159,12 +160,15 @@ function createQueueClient({
   async function enqueue(queue, data, { idempotencyKey, orderingKey, transaction } = {}) {
     if (!QUEUE_NAMES.includes(queue)) throw new TypeError(`Unsupported queue: ${queue}`);
     validatePayload(data);
+    const traceId = requestContext.getRequestId();
+    const jobData = traceId ? { ...data, traceId } : data;
+    if (traceId) validatePayload(jobData);
     if (typeof orderingKey !== 'string' || !orderingKey.trim() || orderingKey.length > 256) {
       throw new TypeError('A non-empty ordering key of at most 256 characters is required.');
     }
     if (!started) throw new Error('The PostgreSQL queue has not been started.');
 
-    return boss.send(queue, data, {
+    return boss.send(queue, jobData, {
       id: deterministicJobId(queue, idempotencyKey),
       singletonKey: orderingKey,
       db: asQueueDatabase(transaction),
@@ -188,13 +192,37 @@ function createQueueClient({
     }));
   }
 
-  /** FR-77c: report persisted queue depths without exposing job payloads. */
+  /** FR-77c: report queue depth, age, throughput, failure deltas and dead-letter count. */
   async function getQueueHealth() {
     if (!started) throw new Error('The PostgreSQL queue has not been started.');
     const queues = await boss.getQueues();
-    return queues.map(({ name, readyCount, activeCount, failedCount }) => ({
-      name, readyCount, activeCount, failedCount,
-    }));
+    const deadLetterCount = queues.find(({ name }) => name === QUEUES.DEAD_LETTER)?.totalCount ?? 0;
+    return {
+      queues: queues.map(({
+        name,
+        readyCount,
+        activeCount,
+        failedCount,
+        totalCount,
+        readyOldestSeconds,
+        createdDelta,
+        completedDelta,
+        failedDelta,
+        deltaSeconds,
+      }) => ({
+        name,
+        readyCount,
+        activeCount,
+        failedCount,
+        totalCount,
+        oldestReadySeconds: readyOldestSeconds,
+        createdDelta,
+        completedDelta,
+        terminalFailureDelta: failedDelta,
+        deltaSeconds,
+      })),
+      deadLetterCount,
+    };
   }
 
   return { get boss() { return boss; }, start, stop, enqueue, listDeadLetters, getQueueHealth };
