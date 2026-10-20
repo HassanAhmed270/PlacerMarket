@@ -141,4 +141,50 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
       await worker.stop();
     }
   });
+
+  test('FR-77a: permanently failed jobs are moved to the admin dead-letter listing', async () => {
+    const worker = queueLib.createQueueClient({ connectionString: databaseUrl, worker: true });
+    await worker.start();
+    const key = `dead-letter:${Date.now()}`;
+    const sourceName = `dlq-probe-${Date.now()}`;
+    const sourceId = queueLib.deterministicJobId(sourceName, key);
+    let attempts = 0;
+    let deadLetters = [];
+    let sourceQueueCreated = false;
+    try {
+      await producer.boss.createQueue(sourceName, {
+        retryLimit: 0,
+        deadLetter: queueLib.QUEUES.DEAD_LETTER,
+      });
+      sourceQueueCreated = true;
+      await worker.boss.work(sourceName, {
+        localConcurrency: 1,
+        batchSize: 1,
+        pollingIntervalSeconds: 0.5,
+        notifyPollingIntervalSeconds: 0.5,
+      }, async () => {
+        attempts += 1;
+        throw new Error('simulated permanent failure');
+      });
+      await producer.boss.send(sourceName, { probe: 'dead-letter' }, { id: sourceId });
+
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        deadLetters = await producer.listDeadLetters({ limit: 100 });
+        if (deadLetters.some((job) => job.sourceId === sourceId)) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(attempts).toBe(1);
+      expect(deadLetters).toEqual(expect.arrayContaining([
+        expect.objectContaining({ sourceName, sourceId }),
+      ]));
+    } finally {
+      await worker.stop();
+      if (sourceQueueCreated) {
+        const deadLetter = deadLetters.find((job) => job.sourceId === sourceId);
+        if (deadLetter) await producer.boss.deleteJob(queueLib.QUEUES.DEAD_LETTER, deadLetter.id);
+        await producer.boss.deleteQueue(sourceName);
+      }
+    }
+  });
 });
