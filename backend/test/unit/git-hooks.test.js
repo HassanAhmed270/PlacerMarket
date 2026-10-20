@@ -8,6 +8,8 @@
 const {
   validateCommitMessage, findUnbackedTicks, forbiddenStagedPaths, newlyTicked, allCodes, tickedRows,
 } = require('../../hooks/lib/fr');
+const path = require('path');
+const { findProjectRoot, relativeGitPath } = require('../../hooks/lib/project-root');
 
 const specs = (rows) => rows.map(([mark, code, rest = 'Some requirement.']) => `- [${mark}] ${code} ${rest}`).join('\n');
 
@@ -108,6 +110,15 @@ describe('never-commit paths (rules.md Section 8, part 4)', () => {
 
   test('allows .env.example and look-alike names', () => {
     expect(forbiddenStagedPaths(['.env.example', 'src/environment.js', 'docs/coverage-notes.md'])).toEqual([]);
+  });
+});
+
+describe('hook project-root resolution', () => {
+  test('finds the backend requirements from a repository root and computes Git paths', () => {
+    const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+    const projectRoot = findProjectRoot(repositoryRoot);
+    expect(projectRoot).toBe(path.join(repositoryRoot, 'backend'));
+    expect(relativeGitPath(repositoryRoot, path.join(projectRoot, 'specs.md'))).toBe('backend/specs.md');
   });
 });
 

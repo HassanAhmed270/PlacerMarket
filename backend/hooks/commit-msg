@@ -2,12 +2,16 @@
 // rules.md Section 8, part 2: reject commit messages not in "<FR-code(s)>: ..." / "chore:" / "docs:" form.
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
+const { findProjectRoot } = require('./lib/project-root');
 const { validateCommitMessage, allCodes } = require('./lib/fr');
 
 const message = fs.readFileSync(process.argv[2], 'utf8');
+const repositoryRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+const projectRoot = findProjectRoot(repositoryRoot);
 let knownCodes;
 try {
-  knownCodes = allCodes(fs.readFileSync(path.join(process.cwd(), 'specs.md'), 'utf8'));
+  knownCodes = allCodes(fs.readFileSync(path.join(projectRoot, 'specs.md'), 'utf8'));
 } catch (_) {
   knownCodes = undefined; // no specs.md at the repo root: skip the "does this FR exist" check
 }

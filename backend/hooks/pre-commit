@@ -4,9 +4,15 @@
 //  - node_modules/, .env, coverage/ must never be committed, even with `git add -f`
 // Assumes the repo root is this folder (specs.md and test/ at the top level).
 const { execFileSync } = require('child_process');
+const path = require('path');
+const { findProjectRoot, relativeGitPath } = require('./lib/project-root');
 const { findUnbackedTicks, forbiddenStagedPaths } = require('./lib/fr');
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const repositoryRoot = git('rev-parse', '--show-toplevel').trim();
+const projectRoot = findProjectRoot(repositoryRoot);
+const projectPrefix = relativeGitPath(repositoryRoot, projectRoot);
+const specsPath = relativeGitPath(repositoryRoot, path.join(projectRoot, 'specs.md'));
 const staged = git('diff', '--cached', '--name-only', '--diff-filter=ACMR').split('\n').filter(Boolean);
 const problems = [];
 
@@ -15,11 +21,13 @@ if (forbidden.length) {
   problems.push(`never commit these (rules.md Section 8):\n  ${forbidden.join('\n  ')}`);
 }
 
-if (staged.includes('specs.md')) {
-  const stagedSpecs = git('show', ':specs.md');
+if (staged.includes(specsPath)) {
+  const stagedSpecs = git('show', `:${specsPath}`);
   let headSpecs = '';
-  try { headSpecs = git('show', 'HEAD:specs.md'); } catch (_) { /* first commit: nothing was ticked before */ }
-  const stagedTestSources = staged.filter((f) => /^test\/.*\.test\.js$/.test(f)).map((f) => git('show', `:${f}`));
+  try { headSpecs = git('show', `HEAD:${specsPath}`); } catch (_) { /* first commit: nothing was ticked before */ }
+  const testPrefix = projectPrefix ? `${projectPrefix}/test/` : 'test/';
+  const stagedTestSources = staged.filter((f) => f.startsWith(testPrefix) && f.endsWith('.test.js'))
+    .map((f) => git('show', `:${f}`));
   const unbacked = findUnbackedTicks({ headSpecs, stagedSpecs, stagedTestSources });
   if (unbacked.length) {
     problems.push(
