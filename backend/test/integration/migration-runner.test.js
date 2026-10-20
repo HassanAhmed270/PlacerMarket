@@ -1,0 +1,115 @@
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { Pool } = require('pg');
+const db = require('../../src/db.service');
+const { runMigrations } = require('../../db/migrate');
+
+const databaseUrl = process.env.TEST_DATABASE_URL;
+const initialSchema = fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'migrations', '001_initial_schema.sql'), 'utf8');
+const schemas = new Set();
+
+function newSchemaName() {
+  const name = `migration_probe_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
+  schemas.add(name);
+  return name;
+}
+
+async function createSchema(name) {
+  await db.query(`CREATE SCHEMA "${name}"`);
+}
+
+async function dropSchema(name) {
+  await db.query(`DROP SCHEMA IF EXISTS "${name}" CASCADE`);
+  schemas.delete(name);
+}
+
+afterEach(async () => {
+  for (const schema of [...schemas]) await dropSchema(schema);
+});
+
+describe('FR-79b PostgreSQL migration runner', () => {
+  test('fresh schema applies its ordered migration once and is idempotent', async () => {
+    const schema = newSchemaName();
+    const first = await runMigrations({ databaseUrl, schema });
+    const second = await runMigrations({ databaseUrl, schema });
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(0);
+    const { rows } = await db.query(`SELECT count(*)::int AS count FROM "${schema}".schema_migrations`);
+    expect(rows[0].count).toBe(1);
+  });
+
+  test('existing compatible schema can be baselined without changing application data', async () => {
+    const schema = newSchemaName();
+    await createSchema(schema);
+    const pool = new Pool({ connectionString: databaseUrl });
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query(`SET search_path TO "${schema}", public`);
+        await client.query(initialSchema);
+        await client.query("INSERT INTO cities (name) VALUES ('migration baseline preservation probe')");
+      } finally {
+        client.release();
+      }
+    } finally {
+      await pool.end();
+    }
+
+    await expect(runMigrations({ databaseUrl, schema })).rejects.toThrow(/explicit db:migrate:baseline/);
+    await runMigrations({ databaseUrl, schema, baselineExisting: true });
+    const { rows } = await db.query(`SELECT name FROM "${schema}".cities`);
+    expect(rows).toEqual([{ name: 'migration baseline preservation probe' }]);
+    const history = await db.query(`SELECT name FROM "${schema}".schema_migrations`);
+    expect(history.rows).toEqual([{ name: '001_initial_schema' }]);
+  });
+
+  test('unrecognized existing schema is refused without changing its rows', async () => {
+    const schema = newSchemaName();
+    await createSchema(schema);
+    await db.query(`CREATE TABLE "${schema}".keep_me (value text)`);
+    await db.query(`INSERT INTO "${schema}".keep_me VALUES ('untouched')`);
+
+    await expect(runMigrations({ databaseUrl, schema, baselineExisting: true }))
+      .rejects.toThrow(/does not match the initial migration/);
+    const { rows } = await db.query(`SELECT value FROM "${schema}".keep_me`);
+    expect(rows).toEqual([{ value: 'untouched' }]);
+    const history = await db.query(
+      "SELECT to_regclass($1) AS history", [`${schema}.schema_migrations`]
+    );
+    expect(history.rows[0].history).toBeNull();
+  });
+
+  test('failed migration rolls back and can be retried after the migration is corrected', async () => {
+    const schema = newSchemaName();
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'poshaak-migration-retry-'));
+    const migrationPath = path.join(dir, '001_retry.sql');
+    try {
+      await createSchema(schema);
+      fs.writeFileSync(migrationPath, 'CREATE TABLE retry_probe (id integer); SELECT 1 / 0;');
+      await expect(runMigrations({ databaseUrl, schema, migrationsDir: dir })).rejects.toThrow();
+      const afterFailure = await db.query(
+        "SELECT to_regclass($1) AS relation", [`${schema}.retry_probe`]
+      );
+      expect(afterFailure.rows[0].relation).toBeNull();
+
+      fs.writeFileSync(migrationPath, 'CREATE TABLE retry_probe (id integer);');
+      await expect(runMigrations({ databaseUrl, schema, migrationsDir: dir })).resolves.toHaveLength(1);
+      const afterRetry = await db.query(`SELECT to_regclass($1) AS relation`, [`${schema}.retry_probe`]);
+      expect(afterRetry.rows[0].relation).not.toBeNull();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('concurrent migration runners serialize and record the initial migration once', async () => {
+    const schema = newSchemaName();
+    const results = await Promise.all([
+      runMigrations({ databaseUrl, schema }),
+      runMigrations({ databaseUrl, schema }),
+    ]);
+    const { rows } = await db.query(`SELECT count(*)::int AS count FROM "${schema}".schema_migrations`);
+    expect(rows[0].count).toBe(1);
+    expect(results.flat()).toHaveLength(1);
+  });
+});

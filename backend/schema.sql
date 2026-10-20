@@ -1,3 +1,5 @@
+-- Generated from db/migrations by db:generate-schema. Do not edit directly.
+-- Migration: 001_initial_schema.sql
 -- =============================================================================
 -- CONSOLIDATION NOTE (2026-10-14) — read before relying on this file
 -- This is the COD-era BASELINE schema (26 tables). No table or column was added

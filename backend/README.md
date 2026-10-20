@@ -25,9 +25,22 @@ npm run db:setup        # applies schema.sql, then seeds platform_settings
 npm start                # or: npm run dev (auto-restart on file change)
 ```
 
-`npm run db:setup` runs two scripts:
-- `db/migrate.js` — applies `schema.sql` to `DATABASE_URL` as one flat script (no migration-history table, no up/down versioning — this is a single-shot setup, not a real migrations system).
+The setup command expects an empty database. For a database that already has
+the legacy schema, first inspect it and run `npm run db:migrate:baseline` only
+after confirming compatibility; then run `npm run db:seed`.
+
+`npm run db:setup` runs the versioned migration runner, then seeds the database.
+- `db/migrate.js` — applies ordered SQL files from `db/migrations/`, tracks
+  them in `schema_migrations`, and uses a PostgreSQL advisory lock. An existing
+  untracked schema is left untouched and refused; after checking that it is
+  compatible with the initial migration, explicitly run
+  `npm run db:migrate:baseline` to record it without replaying DDL.
 - `db/seed.js` — inserts the `platform_settings` rows (`commission_percent`, `high_value_threshold_pkr`, `payout_hold_days`, `complaint_window_days`) that a large part of the service layer reads via `getSetting()`. Without this step, calls like `users.service.isIdVerificationRequired()` or `payout.service.startHold()` will throw `NotFoundError`.
+
+`schema.sql` is generated from migrations with `npm run db:generate-schema`;
+use `npm run db:check-schema` to verify the snapshot. The initial migration
+preserves the existing schema definition. The runner is a Phase 0 foundation;
+the full FR-79b compatibility and zero-downtime migration gate remains open.
 
 ## Testing
 
@@ -35,11 +48,10 @@ npm start                # or: npm run dev (auto-restart on file change)
 npm test
 ```
 
-Jest. `test/unit/` covers pure-logic functions directly and DB-touching
-functions via a mocked `db.service.js` (see `test/unit/disputes.service.test.js`
-and `test/unit/settlement.service.test.js` for the mocking pattern — extend
-it the same way for other modules). `test/smoke/app.test.js` boots the real
-Express app and hits routes that don't require a live database.
+Jest. `test/unit/` covers pure logic and mocked service behavior. The real
+PostgreSQL suite is `npm run test:integration`; its guard requires a disposable
+local database whose name contains `test` as a delimited token, then resets
+only that database's `public` schema.
 
 Coverage today is intentionally partial — it proves the pattern and covers
 the two OPEN-item guards (FR-45a/FR-50a) and the FR-05a permission matrix,
@@ -60,8 +72,8 @@ this folder is the repo root.
   is a stub, so nothing behind `requireAuth` actually works end-to-end yet.
 - `lib/roles.js` is missing a couple of permissions (routes currently reuse
   an Admin-only stand-in) — see agent.md's "Known gaps" section.
-- `db/migrate.js` is a single-shot script, not a real migrations system —
-  fine for a fresh dev DB, not for evolving schema.sql over time.
+- Full expand/switch/contract migration compatibility checks, worker backfills,
+  and deployed PgBouncer behavior are still future work.
 
 ## Project layout
 
@@ -74,7 +86,8 @@ src/
   modules/              13 service files, one per spec module — see agent.md
   routes/               one thin router per module, mounted under /api
 db/
-  migrate.js            applies schema.sql
+  migrate.js            applies ordered, versioned SQL migrations
+  migrations/           ordered migration sources for schema.sql
   seed.js                seeds platform_settings
 hooks/
   commit-msg, pre-commit  git hooks enforcing rules.md Section 8
