@@ -7,9 +7,9 @@
  * Cross-module dependencies OUT:
  * - catalog.service.getMeasurementFieldDefs() to validate FR-15a values
  *   against the admin-defined field set for the listing's sub-category.
- * - users.service.isApprovedSeller() / isIdVerified() / isIdVerificationRequired()
- *   to gate listing creation (FR-08) and the high-value ID-verification
- *   requirement (FR-08a, FR-19b).
+ * - users.service.isApprovedSeller() / isIdVerificationRequired()
+ *   to gate seller listing actions (FR-08) and high-value publication until
+ *   temporary email verification is implemented (FR-08a, FR-19b).
  * - catalog.service.assertReplicaDisclosureIfNeeded() / assertNotRentalListing()
  *   for FR-14/FR-14a validation at creation time.
  *
@@ -26,25 +26,81 @@ const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
 
+const MIN_LISTING_IMAGES = 3;
+const MAX_LISTING_IMAGES = 6;
+const EDITABLE_LISTING_FIELDS = new Map([
+  ['title', 'title'],
+  ['mainCategoryId', 'main_category_id'],
+  ['subCategoryId', 'sub_category_id'],
+  ['condition', 'condition'],
+  ['replicaDisclosure', 'replica_disclosure'],
+  ['askingPrice', 'asking_price'],
+  ['description', 'description'],
+  ['fabricMaterial', 'fabric_material'],
+  ['brand', 'brand'],
+  ['color', 'color'],
+  ['embellishmentDetail', 'embellishment_detail'],
+]);
+
+/** FR-16, FR-74: require three through six listing images before submission or publication. */
+function assertValidListingImageCount(count) {
+  if (count < MIN_LISTING_IMAGES || count > MAX_LISTING_IMAGES) {
+    throw new ValidationError(`A listing needs ${MIN_LISTING_IMAGES} to ${MAX_LISTING_IMAGES} photos before review`);
+  }
+}
+
+/** FR-19: move a seller-owned draft or rejected listing into the review queue. */
+async function transitionListingToReview(listingId, sellerId, expectedStatus) {
+  await assertApprovedSeller(sellerId);
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query('SELECT * FROM listings WHERE id = $1 FOR UPDATE', [listingId]);
+    const listing = rows[0];
+    if (!listing) throw new NotFoundError('listing', listingId);
+    if (listing.seller_id !== sellerId) throw new ForbiddenError('Not your listing');
+    if (listing.status !== expectedStatus) {
+      throw new ValidationError(`Only ${expectedStatus} listings may use this review transition`);
+    }
+
+    const { rows: imageRows } = await client.query(
+      'SELECT count(*)::int AS count FROM listing_images WHERE listing_id = $1', [listingId]
+    );
+    assertValidListingImageCount(imageRows[0].count);
+    const requiresId = await users.isIdVerificationRequired(listing.asking_price);
+    const { rows: updated } = await client.query(
+      `UPDATE listings
+       SET status = 'pending_review', requires_id_verification = $1, updated_at = now()
+       WHERE id = $2 RETURNING *`,
+      [requiresId, listingId]
+    );
+    return updated[0];
+  });
+}
+
+/** FR-08: seller listing operations require a currently approved, active seller. */
+async function assertApprovedSeller(sellerId) {
+  if (!(await users.isApprovedSeller(sellerId))) {
+    throw new ForbiddenError('Only active approved sellers can manage listings (FR-08)');
+  }
+}
+
 // ---- FR-15, FR-15a, FR-15b: create listing ----
 
 /** FR-15, FR-15a, FR-15b: approved sellers create a draft listing. */
 async function createListing(sellerId, data) {
-  if (!(await users.isApprovedSeller(sellerId))) {
-    throw new ForbiddenError('Only approved sellers can create listings (FR-08)');
-  }
+  await assertApprovedSeller(sellerId);
   catalog.assertNotRentalListing(data); // FR-14a
   catalog.assertReplicaDisclosureIfNeeded(data); // FR-14
 
   return db.withTransaction(async (client) => {
     const { rows } = await client.query(
       `INSERT INTO listings
-         (seller_id, main_category_id, sub_category_id, condition, asking_price,
-          description, fabric_material, brand, color, embellishment_detail, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'draft') RETURNING *`,
+         (seller_id, main_category_id, sub_category_id, condition, title, replica_disclosure,
+          asking_price, description, fabric_material, brand, color, embellishment_detail, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'draft') RETURNING *`,
       [
-        sellerId, data.mainCategoryId, data.subCategoryId, data.condition, data.askingPrice,
-        data.description, data.fabricMaterial, data.brand, data.color, data.embellishmentDetail,
+        sellerId, data.mainCategoryId, data.subCategoryId, data.condition, data.title,
+        data.replicaDisclosure, data.askingPrice, data.description, data.fabricMaterial,
+        data.brand, data.color, data.embellishmentDetail,
       ]
     );
     const listing = rows[0];
@@ -59,37 +115,69 @@ async function createListing(sellerId, data) {
 /** FR-15a: validates values against catalog.service's admin-defined field set before storing. */
 async function saveListingMeasurements(client, listingId, subCategoryId, measurements) {
   const defs = await catalog.getMeasurementFieldDefs(subCategoryId);
-  const defNames = new Set(defs.map((d) => d.field_name));
+  const defsByName = new Map(defs.map((def) => [def.field_name, def]));
   for (const m of measurements) {
-    if (!defNames.has(m.fieldName)) {
+    const definition = defsByName.get(m.fieldName);
+    if (!definition) {
       throw new ValidationError(`Unknown measurement field "${m.fieldName}" for this sub-category (FR-15a)`);
     }
     await client.query(
-      `INSERT INTO listing_measurements (listing_id, field_name, value) VALUES ($1, $2, $3)`,
-      [listingId, m.fieldName, m.value]
+      `INSERT INTO listing_measurements (listing_id, field_def_id, value) VALUES ($1, $2, $3)`,
+      [listingId, definition.id, m.value]
     );
   }
 }
 
-/** FR-16: multiple images per listing. */
-async function addListingImages(listingId, imageUrls) {
-  const inserts = imageUrls.map((url, i) =>
-    db.query(
-      'INSERT INTO listing_images (listing_id, url, sort_order) VALUES ($1, $2, $3)',
-      [listingId, url, i]
-    )
-  );
-  await Promise.all(inserts);
+/** FR-16, FR-20: the listing owner may add photos while a draft or rejected listing is editable. */
+async function addListingImages(listingId, sellerId, imageUrls) {
+  await assertApprovedSeller(sellerId);
+  if (!Array.isArray(imageUrls)) throw new ValidationError('imageUrls must be an array');
+  if (imageUrls.length === 0) return;
+
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'SELECT seller_id, status FROM listings WHERE id = $1 FOR UPDATE', [listingId]
+    );
+    if (!rows[0]) throw new NotFoundError('listing', listingId);
+    if (rows[0].seller_id !== sellerId) throw new ForbiddenError('Not your listing');
+    if (!['draft', 'rejected'].includes(rows[0].status)) {
+      throw new ValidationError('Photos can only be added to draft or rejected listings');
+    }
+
+    const { rows: countRows } = await client.query(
+      'SELECT count(*)::int AS count FROM listing_images WHERE listing_id = $1', [listingId]
+    );
+    const existingCount = countRows[0].count;
+    if (existingCount + imageUrls.length > MAX_LISTING_IMAGES) {
+      throw new ValidationError(`A listing cannot have more than ${MAX_LISTING_IMAGES} photos`);
+    }
+    for (const [index, url] of imageUrls.entries()) {
+      await client.query(
+        'INSERT INTO listing_images (listing_id, image_url, display_order) VALUES ($1, $2, $3)',
+        [listingId, url, existingCount + index]
+      );
+    }
+  });
+}
+
+/** FR-19: sellers explicitly submit a draft after completing its required photos. */
+async function submitListingForReview(listingId, sellerId) {
+  return transitionListingToReview(listingId, sellerId, 'draft');
 }
 
 // ---- FR-17, FR-18, FR-18a: evidence & verified badge ----
 
 /** FR-17: seller optionally submits authenticity evidence (receipts, tags, docs). */
 async function submitAuthenticityEvidence(listingId, sellerId, evidenceUrls) {
+  await assertApprovedSeller(sellerId);
+  const { rows } = await db.query('SELECT seller_id FROM listings WHERE id = $1', [listingId]);
+  if (!rows[0]) throw new NotFoundError('listing', listingId);
+  if (rows[0].seller_id !== sellerId) throw new ForbiddenError('Not your listing');
+
   const inserts = evidenceUrls.map((url) =>
     db.query(
-      'INSERT INTO listing_evidence (listing_id, url, submitted_by) VALUES ($1, $2, $3)',
-      [listingId, url, sellerId]
+      'INSERT INTO listing_evidence (listing_id, evidence_url, evidence_type) VALUES ($1, $2, $3)',
+      [listingId, url, null]
     )
   );
   await Promise.all(inserts);
@@ -101,8 +189,12 @@ async function submitAuthenticityEvidence(listingId, sellerId, evidenceUrls) {
  */
 async function setVerifiedBadge(listingId, { granted, reviewerId }) {
   const { rows } = await db.query(
-    'UPDATE listings SET is_verified = $1 WHERE id = $2 RETURNING *',
-    [granted, listingId]
+    `UPDATE listings
+     SET is_verified = $1,
+         verified_by = CASE WHEN $1 THEN $2::uuid ELSE NULL END,
+         verified_at = CASE WHEN $1 THEN now() ELSE NULL END
+     WHERE id = $3 RETURNING *`,
+    [granted, reviewerId, listingId]
   );
   if (!rows[0]) throw new NotFoundError('listing', listingId);
   return rows[0];
@@ -124,83 +216,148 @@ async function getModerationQueue() {
 }
 
 /**
- * FR-19a/FR-19b: approving a listing to go live is independent of the
- * Verified badge, but IS gated by ID verification once the listing crosses
- * the high-value threshold (FR-08a).
+ * FR-19a/FR-19b: approval is separate from the Verified badge. High-value
+ * listings remain pending until the required email-verification flow exists.
  */
 async function approveListing(listingId, reviewerId) {
-  const { rows } = await db.query('SELECT * FROM listings WHERE id = $1', [listingId]);
-  const listing = rows[0];
-  if (!listing) throw new NotFoundError('listing', listingId);
+  const updated = await db.withTransaction(async (client) => {
+    const { rows } = await client.query('SELECT * FROM listings WHERE id = $1 FOR UPDATE', [listingId]);
+    const listing = rows[0];
+    if (!listing) throw new NotFoundError('listing', listingId);
+    if (listing.status !== 'pending_review') {
+      throw new ValidationError('Only listings pending review can be published');
+    }
 
-  const requiresId = await users.isIdVerificationRequired(listing.asking_price); // FR-08a
-  if (requiresId && !(await users.isIdVerified(listing.seller_id))) {
-    // FR-19b: cannot approve yet — this is the FR-08b manual fork point.
-    // Caller (admin route) should present the hold/approve-unpublished/reject
-    // choice; this function just refuses to silently approve.
-    throw new ForbiddenError(
-      'Listing crosses high-value threshold and seller ID is not verified — requires manual FR-08b decision'
+    const { rows: imageRows } = await client.query(
+      'SELECT count(*)::int AS count FROM listing_images WHERE listing_id = $1', [listingId]
     );
-  }
+    assertValidListingImageCount(imageRows[0].count);
 
-  const { rows: updated } = await db.query(
-    `UPDATE listings SET status = 'live', approved_by = $1, approved_at = now() WHERE id = $2 RETURNING *`,
-    [reviewerId, listingId]
-  );
-  eventBus.emit(events.LISTING_STATUS_CHANGED, { listingId, status: 'live' });
-  return updated[0];
-}
+    const requiresEmailVerification = await users.isIdVerificationRequired(listing.asking_price); // FR-08a
+    if (requiresEmailVerification) {
+      // FR-08a/FR-08b: email verification is scheduled before Phase 2; no verification mechanism exists yet.
+      throw new ForbiddenError(
+        'Listing crosses the high-value threshold and cannot be published until the seller email is verified (FR-08a)'
+      );
+    }
 
-/** FR-08b (OPEN process, decided as manual): explicit hold state, no automatic transition out of it. */
-async function holdListingPendingIdVerification(listingId, reviewerId, note) {
-  const { rows } = await db.query(
-    `UPDATE listings SET status = 'held_pending_id' WHERE id = $1 RETURNING *`,
-    [listingId]
-  );
-  if (!rows[0]) throw new NotFoundError('listing', listingId);
-  return rows[0];
+    const { rows: published } = await client.query(
+      `UPDATE listings SET status = 'published', reviewed_by = $1, published_at = now(), updated_at = now()
+       WHERE id = $2 AND status = 'pending_review' RETURNING *`,
+      [reviewerId, listingId]
+    );
+    return published[0];
+  });
+  eventBus.emit(events.LISTING_STATUS_CHANGED, { listingId, status: 'published' });
+  return updated;
 }
 
 // ---- FR-20, FR-21, FR-21a: seller/admin edits ----
 
-/** FR-20: sellers can edit, pause, or remove their own listings. */
+/** FR-20: sellers may edit supported content fields on drafts and rejected listings they own. */
 async function updateOwnListing(listingId, sellerId, patch) {
-  const { rows } = await db.query('SELECT seller_id FROM listings WHERE id = $1', [listingId]);
-  if (!rows[0]) throw new NotFoundError('listing', listingId);
-  if (rows[0].seller_id !== sellerId) throw new ForbiddenError('Not your listing');
-  // TODO: build the actual SET clause from patch fields once the listing edit UI is scoped.
-  return db.query('UPDATE listings SET updated_at = now() WHERE id = $1 RETURNING *', [listingId]);
+  await assertApprovedSeller(sellerId);
+  if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+    throw new ValidationError('Listing patch must be an object');
+  }
+  const keys = Object.keys(patch);
+  if (keys.length === 0) throw new ValidationError('Listing patch must include at least one supported field');
+  const unsupported = keys.filter((key) => !EDITABLE_LISTING_FIELDS.has(key));
+  if (unsupported.length) throw new ValidationError(`Unsupported listing field: ${unsupported[0]}`);
+  const requiredFields = ['title', 'mainCategoryId', 'subCategoryId', 'condition', 'askingPrice'];
+  const missingRequired = keys.find((key) => requiredFields.includes(key) && patch[key] == null);
+  if (missingRequired) throw new ValidationError(`${missingRequired} cannot be null`);
+
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query('SELECT * FROM listings WHERE id = $1 FOR UPDATE', [listingId]);
+    const listing = rows[0];
+    if (!listing) throw new NotFoundError('listing', listingId);
+    if (listing.seller_id !== sellerId) throw new ForbiddenError('Not your listing');
+    if (listing.status === 'published') {
+      throw new ValidationError(
+        'Published listing edits require pending-version storage (FR-73); this schema has no safe place to keep them'
+      );
+    }
+    if (!['draft', 'rejected'].includes(listing.status)) {
+      throw new ValidationError('Only draft or rejected listings can be edited');
+    }
+
+    const merged = {
+      condition: patch.condition ?? listing.condition,
+      replicaDisclosure: Object.prototype.hasOwnProperty.call(patch, 'replicaDisclosure')
+        ? patch.replicaDisclosure
+        : listing.replica_disclosure,
+    };
+    if (!catalog.listConditionTypes().includes(merged.condition)) {
+      throw new ValidationError('Unsupported listing condition');
+    }
+    catalog.assertReplicaDisclosureIfNeeded(merged);
+
+    const nextMainCategoryId = patch.mainCategoryId ?? listing.main_category_id;
+    const nextSubCategoryId = patch.subCategoryId ?? listing.sub_category_id;
+    if (keys.includes('mainCategoryId') || keys.includes('subCategoryId')) {
+      const subCategories = await catalog.listSubCategories(nextMainCategoryId);
+      if (!subCategories.some((subCategory) => subCategory.id === nextSubCategoryId)) {
+        throw new ValidationError('Sub-category must belong to the selected main category');
+      }
+      if (nextSubCategoryId !== listing.sub_category_id) {
+        const { rows: measurements } = await client.query(
+          'SELECT 1 FROM listing_measurements WHERE listing_id = $1 LIMIT 1', [listingId]
+        );
+        if (measurements.length) {
+          throw new ValidationError('Cannot change sub-category while listing measurements use its field definitions');
+        }
+      }
+    }
+
+    const assignments = [];
+    const values = [];
+    for (const key of keys) {
+      const column = EDITABLE_LISTING_FIELDS.get(key);
+      values.push(patch[key]);
+      assignments.push(`${column} = $${values.length}`);
+    }
+    assignments.push('updated_at = now()');
+    values.push(listingId);
+    const { rows: updated } = await client.query(
+      `UPDATE listings SET ${assignments.join(', ')} WHERE id = $${values.length} RETURNING *`, values
+    );
+    return updated[0];
+  });
 }
 
 /** FR-21: admin can unpublish/reject a live listing post-publication, with a reason. */
 async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
   const { rows } = await db.query(
-    `UPDATE listings SET status = 'rejected', decision_reason = $1 WHERE id = $2 RETURNING *`,
+    `UPDATE listings
+     SET status = CASE WHEN status = 'published' THEN 'unpublished'::listing_status ELSE 'rejected'::listing_status END,
+         rejection_reason = $1, updated_at = now()
+     WHERE id = $2 AND status IN ('pending_review', 'published')
+     RETURNING *`,
     [reason, listingId]
   );
-  if (!rows[0]) throw new NotFoundError('listing', listingId);
-  eventBus.emit(events.LISTING_STATUS_CHANGED, { listingId, status: 'rejected', reason });
+  if (!rows[0]) {
+    const { rows: existing } = await db.query('SELECT id FROM listings WHERE id = $1', [listingId]);
+    if (!existing[0]) throw new NotFoundError('listing', listingId);
+    throw new ValidationError('Only listings pending review or published can be rejected or unpublished');
+  }
+  eventBus.emit(events.LISTING_STATUS_CHANGED, { listingId, status: rows[0].status, reason });
   return rows[0];
 }
 
 /** FR-21a: rejected listings can be resubmitted after edits, reviewed case-by-case, no cooldown. */
 async function resubmitListing(listingId, sellerId) {
-  const { rows } = await db.query(
-    `UPDATE listings SET status = 'pending_review' WHERE id = $1 AND seller_id = $2 RETURNING *`,
-    [listingId, sellerId]
-  );
-  if (!rows[0]) throw new NotFoundError('listing', listingId);
-  return rows[0];
+  return transitionListingToReview(listingId, sellerId, 'rejected');
 }
 
 module.exports = {
   createListing,
   addListingImages,
+  submitListingForReview,
   submitAuthenticityEvidence,
   setVerifiedBadge,
   getModerationQueue,
   approveListing,
-  holdListingPendingIdVerification,
   updateOwnListing,
   rejectOrUnpublishListing,
   resubmitListing,

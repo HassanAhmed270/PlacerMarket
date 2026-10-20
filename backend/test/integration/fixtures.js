@@ -11,8 +11,20 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
   );
   const userId = userRows[0].id;
   await db.query(
-    'INSERT INTO seller_profiles (user_id, display_alias) VALUES ($1, $2)',
+    `INSERT INTO seller_profiles (user_id, display_alias, is_approved, approved_at)
+     VALUES ($1, $2, true, now())`,
     [userId, `Fixture alias ${suffix}`]
+  );
+  const { rows: otherUserRows } = await db.query(
+    `INSERT INTO users (full_name, phone, password_hash, city_id, role)
+     VALUES ($1, $2, 'fixture-hash', $3, 'seller') RETURNING id`,
+    [`Other fixture seller ${suffix}`, `+1556${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, cityRows[0].id]
+  );
+  const otherUserId = otherUserRows[0].id;
+  await db.query(
+    `INSERT INTO seller_profiles (user_id, display_alias, is_approved, approved_at)
+     VALUES ($1, $2, true, now())`,
+    [otherUserId, `Other fixture alias ${suffix}`]
   );
   const { rows: categoryRows } = await db.query(
     'INSERT INTO main_categories (name) VALUES ($1) RETURNING id', [`Fixture main ${suffix}`]
@@ -37,6 +49,7 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
 
   return {
     userId,
+    otherUserId,
     suffix,
     cityId: cityRows[0].id,
     categoryId: categoryRows[0].id,
@@ -47,6 +60,7 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
     async cleanup() {
       await global.drainIntegrationListeners(5000);
       await db.query('DELETE FROM notifications WHERE user_id = $1', [userId]);
+      await db.query('DELETE FROM notifications WHERE user_id = $1', [otherUserId]);
       await db.query('DELETE FROM listing_images WHERE listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
       await db.query('DELETE FROM listing_evidence WHERE listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
       await db.query('DELETE FROM listing_measurements WHERE listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
@@ -54,7 +68,9 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
       await db.query('DELETE FROM measurement_field_defs WHERE sub_category_id = $1', [subCategoryRows[0].id]);
       await db.query('DELETE FROM seller_applications WHERE user_id = $1', [userId]);
       await db.query('DELETE FROM seller_profiles WHERE user_id = $1', [userId]);
+      await db.query('DELETE FROM seller_profiles WHERE user_id = $1', [otherUserId]);
       await db.query('DELETE FROM users WHERE id = $1', [userId]);
+      await db.query('DELETE FROM users WHERE id = $1', [otherUserId]);
       await db.query('DELETE FROM sub_categories WHERE id = $1', [subCategoryRows[0].id]);
       await db.query('DELETE FROM main_categories WHERE id = $1', [categoryRows[0].id]);
       await db.query('DELETE FROM cities WHERE id = $1', [cityRows[0].id]);

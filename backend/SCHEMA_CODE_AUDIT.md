@@ -17,8 +17,10 @@ PostgreSQL 18.6. Corrected users/catalog behaviors are now covered by normal
 passing integration tests with valid foreign-key fixtures and cleanup. The
 retained `test.failing` probes cover known behavior gaps. Separate passing
 error-code pin tests explicitly record these known mismatches:
-`updateSellerPayoutMethod` (`42703`, deferred to Phase 1) and
-`holdListingPendingIdVerification` (`22P02`, needs a decision). Other findings
+`updateSellerPayoutMethod` (`42703`, deferred to Phase 1). The former
+`holdListingPendingIdVerification` (`22P02`) mismatch is resolved by removing
+the invalid status transition and using the approved temporary email-verification
+publication gate. Other findings
 are represented by static or scratch-copy evidence where a valid isolated
 regression fixture is not appropriate; the probe set is not exhaustive.
 
@@ -39,7 +41,7 @@ regression fixture is not appropriate; the probe set is not exhaustive.
 | `fix-0a-2b` | `src/modules/listings.service.js` | `addListingImages` | Uses `url` and `sort_order`; schema uses `image_url` and `display_order`. | **Reproduced:** `42703`, `column "url" of relation "listing_images" does not exist`. Service line 78; schema lines 163–168. |
 | `fix-0a-2b` | `src/modules/listings.service.js` | `submitAuthenticityEvidence` | Uses `url` and `submitted_by`; schema has `evidence_url`, `evidence_type`, and no submitter column. | **Reproduced first SQL error:** `42703`, `column "url" of relation "listing_evidence" does not exist`. Service line 91; schema lines 170–176. |
 | `fix-0a-2b` | `src/modules/listings.service.js` | `approveListing` | Uses invalid `listing_status` value `live`, plus absent `approved_by` / `approved_at`; schema has `published`, `reviewed_by`, `published_at`. | **Reproduced enum error first:** `22P02`, `invalid input value for enum listing_status: "live"`. Missing reviewer/timestamp columns are **static** and masked by enum coercion. Service line 147; schema lines 121–154. |
-| `needs-decision` | `src/modules/listings.service.js` | `holdListingPendingIdVerification` | Uses `held_pending_id`, absent from `listing_status`; schema has no equivalent listing hold state. Decide the intended representation before changing the enum or behavior. | **Reproduced:** `22P02`, `invalid input value for enum listing_status: "held_pending_id"`. Service line 157; schema lines 121–125; FR-08b. |
+| `fix-0a-2b` | `src/modules/listings.service.js`, `src/routes/listings.routes.js` | `approveListing`; retired `holdListingPendingIdVerification` route | The invalid `held_pending_id` transition and route are removed. Under approved FR-08a/FR-08b, high-value publication is blocked until registered-email verification exists; that mechanism is scheduled for Phase 1 before Phase 2. No schema enum value or legal-identity check is introduced. | Passing PostgreSQL integration regressions verify the hold enum value is absent and the legacy ID flag does not bypass the high-value email gate. |
 | `fix-0a-2b` | `src/modules/listings.service.js` | `rejectOrUnpublishListing` | Writes absent `decision_reason`; schema has `rejection_reason`. | **Reproduced:** `42703`, `column "decision_reason" of relation "listings" does not exist`. Service line 178; schema lines 126–154. |
 | `needs-decision` | `src/modules/discovery.service.js` | `filterListings` | Accepts `cityId` but never applies it; schema has no listing city column. Decide whether filtering should follow seller city or require another data-model change. | **Static only:** parameter is destructured but not used; no city column exists on `listings`. Service lines 37–46; schema lines 126–154. |
 | `fix-0a-2c` | `src/modules/discovery.service.js` | `searchListings`, `filterListings` | Filter on enum value `live`; schema uses `published`. | **Reproduced search error:** `22P02`, `invalid input value for enum listing_status: "live"`. Filter has the same static value. Service lines 28, 45; schema lines 121–125. |

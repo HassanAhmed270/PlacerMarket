@@ -6,12 +6,13 @@
  *
  * Cross-module dependencies this file has OUT to other services:
  * - settlement.service.getSetting('high_value_threshold_pkr') for FR-08a
- *   (the price threshold that triggers CNIC/ID verification lives in
- *   platform_settings, owned by settlement.service.js, not here).
+ *   (the price threshold for the temporary registered-email verification
+ *   policy lives in platform_settings, owned by settlement.service.js).
  *
  * Cross-module dependencies other files have IN to this file:
- * - listings.service.js calls isIdVerified() and isApprovedSeller() before
- *   allowing a listing to go live (FR-08, FR-19b).
+ * - listings.service.js calls isApprovedSeller() for seller operations and
+ *   isIdVerificationRequired() to apply the temporary high-value publication
+ *   hold until email verification is implemented (FR-08, FR-19b).
  * - admin.service.js delegates FR-52/53 user + seller-application management
  *   here instead of re-implementing it.
  */

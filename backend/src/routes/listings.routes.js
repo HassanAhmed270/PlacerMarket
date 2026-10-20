@@ -9,8 +9,12 @@ router.post('/', requireAuth, async (req, res) => {
 });
 
 router.post('/:id/images', requireAuth, async (req, res) => {
-  await listings.addListingImages(req.params.id, req.body.imageUrls); // FR-16
+  await listings.addListingImages(req.params.id, req.user.id, req.body.imageUrls); // FR-16
   res.status(204).end();
+});
+
+router.post('/:id/submit', requireAuth, async (req, res) => {
+  res.json(await listings.submitListingForReview(req.params.id, req.user.id)); // FR-19
 });
 
 router.post('/:id/evidence', requireAuth, async (req, res) => {
@@ -34,10 +38,6 @@ router.get('/moderation-queue', requirePermission('listing.review'), async (req,
 
 router.post('/:id/approve', requirePermission('listing.approve'), async (req, res) => {
   res.json(await listings.approveListing(req.params.id, req.user.id)); // FR-19a
-});
-
-router.post('/:id/hold-pending-id', requirePermission('listing.review'), async (req, res) => {
-  res.json(await listings.holdListingPendingIdVerification(req.params.id, req.user.id, req.body.note)); // FR-08b
 });
 
 router.post('/:id/reject', requirePermission('listing.reject'), async (req, res) => {
