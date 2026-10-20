@@ -5,6 +5,10 @@
  * if a buyer can get past the gate.
  */
 jest.mock('../../src/db.service'); // handlers that slip past a gate must fail fast, not hit a real DB
+jest.mock('../../src/middleware/auth', () => ({
+  requireAuth: (_req, _res, next) => next(),
+  requirePermission: jest.requireActual('../../src/middleware/auth').requirePermission,
+}));
 
 const express = require('express');
 const request = require('supertest');

@@ -7,6 +7,7 @@ const discovery = require('../../src/modules/discovery.service');
 const { createFixture } = require('./fixtures');
 const request = require('supertest');
 const app = require('../../src/app');
+const { signAccessToken } = require('../../src/lib/jwt');
 
 let fixture;
 let registrationPhone;
@@ -45,6 +46,8 @@ describe('known schema and service mismatches', () => {
       name: 'Registered Probe', phone: registrationPhone, email: null,
       passwordHash: 'fixture-hash', cityId: fixture.cityId,
     });
+    expect(created).not.toHaveProperty('password_hash');
+    expect(created).toMatchObject({ full_name: 'Registered Probe', role: 'buyer' });
     const stored = await db.query('SELECT full_name FROM users WHERE id = $1', [created.id]);
     expect(stored.rows[0]).toEqual({ full_name: 'Registered Probe' });
   });
@@ -475,6 +478,7 @@ describe('known schema and service mismatches', () => {
     const suspended = await users.suspendSeller(fixture.userId, { adminId: fixture.userId, reason: 'probe' });
     const stored = await db.query('SELECT is_suspended FROM users WHERE id = $1', [fixture.userId]);
     expect(suspended.is_suspended).toBe(true);
+    expect(suspended).not.toHaveProperty('password_hash');
     expect(stored.rows[0].is_suspended).toBe(true);
     expect(await users.isApprovedSeller(fixture.userId)).toBe(false);
     await expect(listings.createListing(fixture.userId, {
@@ -491,6 +495,32 @@ describe('known schema and service mismatches', () => {
     await expect(listings.submitAuthenticityEvidence(
       fixture.listingId, fixture.userId, ['https://files.invalid/suspended.jpg']
     )).rejects.toBeInstanceOf(ForbiddenError);
+  });
+
+  test('SEC-07: authentication principal returns current role and suspension without password data', async () => {
+    const principal = await users.getAuthenticationPrincipal(fixture.userId);
+    expect(principal).toEqual({ id: fixture.userId, role: 'seller', is_suspended: false });
+    expect(principal).not.toHaveProperty('password_hash');
+    await users.suspendSeller(fixture.userId, { adminId: fixture.userId, reason: 'SEC-07 integration probe' });
+    await expect(users.getAuthenticationPrincipal(fixture.userId)).resolves.toMatchObject({ is_suspended: true });
+  });
+
+  test('SEC-07, FR-84: protected seller route rechecks suspension against PostgreSQL on every request', async () => {
+    const previousSecret = process.env.JWT_ACCESS_SECRET;
+    const secret = 'integration-only-test-secret-with-32-bytes';
+    process.env.JWT_ACCESS_SECRET = secret;
+    try {
+      const token = signAccessToken(fixture.userId, { secret });
+      const active = await request(app).get('/api/users/me/seller-profile').set('Authorization', `Bearer ${token}`);
+      expect(active.status).toBe(200);
+      expect(active.body).not.toHaveProperty('password_hash');
+      await users.suspendSeller(fixture.userId, { adminId: fixture.userId, reason: 'SEC-07 integration probe' });
+      const suspended = await request(app).get('/api/users/me/seller-profile').set('Authorization', `Bearer ${token}`);
+      expect(suspended.status).toBe(401);
+    } finally {
+      if (previousSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousSecret;
+    }
   });
 
   test('FR-23: keyword search matches title or description on published listings only', async () => {

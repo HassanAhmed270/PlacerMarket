@@ -1,11 +1,14 @@
 const { Router } = require('express');
 const users = require('../modules/users.service');
 const { requireAuth } = require('../middleware/auth');
+const { NotImplementedError } = require('../lib/errors');
 
 const router = Router();
 
 router.post('/register', async (req, res) => {
-  res.status(201).json(await users.registerUser(req.body)); // FR-01
+  // FR-01 / SEC-01: keep the public endpoint closed until passwords are
+  // hashed server-side using the still-unresolved FR-84b implementation.
+  throw new NotImplementedError('FR-01 registration pending server-side password hashing');
 });
 
 router.post('/login', async (req, res) => {

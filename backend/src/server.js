@@ -2,9 +2,11 @@ const app = require('./app');
 const { pool } = require('./db.service');
 const queue = require('./lib/queue');
 const { createRedisClient } = require('./lib/redis');
+const { getJwtConfig } = require('./lib/jwt');
 
 /** FR-77: start the web process without registering or executing queue jobs. */
 async function startServer() {
+  getJwtConfig();
   const redis = createRedisClient();
   try {
     await redis.start();

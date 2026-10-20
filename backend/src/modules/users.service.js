@@ -29,10 +29,19 @@ const { NotFoundError, ForbiddenError, ValidationError, NotImplementedError } = 
 async function registerUser({ name, phone, email, passwordHash, cityId }) {
   const { rows } = await db.query(
     `INSERT INTO users (full_name, phone, email, password_hash, city_id, role)
-     VALUES ($1, $2, $3, $4, $5, 'buyer') RETURNING *`,
+     VALUES ($1, $2, $3, $4, $5, 'buyer')
+     RETURNING id, full_name, phone, email, city_id, role, created_at`,
     [name, phone, email, passwordHash, cityId]
   );
   return rows[0];
+}
+
+/** FR-02, SEC-07: load current authorization fields for a verified access-token subject. */
+async function getAuthenticationPrincipal(userId) {
+  const { rows } = await db.query(
+    'SELECT id, role, is_suspended FROM users WHERE id = $1', [userId]
+  );
+  return rows[0] || null;
 }
 
 /** FR-02: authenticate credentials and issue/manage a session. */
@@ -181,7 +190,9 @@ async function updateSellerPayoutMethod(userId, { method, details }) {
 
 /** FR-10: admin can suspend/revoke seller approval. Moderator CANNOT (FR-05a) — enforced at route level via lib/roles.js. */
 async function suspendSeller(userId, { adminId, reason }) {
-  const { rows } = await db.query(`UPDATE users SET is_suspended = true WHERE id = $1 RETURNING *`, [userId]);
+  const { rows } = await db.query(
+    `UPDATE users SET is_suspended = true WHERE id = $1 RETURNING id, role, is_suspended`, [userId]
+  );
   if (!rows[0]) throw new NotFoundError('user', userId);
   eventBus.emit(events.SELLER_SUSPENDED, { userId, adminId, reason });
   return rows[0];
@@ -190,6 +201,7 @@ async function suspendSeller(userId, { adminId, reason }) {
 module.exports = {
   registerUser,
   authenticate,
+  getAuthenticationPrincipal,
   assertCityVerified,
   listCities,
   createCity,

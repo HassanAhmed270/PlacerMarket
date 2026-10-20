@@ -173,10 +173,12 @@ purpose so the schema works whichever way this eventually gets decided.
 
 ## Known gaps to close before this is production-ready (not hallucinated as "done")
 
-- **`users.service.authenticate()` is an unimplemented stub.** Session
-  strategy (cookie session vs. JWT) was never decided — pick one before any
-  route relying on `req.user` (i.e. everything behind `requireAuth`) can
-  actually work.
+- **Authentication is partial.** Protected routes now verify strict HS256
+  bearer tokens and load the current role/suspension state on every request.
+  `users.service.authenticate()` still does not hash passwords or issue
+  tokens; refresh-token/session persistence, CSRF-protected refresh, 2FA and
+  first-admin enrollment are not implemented. FR-84b and the required session
+  schema gap are recorded in `open-questions.md`.
 - **No `dotenv` wired in.** `.env.example` documents the required vars but
   nothing in `src/server.js` actually loads a `.env` file — either add
   `require('dotenv').config()` there or rely on real env vars being
@@ -211,9 +213,10 @@ purpose so the schema works whichever way this eventually gets decided.
 - **FR-79c partial:** the web pool is bounded and has connection, statement,
   idle-transaction and lock timeouts; pool-acquisition timeouts map to 503.
   PgBouncer and deployed transaction-pool verification remain Phase 6 work.
-- Queue integration tests and FR-77 completion remain pending an
-  owner-confirmed disposable PostgreSQL test database. Do not mark FR-77/77a/77d
-  complete until the real-Postgres tests pass. The Phase 0b selection is pinned
+- Queue integration tests passed on 2026-10-20 against the owner-specified
+  `testing_only` database after verifying its PostgreSQL service identity and
+  the unchanged destructive-test guard. Do not mark FR-77/77a/77d complete
+  without reviewing all acceptance criteria. The Phase 0b selection is pinned
   to pg-boss 12.38.0; see `Phases.md` and `open-questions.md` for the stage-only
   FR-77f resolution and open deployment verification.
 - Redis is connected by the web and worker entry points; cache and rate-limit
@@ -238,7 +241,8 @@ purpose so the schema works whichever way this eventually gets decided.
   and rolls back. Decide whether referenced definitions should be updated in
   place or whether explicit removal/replacement rules should apply; neither option
   is approved implementation guidance yet.
-- **Real-Postgres integration harness:** set `TEST_DATABASE_URL` to a disposable
+- **Real-Postgres integration harness:** set `TEST_DATABASE_URL` to the
+  specifically owner-approved `testing_only` database, or a disposable
   PostgreSQL database whose decoded name contains `test` as a complete
   underscore-/hyphen-delimited token (`poshaak_test`, not `latest` or
   `poshaak_prod`). By default only `localhost`, `127.0.0.1`, and `::1` are

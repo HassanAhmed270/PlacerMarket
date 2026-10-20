@@ -1,15 +1,17 @@
 /**
  * app.js
  *
- * NOTE: no session/auth middleware is wired in here yet — req.user is not
- * populated anywhere in this scaffold. See users.service.js's authenticate()
- * TODO and middleware/auth.js's header comment. Add the real session layer
- * (cookie session vs JWT — not yet decided) BEFORE these routes see traffic.
+ * FR-84 protected routes verify short-lived bearer access tokens through
+ * middleware/auth.js. Credential issuance remains gated by open requirements.
  */
 
 const express = require('express');
+const helmet = require('helmet');
 const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
+const requestId = require('./middleware/requestId');
+const { createCorsMiddleware } = require('./middleware/cors');
+const { NotFoundError } = require('./lib/errors');
 
 // modules/notifications.service.js registers its eventBus listeners as a
 // side effect of being required — requiring the routes above already pulls
@@ -18,13 +20,17 @@ const errorHandler = require('./middleware/errorHandler');
 require('./modules/notifications.service');
 
 const app = express();
-app.use(express.json());
+app.use(requestId);
+app.use(helmet());
+app.use(createCorsMiddleware());
+app.use(express.json({ limit: '1mb' }));
 // Express 5 leaves req.body undefined when a request has no body (Express 4 gave {}); handlers read req.body.x.
 app.use((req, _res, next) => {
   req.body ??= {};
   next();
 });
 app.use('/api', routes);
+app.use('/api', (_req, _res, next) => next(new NotFoundError('route', 'unknown')));
 app.use(errorHandler); // must be mounted LAST
 
 module.exports = app;

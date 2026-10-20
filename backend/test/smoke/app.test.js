@@ -10,6 +10,20 @@ describe('smoke: app boots and routes respond', () => {
     const res = await request(app).get('/api/catalog/condition-types');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(['brand_new', 'pre_owned', 'custom_made', 'replica']);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toContain('default-src');
+    expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
+  test('SEC-01: public registration stays unavailable until server-side password hashing is implemented', async () => {
+    const res = await request(app).post('/api/users/register').send({ passwordHash: 'client-controlled' });
+    expect(res.status).toBe(501);
+  });
+
+  test('SEC-25: rejects JSON bodies larger than the explicit one-megabyte limit', async () => {
+    const res = await request(app).post('/api/users/register').send({ data: 'x'.repeat(1024 * 1024) });
+    expect(res.status).toBe(413);
+    expect(res.body).toEqual({ error: 'Request body too large' });
   });
 
   test('POST /api/listings without auth returns 401 (requireAuth middleware)', async () => {

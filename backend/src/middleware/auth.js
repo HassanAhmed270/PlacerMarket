@@ -1,27 +1,45 @@
 /**
  * middleware/auth.js
  *
- * These assume `req.user = { id, role }` has already been populated by
- * whatever session/auth strategy gets chosen (see the TODO in
- * users.service.js's authenticate() — cookie session vs JWT is not decided
- * yet). Wire the real session lookup in BEFORE these run; they only gate
- * on req.user once it exists.
+ * Protected routes accept a short-lived HS256 bearer token only. The token
+ * identifies the user; current role and suspension state are read from the
+ * database on every request (SEC-07). Cookies are never authentication here.
  *
  * FR-22a/FR-22b: pure browsing routes should NOT use requireAuth — only the
  * specific gated actions (favorite, message, offer) need it.
  */
 
 const { hasPermission } = require('../lib/roles');
+const users = require('../modules/users.service');
+const { getJwtConfig, verifyAccessToken } = require('../lib/jwt');
 const { ForbiddenError } = require('../lib/errors');
 
-function requireAuth(req, res, next) {
-  if (!req.user) {
-    // FR-22b: frontend is responsible for the redirect-and-return-to-login
-    // pattern; this middleware just returns 401 for the API to react to.
-    return res.status(401).json({ error: 'Login required' });
+async function authenticateRequest(req, res, next) {
+  const authorization = req.get('authorization') || '';
+  const match = /^Bearer ([^\s]+)$/.exec(authorization);
+  if (!match) return res.status(401).json({ error: 'Login required', requestId: req.requestId });
+  let claims;
+  try {
+    claims = verifyAccessToken(match[1], getJwtConfig());
+  } catch (error) {
+    if (error instanceof TypeError) {
+      return res.status(401).json({ error: 'Login required', requestId: req.requestId });
+    }
+    return next(error);
   }
-  next();
+  try {
+    const principal = await users.getAuthenticationPrincipal(claims.sub);
+    if (!principal || principal.is_suspended) {
+      return res.status(401).json({ error: 'Login required', requestId: req.requestId });
+    }
+    req.user = { id: principal.id, role: principal.role };
+    return next();
+  } catch (error) {
+    return next(error);
+  }
 }
+
+const requireAuth = authenticateRequest;
 
 /**
  * @param {string | ((req) => string)} actionOrFn - a permission name from
@@ -38,4 +56,4 @@ function requirePermission(actionOrFn) {
   };
 }
 
-module.exports = { requireAuth, requirePermission };
+module.exports = { requireAuth, requirePermission, authenticateRequest };
