@@ -23,12 +23,18 @@ describe('test database URL validation', () => {
     expect(() => validateTestDatabaseUrl(url)).toThrow(error);
   });
 
-  test.each(['app', 'poshaak_prod', 'latest', 'contest'])('rejects unsafe database name %s', (name) => {
+  test.each(['app', 'poshaak_prod', 'latest', 'contest', 'testingonly', 'testing_only_prod', 'production'])('rejects unsafe database name %s', (name) => {
     expect(() => validateTestDatabaseUrl(`postgres://localhost/${name}`)).toThrow(/database name/);
   });
 
-  test.each(['poshaak_test', 'app_test', 'test_app'])('accepts local test database name %s', (name) => {
+  test.each(['poshaak_test', 'app_test', 'test_app', 'testing_only'])('accepts local test database name %s', (name) => {
     expect(validateTestDatabaseUrl(`postgres://localhost/${name}`).databaseName).toBe(name);
+  });
+
+  test('FR-77a: only the explicitly approved testing_only exception bypasses the test-token name check', () => {
+    expect(databaseUrl.isSafeTestDatabaseName('testing_only')).toBe(true);
+    expect(databaseUrl.isSafeTestDatabaseName('testing_only_prod')).toBe(false);
+    expect(databaseUrl.isSafeTestDatabaseName('production')).toBe(false);
   });
 
   test.each([

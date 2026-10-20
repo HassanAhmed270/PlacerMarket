@@ -103,7 +103,10 @@ module.exports = async function globalSetup() {
           connected.rows[0]?.database_name !== expectedDatabaseName) {
         throw new Error('Connected database name failed the integration safety check; refusing destructive setup.');
       }
-      await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public;');
+      // This exact database has already passed the local-host and name guard above.
+      // pg-boss owns a separate schema outside public, so reset it with the rest
+      // of the disposable integration database before applying schema.sql.
+      await pool.query('DROP SCHEMA public CASCADE; DROP SCHEMA IF EXISTS pgboss CASCADE; CREATE SCHEMA public;');
       await pool.query(fs.readFileSync(path.join(root, 'schema.sql'), 'utf8'));
 
       const seed = spawn(process.execPath, [path.join(root, 'db', 'seed.js')], {

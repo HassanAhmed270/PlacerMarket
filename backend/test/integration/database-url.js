@@ -1,5 +1,10 @@
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 const TEST_DATABASE_NAME = /(^|[_-])test($|[_-])/i;
+const OWNER_APPROVED_TEST_DATABASE_NAME = 'testing_only';
+
+function isSafeTestDatabaseName(name) {
+  return name === OWNER_APPROVED_TEST_DATABASE_NAME || TEST_DATABASE_NAME.test(name);
+}
 
 function validateTestDatabaseUrl(value, { allowRemote = false } = {}) {
   if (typeof value !== 'string' || value.trim() === '') {
@@ -25,9 +30,9 @@ function validateTestDatabaseUrl(value, { allowRemote = false } = {}) {
     }
   }
 
-  if (!TEST_DATABASE_NAME.test(databaseName)) {
+  if (!isSafeTestDatabaseName(databaseName)) {
     throw new Error(
-      'TEST_DATABASE_URL database name must contain "test" as a complete underscore- or hyphen-delimited token.'
+      'TEST_DATABASE_URL database name must be testing_only or contain "test" as a complete underscore- or hyphen-delimited token.'
     );
   }
 
@@ -50,4 +55,4 @@ function getTestDatabaseUrl() {
 module.exports = getTestDatabaseUrl;
 module.exports.getTestDatabaseUrl = getTestDatabaseUrl;
 module.exports.validateTestDatabaseUrl = validateTestDatabaseUrl;
-module.exports.isSafeTestDatabaseName = (name) => TEST_DATABASE_NAME.test(name);
+module.exports.isSafeTestDatabaseName = isSafeTestDatabaseName;

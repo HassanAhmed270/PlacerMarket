@@ -37,9 +37,22 @@ global.drainIntegrationListeners = async (timeoutMs = 5000) => {
 
 // db.service.js creates its Pool as soon as it is required by an integration test.
 process.env.DATABASE_URL = testDatabaseUrl;
+const queue = require('../../src/lib/queue');
+
+// FR-77d: integration tests emit real business events, so the durable producer
+// must be started just as it is during web-process startup.
+beforeAll(async () => {
+  await queue.startProducer();
+});
+
+jest.setTimeout(20000);
 
 afterAll(async () => {
-  // Require only after DATABASE_URL is set above; tests may already have loaded it.
-  const servicePool = require('../../src/db.service').pool;
-  await servicePool.end();
+  try {
+    await queue.stopProducer();
+  } finally {
+    // Require only after DATABASE_URL is set above; tests may already have loaded it.
+    const servicePool = require('../../src/db.service').pool;
+    await servicePool.end();
+  }
 });

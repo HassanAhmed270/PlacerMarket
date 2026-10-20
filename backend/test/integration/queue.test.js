@@ -85,8 +85,8 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
       if (processed === 2) resolveFinished();
     };
     await Promise.all([
-      first.boss.work(queueLib.QUEUES.NOTIFICATIONS, { localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 0.5 }, handler),
-      second.boss.work(queueLib.QUEUES.NOTIFICATIONS, { localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 0.5 }, handler),
+      first.boss.work(queueLib.QUEUES.NOTIFICATIONS, { localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 0.5, notifyPollingIntervalSeconds: 0.5 }, handler),
+      second.boss.work(queueLib.QUEUES.NOTIFICATIONS, { localConcurrency: 1, batchSize: 1, pollingIntervalSeconds: 0.5, notifyPollingIntervalSeconds: 0.5 }, handler),
     ]);
 
     const orderingKey = `fifo:${Date.now()}`;
@@ -113,6 +113,7 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
     const finished = new Promise((resolve) => { resolveFinished = resolve; });
     await worker.boss.work(queueLib.QUEUES.NOTIFICATIONS, {
       localConcurrency: 1, batchSize: 1, transactional: true, pollingIntervalSeconds: 0.5,
+      notifyPollingIntervalSeconds: 0.5,
     }, async ([job], tx) => {
       attempts += 1;
       await tx.executeSql(

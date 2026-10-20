@@ -8,6 +8,11 @@ const { runMigrations } = require('../../db/migrate');
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const initialSchema = fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'migrations', '001_initial_schema.sql'), 'utf8');
 const schemas = new Set();
+const applicationMigrationDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poshaak-application-migrations-'));
+fs.copyFileSync(
+  path.join(__dirname, '..', '..', 'db', 'migrations', '001_initial_schema.sql'),
+  path.join(applicationMigrationDir, '001_initial_schema.sql')
+);
 
 function newSchemaName() {
   const name = `migration_probe_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
@@ -28,11 +33,13 @@ afterEach(async () => {
   for (const schema of [...schemas]) await dropSchema(schema);
 });
 
+afterAll(() => fs.rmSync(applicationMigrationDir, { recursive: true, force: true }));
+
 describe('FR-79b PostgreSQL migration runner', () => {
   test('fresh schema applies its ordered migration once and is idempotent', async () => {
     const schema = newSchemaName();
-    const first = await runMigrations({ databaseUrl, schema });
-    const second = await runMigrations({ databaseUrl, schema });
+    const first = await runMigrations({ databaseUrl, schema, migrationsDir: applicationMigrationDir });
+    const second = await runMigrations({ databaseUrl, schema, migrationsDir: applicationMigrationDir });
     expect(first).toHaveLength(1);
     expect(second).toHaveLength(0);
     const { rows } = await db.query(`SELECT count(*)::int AS count FROM "${schema}".schema_migrations`);
@@ -56,8 +63,8 @@ describe('FR-79b PostgreSQL migration runner', () => {
       await pool.end();
     }
 
-    await expect(runMigrations({ databaseUrl, schema })).rejects.toThrow(/explicit db:migrate:baseline/);
-    await runMigrations({ databaseUrl, schema, baselineExisting: true });
+    await expect(runMigrations({ databaseUrl, schema, migrationsDir: applicationMigrationDir })).rejects.toThrow(/explicit db:migrate:baseline/);
+    await runMigrations({ databaseUrl, schema, migrationsDir: applicationMigrationDir, baselineExisting: true });
     const { rows } = await db.query(`SELECT name FROM "${schema}".cities`);
     expect(rows).toEqual([{ name: 'migration baseline preservation probe' }]);
     const history = await db.query(`SELECT name FROM "${schema}".schema_migrations`);
@@ -70,7 +77,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     await db.query(`CREATE TABLE "${schema}".keep_me (value text)`);
     await db.query(`INSERT INTO "${schema}".keep_me VALUES ('untouched')`);
 
-    await expect(runMigrations({ databaseUrl, schema, baselineExisting: true }))
+    await expect(runMigrations({ databaseUrl, schema, migrationsDir: applicationMigrationDir, baselineExisting: true }))
       .rejects.toThrow(/does not match the initial migration/);
     const { rows } = await db.query(`SELECT value FROM "${schema}".keep_me`);
     expect(rows).toEqual([{ value: 'untouched' }]);
@@ -105,8 +112,8 @@ describe('FR-79b PostgreSQL migration runner', () => {
   test('concurrent migration runners serialize and record the initial migration once', async () => {
     const schema = newSchemaName();
     const results = await Promise.all([
-      runMigrations({ databaseUrl, schema }),
-      runMigrations({ databaseUrl, schema }),
+      runMigrations({ databaseUrl, schema, migrationsDir: applicationMigrationDir }),
+      runMigrations({ databaseUrl, schema, migrationsDir: applicationMigrationDir }),
     ]);
     const { rows } = await db.query(`SELECT count(*)::int AS count FROM "${schema}".schema_migrations`);
     expect(rows[0].count).toBe(1);

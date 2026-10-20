@@ -70,10 +70,12 @@ by the human's decision (renumbering would touch every reference).
   queue guarantees (two workers claiming, crash after an effect, duplicate
   delivery).
 
-The Phase 0b queue selection review is recorded below; completion still
-requires the applicable integration tests against an owner-confirmed disposable
-PostgreSQL database. Do not tick FR-77/77a/77d until those checks pass. FR-77b/c/e
-jobs remain for the phases that implement payments, reservations, and media.
+The Phase 0b queue selection review is recorded below. On 2026-10-20, the
+applicable queue and migration integration checks passed against the owner-
+specified disposable `testing_only` database after its identity and the
+existing destructive-test guard were verified. Do not tick FR-77/77a/77d until
+the acceptance criteria are reviewed. FR-77b/c/e jobs remain for the phases
+that implement payments, reservations, and media.
 
 **Stage-specific FR-77f resolution (owner-approved 2026-10-20):** Phase 0b may
 select and implement a queue without waiting for final PgBouncer provisioning.
@@ -84,9 +86,9 @@ handling, and optional LISTEN/NOTIFY with polling fallback. Its worker will use
 a direct PostgreSQL connection when LISTEN/NOTIFY is enabled. Actual behavior
 with the deployed PgBouncer transaction-pool configuration remains unverified
 and must be checked before Phase 6 deployment (or sooner if configured
-earlier). Real-PostgreSQL integration tests remain blocked until an
-owner-confirmed disposable database is available. FR-77f is not fully satisfied
-by this stage resolution.
+earlier). The 2026-10-20 run passed (4 suites, 57 tests) on PostgreSQL 18.6;
+this does not include a deployed PgBouncer configuration. FR-77f is not fully
+satisfied by this stage resolution.
 
 **Backend — 0c auth and hardening**
 - JWT login with server-side password hashing, the refresh-cookie flow, suspended users rejected immediately (FR-01, FR-02, FR-10, FR-84); two-factor at sign-in: email code for buyers, authenticator app for admins and moderators (FR-83, FR-83a, FR-83h); `npm run admin:create` with authenticator enrollment (FR-84).
@@ -104,7 +106,7 @@ by this stage resolution.
 **Security rows to close:** SEC-01, 02, 03, 04, 07, 08, 10, 15, 16 (framework),
 22, 23, 24, 25, 27, 28, 29, 38, and SEC-09 for the confirmed part (FR-83, FR-83a).
 
-**Decisions:** decided 2026-10-17 — sessions and token lifetimes (FR-84, FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the Phase 0b queue selection gate (stage-specific FR-77f resolution below), and Render for initial hosting (FR-79h). Still open for Phase 0: the resend-cooldown and sending-cap values, actual deployment-level PgBouncer compatibility (required before Phase 6), and the SEC-07 choice. Hosting details and the email provider are chosen before the first deployment / real login, not before Phase 0.
+**Decisions:** decided 2026-10-17 — sessions and token lifetimes (FR-84, FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the Phase 0b queue selection gate (stage-specific FR-77f resolution below), and Render for initial hosting (FR-79h). SEC-07 was resolved on 2026-10-20: read current suspension state on every authenticated request. Still open for Phase 0c: FR-83d resend-cooldown and sending-cap values, and the FR-84b password hashing choice. Actual deployment-level PgBouncer compatibility is required before Phase 6. Hosting details and the email provider are chosen before the first deployment / real login, not before Phase 0.
 
 **Gate**
 - [ ] Backend 0a, 0b, 0c done, with real-Postgres integration tests
