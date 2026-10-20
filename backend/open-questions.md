@@ -23,7 +23,7 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 
 ### Needed by Phase 0
 - 2026-10-17 · FR-83d · Resend-cooldown and email-sending-cap values (configurable; set when the login is built, so that total guesses per hour stay negligible).
-- 2026-10-20 · FR-84b / SEC-01 · Password hashing algorithm and execution model remain DISCUSS: choose Argon2id or tuned bcrypt and the bounded worker/pool approach before implementing password signup/login. Needed by Phase 0c; JWT verification and unrelated hardening can proceed independently.
+- 2026-10-20 · FR-84b / SEC-01 · The owner selected Argon2id for password hashing on 2026-10-20. FR-84b remains tagged DISCUSS for its proposed bounded worker/pool execution, Redis per-IP/account rate limits, and edge WAF/bot protection; do not treat those proposals as approved. Registration/login also remain blocked on the required refresh-session and 2FA persistence described below. Needed by Phase 0c.
 - 2026-10-20 · FR-84 / FR-83h / SEC-05 · Refresh-session and staff TOTP persistence are required by the approved flow, but the current schema has no session-family or TOTP credential tables. Confirm and implement the minimum migration before issuing refresh cookies or enrolling admin/moderator TOTP; needed by Phase 0c. No token issuance is implemented without durable hashed-token/reuse state.
 
 ### Needed before the first deployment or first real login (moved out of Phase 0 on 2026-10-17)

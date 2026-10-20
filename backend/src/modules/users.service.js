@@ -46,10 +46,9 @@ async function getAuthenticationPrincipal(userId) {
 
 /** FR-02: authenticate credentials and issue/manage a session. */
 async function authenticate({ email, password }) {
-  // TODO: look up user by email, verify password hash, issue session/JWT.
-  // Left as a stub — depends on the session strategy you pick (cookie
-  // session vs JWT), which hasn't been decided yet in specs.md.
-  throw new NotImplementedError('authenticate() — pick a session strategy first');
+  // TODO FR-02/FR-84: implement after refresh-session and required 2FA
+  // persistence are approved. The owner selected Argon2id (FR-84b).
+  throw new NotImplementedError('authenticate() — required session and 2FA persistence is not implemented');
 }
 
 // ---- FR-03, FR-04: city verification ----

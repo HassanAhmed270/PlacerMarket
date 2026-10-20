@@ -6,8 +6,8 @@ const { NotImplementedError } = require('../lib/errors');
 const router = Router();
 
 router.post('/register', async (req, res) => {
-  // FR-01 / SEC-01: keep the public endpoint closed until passwords are
-  // hashed server-side using the still-unresolved FR-84b implementation.
+  // FR-01 / SEC-01: keep registration closed until the approved Argon2id
+  // implementation and the remaining FR-84b/auth-persistence requirements are in place.
   throw new NotImplementedError('FR-01 registration pending server-side password hashing');
 });
 

@@ -175,10 +175,11 @@ purpose so the schema works whichever way this eventually gets decided.
 
 - **Authentication is partial.** Protected routes now verify strict HS256
   bearer tokens and load the current role/suspension state on every request.
+  Argon2id is the owner's selected password-hashing algorithm, but
   `users.service.authenticate()` still does not hash passwords or issue
-  tokens; refresh-token/session persistence, CSRF-protected refresh, 2FA and
-  first-admin enrollment are not implemented. FR-84b and the required session
-  schema gap are recorded in `open-questions.md`.
+  tokens. Refresh-token/session persistence, CSRF-protected refresh, 2FA and
+  first-admin enrollment are not implemented; see `open-questions.md` for the
+  remaining FR-84b discussion and required session-schema approval.
 - **No `dotenv` wired in.** `.env.example` documents the required vars but
   nothing in `src/server.js` actually loads a `.env` file — either add
   `require('dotenv').config()` there or rely on real env vars being
@@ -215,7 +216,8 @@ purpose so the schema works whichever way this eventually gets decided.
   PgBouncer and deployed transaction-pool verification remain Phase 6 work.
 - Queue integration tests passed on 2026-10-20 against the owner-specified
   `testing_only` database after verifying its PostgreSQL service identity and
-  the unchanged destructive-test guard. Do not mark FR-77/77a/77d complete
+  the unchanged destructive-test guard. They cover durable enqueue, rollback,
+  FIFO, retry and terminal dead-letter listing. Do not mark FR-77/77a/77d complete
   without reviewing all acceptance criteria. The Phase 0b selection is pinned
   to pg-boss 12.38.0; see `Phases.md` and `open-questions.md` for the stage-only
   FR-77f resolution and open deployment verification.
