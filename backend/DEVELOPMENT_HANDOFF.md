@@ -32,7 +32,13 @@ self-service password reset, the strict high-value threshold, and the Phase 2
 gate amendment. FR-83k recovery after loss of all factors remains parked.
 Provider credentials and deployed behavior are listed in `LIVE_CHECKS.md`.
 
+Stage 1 centralizes runtime settings in `src/config.js` and adapter boundaries
+under `src/lib/adapters/`; no production provider implementation is claimed yet.
+
 ## 4. Working agreements (details in `rules.md`)
+
+Stage 1 centralizes runtime settings in `src/config.js` and adapter boundaries
+under `src/lib/adapters/`; no production provider implementation is claimed yet.
 
 - **Stop and ask** on any `(OPEN)` or `(DISCUSS)` row or a genuine ambiguity; log it in
   `open-questions.md`; continue only with unrelated work.

@@ -2,10 +2,11 @@ const { pool } = require('./db.service');
 const queue = require('./lib/queue');
 const { createRedisClient } = require('./lib/redis');
 const { getJwtConfig } = require('./lib/jwt');
+const { getRuntimeConfig } = require('./config');
 
 function safeConfigurationMessage(error) {
   const message = error?.message;
-  if (typeof message === 'string' && /^(JWT_ACCESS_SECRET|JWT_ACCESS_TTL_SECONDS|REDIS_URL|CORS_ORIGINS)\b/.test(message)) {
+  if (typeof message === 'string' && /^(JWT_ACCESS_SECRET|JWT_ACCESS_TTL_SECONDS|REDIS_URL|CORS_ORIGINS|Configuration error: )/.test(message)) {
     return message;
   }
   return null;
@@ -18,6 +19,7 @@ async function startServer({
   queueClient = queue,
   redisFactory = createRedisClient,
   validateJwt = getJwtConfig,
+  validateConfiguration = getRuntimeConfig,
   logger = console,
 } = {}) {
   let redis;
@@ -25,6 +27,7 @@ async function startServer({
   let stage = 'configuration';
   try {
     validateJwt();
+    validateConfiguration();
     redis = redisFactory();
     const app = loadApp(); // CORS configuration is validated while app is loaded.
 

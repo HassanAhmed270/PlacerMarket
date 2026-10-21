@@ -5,10 +5,21 @@ const validSecret = 'a'.repeat(32);
 describe('server startup diagnostics', () => {
   let originalJwt;
   let originalRedis;
+  let originalNodeEnv;
+  let originalCorsOrigins;
+  let originalCredentialEnv;
 
   beforeEach(() => {
     originalJwt = process.env.JWT_ACCESS_SECRET;
     originalRedis = process.env.REDIS_URL;
+    originalNodeEnv = process.env.NODE_ENV;
+    originalCorsOrigins = process.env.CORS_ORIGINS;
+    originalCredentialEnv = Object.fromEntries([
+      'DATABASE_URL', 'EMAIL_PROVIDER_API_KEY', 'CHALLENGE_PROVIDER_KEY',
+      'EMAIL_SENDER_ADAPTER', 'CHALLENGE_VERIFIER_ADAPTER', 'ALLOW_FAKE_ADAPTERS',
+    ].map((key) => [key, process.env[key]]));
+    process.env.NODE_ENV = 'test';
+    process.env.CORS_ORIGINS = 'http://localhost:5173';
     process.env.JWT_ACCESS_SECRET = validSecret;
     process.env.REDIS_URL = 'redis://localhost:6379';
   });
@@ -18,6 +29,14 @@ describe('server startup diagnostics', () => {
     else process.env.JWT_ACCESS_SECRET = originalJwt;
     if (originalRedis === undefined) delete process.env.REDIS_URL;
     else process.env.REDIS_URL = originalRedis;
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalCorsOrigins === undefined) delete process.env.CORS_ORIGINS;
+    else process.env.CORS_ORIGINS = originalCorsOrigins;
+    for (const [key, value] of Object.entries(originalCredentialEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   });
 
   function dependencies(overrides = {}) {
@@ -46,6 +65,21 @@ describe('server startup diagnostics', () => {
     await expect(startServer(deps.options)).rejects.toThrow('JWT_ACCESS_SECRET must contain at least 32 bytes');
 
     expect(deps.logger.error).toHaveBeenCalledWith(expect.stringContaining('JWT_ACCESS_SECRET must contain'));
+    expect(deps.redis.start).not.toHaveBeenCalled();
+  });
+
+  test('refuses production startup for missing credentials before starting dependencies', async () => {
+    const deps = dependencies();
+    process.env.NODE_ENV = 'production';
+    delete process.env.DATABASE_URL;
+    process.env.EMAIL_PROVIDER_API_KEY = 'email-provider-secret';
+    process.env.CHALLENGE_PROVIDER_KEY = 'challenge-provider-secret';
+    process.env.EMAIL_SENDER_ADAPTER = 'provider';
+    process.env.CHALLENGE_VERIFIER_ADAPTER = 'provider';
+
+    await expect(startServer(deps.options)).rejects.toThrow('DATABASE_URL is missing');
+
+    expect(deps.logger.error).toHaveBeenCalledWith(expect.stringContaining('DATABASE_URL is missing'));
     expect(deps.redis.start).not.toHaveBeenCalled();
   });
 

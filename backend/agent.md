@@ -24,6 +24,12 @@ escrow payments through a gateway, versioned listing content, encrypted
 CNIC/payout fields and append-only ledger tables. What IS built is the
 COD-era harness described below.
 
+Runtime configuration is centralized in `src/config.js`; credential-dependent
+interfaces live under `src/lib/adapters/`. Production requires configured
+provider credentials and rejects placeholders/fakes. Non-production fakes
+require explicit adapter selection and `ALLOW_FAKE_ADAPTERS=true`. Live checks
+are tracked in `LIVE_CHECKS.md`.
+
 **SEO-GATE:** work touching titles, meta descriptions, headings, alt text,
 keywords, structured data, URLs/slugs, canonical/robots rules, the sitemap or
 snapshot templates is discussion-gated — stop and ask the human (`rules.md`

@@ -25,6 +25,16 @@ requirements). This README only covers running the thing.
 
 ## Local setup (Windows PowerShell)
 
+Configuration keys for email-code controls, hashing, and rate limits are
+listed in `.env.example`. `CHANGE_ME` values are examples only and are rejected
+in production. Development fakes require both an explicit adapter selection
+and `ALLOW_FAKE_ADAPTERS=true`; production startup rejects fake adapters.
+
+Configuration keys for email-code controls, hashing, and rate limits are
+listed in `.env.example`. `CHANGE_ME` values are examples only and are rejected
+in production. Development fakes require both an explicit adapter selection
+and `ALLOW_FAKE_ADAPTERS=true`; production startup rejects fake adapters.
+
 Use a dedicated development database for the application. Never point
 `DATABASE_URL` at the disposable `testing_only` database: the integration
 harness resets that database. Start local PostgreSQL and Redis first, and

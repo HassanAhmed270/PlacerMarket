@@ -22,6 +22,8 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-19 · FR-24 · `filterListings` accepts `cityId`, but listings have no city column. Decide whether seller city should drive the filter or the listing data model should change.
 
 ### Needed by Phase 0
+- 2026-10-21 · FR-84b · **Provisional — owner to confirm:** general login/signup/reset/offer/message limiter defaults are configured as 30/10 login per hour (IP/account), 5/3 signup per hour, 10/5 reset per hour, 60/30 offers per hour, and 120/60 messages per hour. They are conservative starting values pending product/load review; every value is configurable.
+- 2026-10-21 · FR-84b · **Provisional — owner to confirm:** Argon2id starts from m=65536 KiB, t=3, p=1 with pool concurrency 4 pending the benchmark script and machine measurements in Stage 2. Production will use validated configuration; the benchmark chooses the recommended values.
 - 2026-10-21 · FR-84b / SEC-01 · Owner-approved implementation scope: Argon2id in a bounded worker pool, benchmark-selected parameters, a concurrency cap with 503 on saturation, Redis per-IP/account limits for the approved endpoints, and WAF/bot protection deferred to Phase 6. Registration/login remain gated on durable session and factor persistence. Needed by Phase 0c.
 - 2026-10-20 · FR-84 / FR-83h / SEC-05 · Refresh-session and staff TOTP persistence are required by the approved flow, but the current schema has no session-family or TOTP credential tables. Confirm and implement the minimum migration before issuing refresh cookies or enrolling admin/moderator TOTP; needed by Phase 0c. No token issuance is implemented without durable hashed-token/reuse state.
 

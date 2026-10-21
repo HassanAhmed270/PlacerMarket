@@ -25,8 +25,10 @@ the backend needs them.
 verified here — they exist so the rule is written down once and copied into
 the frontend harness.
 
-**Decided:** auth uses a **JWT in the `Authorization` header** (you, 2026-10-11).
-Several rows below follow from that. Two-factor on every login is also decided (specs.md FR-83, FR-83a); its design details are not. Consolidated 2026-10-14 with the Poshaak scale and auth decisions — see `MASTER_PROJECT_CONTEXT.md`.
+**Decided:** auth uses a **JWT in the `Authorization` header** and two-factor on
+every login. Buyer email codes, staff TOTP, and first-admin TOTP enrollment are
+confirmed; recovery after loss of all factors, seller factors, and step-up remain
+parked (specs.md FR-83h, FR-83k). Phase 0 limits are recorded in FR-83d/FR-84b.
 
 **Decided:** the payment model is **escrow through a payment gateway**
 (2026-10-13, replaces COD) — see `Phases.md`. Section F covers webhooks and

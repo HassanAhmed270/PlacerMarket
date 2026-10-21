@@ -33,3 +33,25 @@ Resume at the first incomplete stage. Completed stages are not repeated.
   challenge verifier, production credentials, staff TOTP key, deployed cookie/
   origin behavior, and PgBouncer checks. No live provider credentials were used.
 - **Next:** Stage 1 — CONFIG FOUNDATION.
+
+## Stage 1 — CONFIG FOUNDATION — complete (2026-10-21)
+
+- **Files:** `.env.example`, `src/config.js`, `src/server.js`,
+  `src/lib/adapters/emailSender.js`, `src/lib/adapters/challengeVerifier.js`,
+  `test/unit/config.test.js`, `test/unit/credential-adapters.test.js`,
+  `test/unit/server.test.js`, `DEVELOPMENT_HANDOFF.md`,
+  `MASTER_PROJECT_CONTEXT.md`, `Phases.md`, `README.md`, `agent.md`,
+  `open-questions.md`, `security.md`.
+- **Migrations:** none.
+- **Verification:** `npm.cmd test -- --runInBand` — 26 suites, 290 tests passed;
+  `npm.cmd run test:integration` — 4 suites, 59 tests passed on PostgreSQL 18.6;
+  `npm.cmd run db:check-schema` — passed. Targeted config/adapter/server run:
+  3 suites, 14 tests passed before the full suite.
+- **Parked:** FR-83k, FR-83b, FR-83c, and FR-83f remain security-critical
+  decisions. Email and challenge live providers are not selected.
+- **Provisional assumptions:** general limiter defaults and Argon2id starting
+  parameters/pool cap are documented in `open-questions.md`; Stage 2 benchmark
+  will choose hash parameters.
+- **Live checks:** provider credential and delivery checks remain listed in
+  `LIVE_CHECKS.md`.
+- **Next:** Stage 2 — PASSWORDS + REGISTRATION.

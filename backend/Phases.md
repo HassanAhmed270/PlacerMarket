@@ -100,6 +100,9 @@ this does not include a deployed PgBouncer configuration. FR-77f is not fully
 satisfied by this stage resolution.
 
 **Backend — 0c auth and hardening**
+- The configuration foundation centralizes production credential checks, approved
+  FR-83d values, provisional general rate limits, and explicit-opt-in fake email
+  and challenge adapters (FR-84c).
 - JWT login with server-side password hashing, the refresh-cookie flow, suspended users rejected immediately (FR-01, FR-02, FR-10, FR-84); two-factor at sign-in: email code for buyers, authenticator app for admins and moderators (FR-83, FR-83a, FR-83h); `npm run admin:create` with authenticator enrollment (FR-84).
 - Argon2id in a bounded worker pool with benchmark-selected parameters and a concurrency cap; saturation returns 503. Redis per-IP/account limits cover login, signup, reset, email-code send, offers, and messages. WAF/bot protection is Phase 6. Forgot-password is self-service for all roles; loss-of-factor recovery remains parked.
 - Email sending behind a provider adapter: Nodemailer as the common interface, an HTTPS-API-compatible provider for the initial Render deployment, and a secondary-provider failover implemented and tested before production (FR-83a, FR-83e).

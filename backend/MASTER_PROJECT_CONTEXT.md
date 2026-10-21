@@ -17,7 +17,19 @@ stage evidence is maintained in `PHASE0_PROGRESS.md`; production checks are in
 *finalized* decision wins; a recommendation that was only proposed (by Claude) is
 never treated as a decision. Conflicts found are listed in section 7.
 
+**Configuration foundation:** production startup validates database, Redis,
+JWT, email-provider, challenge-provider and CORS settings, rejects placeholder
+values, and refuses fake adapters. FR-83d and FR-84b settings are centralized in
+`src/config.js`; provisional Argon2id and general limiter values are listed in
+`open-questions.md` pending the benchmark and owner confirmation.
+
 ## 0. Provenance and honesty
+
+**Configuration foundation:** production startup validates database, Redis,
+JWT, email-provider, challenge-provider and CORS settings, rejects placeholder
+values, and refuses fake adapters. FR-83d and FR-84b settings are centralized in
+`src/config.js`; provisional Argon2id and general limiter values are listed in
+`open-questions.md` pending the benchmark and owner confirmation.
 
 | Source | How it was used |
 |---|---|
