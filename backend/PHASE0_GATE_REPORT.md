@@ -53,7 +53,7 @@ Raw Jest result:
 
 ```text
 Test Suites: 32 passed, 32 total
-Tests:       347 passed, 347 total
+Tests:       348 passed, 348 total
 Snapshots:   0 total
 ```
 
@@ -173,4 +173,13 @@ Still unticked include SEC-01 pending production TLS, SEC-02 pending an approved
 
 ## Git and push
 
-Commits created and push result will be appended after the final local commits. The pre-existing owner Word documents are preserved and excluded from implementation commits.
+Local commits created for this continuation:
+
+```text
+b8eb018 chore: record Phase 0 gate evidence and CI workflow
+3cae4db FR-83h: add encrypted staff TOTP primitives
+705e47b FR-84: add frontend authentication flows
+45ad51a FR-83g: complete authentication, reset, and admin bootstrap
+```
+
+The one-time push is the final repository action after this report. Its result is recorded in the final assistant report. The pre-existing owner Word documents are preserved and excluded from implementation commits.
