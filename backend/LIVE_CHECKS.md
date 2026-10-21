@@ -30,3 +30,9 @@ put live credentials in this file, source control, test output, or logs.
   TOTP secret is stored encrypted and the operator has the only copy.
 - [ ] Queue worker and database behavior checked against the deployed
   PgBouncer transaction-pool configuration before Phase 6.
+- [ ] Owner creates and verifies an offline master-key backup for payout-field
+  encryption; confirm access, secure storage and recovery without placing the
+  backup in source control, the database or logs.
+- [ ] Document and exercise the manual Admin identity-verification procedure:
+  verify identity without retaining a CNIC number or document, set the audit
+  fields, and confirm first-payout gating checks id_verified rather than email.

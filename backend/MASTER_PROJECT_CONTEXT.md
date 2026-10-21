@@ -6,19 +6,23 @@ inspected and tested directly) with the later Poshaak development (decisions
 recorded in a handoff document). **Poshaak is the single, current name** — files
 and chats that say "Marketplace" mean the same project.
 
-**Phase 0 owner update (2026-10-21):** Auth implementation includes buyer email-code login, staff TOTP, durable rotating refresh sessions, password reset and one-time admin bootstrap. The
-owner approved the FR-83d code limits, FR-84b Argon2id/Redis scope, FR-83g
-self-service password reset, strict high-value threshold, and Phase 2 gate
-amendment. Recovery after loss of all factors (FR-83k) remains parked. Current
-stage evidence is maintained in `PHASE0_PROGRESS.md`; production checks are in
-`LIVE_CHECKS.md`.
+**Owner update (2026-10-21):** Phase 0 auth implementation includes buyer
+email-code login, staff TOTP, durable rotating refresh sessions, password reset
+and one-time admin bootstrap. The owner also confirmed Phase 1/2 seller,
+measurement, payout-protection, recovery, encryption-key, identity-verification,
+listing-revision and photo-workflow decisions. Recovery policy is decided but
+its implementation remains in the Phase 1 backlog. See `Phases.md`,
+`open-questions.md` and `END_OF_PHASES_REVIEW.md`. Current stage evidence is
+maintained in `PHASE0_PROGRESS.md`; production checks are in `LIVE_CHECKS.md`.
 
 Backend unit, PostgreSQL integration, schema, frontend lint/test/build and
 production dependency audits have been run. The local Redis integration suite
 was skipped because no Redis service is available; the GitHub Actions workflow
 has not yet run. Email/challenge provider setup, production secrets/TLS and
 deployed cookie behavior remain live checks. Current phase stays Phase 0 until
-the remaining gate items are evidenced.
+the remaining gate items are evidenced. Phase 2 design and expand-only
+migrations may proceed under the 2026-10-21 amendment; its routes remain gated
+from real users until authentication is complete.
 
 **Precedence rule used to merge:** where two sources conflict, the human's latest
 *finalized* decision wins; a recommendation that was only proposed (by Claude) is
@@ -27,8 +31,8 @@ never treated as a decision. Conflicts found are listed in section 7.
 **Configuration foundation:** production startup validates database, Redis,
 JWT, email-provider, challenge-provider and CORS settings, rejects placeholder
 values, and refuses fake adapters. FR-83d and FR-84b settings are centralized in
-`src/config.js`; the local Argon2 benchmark is recorded and general limiter
-values remain provisional in `open-questions.md` pending owner confirmation.
+`src/config.js`; owner-approved limits are configurable. The local Argon2
+benchmark and provisional worker-pool cap still need production-host measurement.
 
 **Password foundation (2026-10-21):** registration hashes with pinned
 `argon2@0.45.1` in bounded worker threads; the local benchmark selected 65,536
@@ -44,7 +48,9 @@ defaults remain provisional.
 queued through pg-boss with AES-GCM encrypted email payloads. Six-digit codes
 are HMAC-hashed in `email_login_codes`, single-use, expire after five minutes,
 and use the approved resend/address/failure limits. Verified email gates only
-high-value listing approval and never sets seller identity verification.
+high-value listing approval strictly above the configured threshold and never
+sets seller identity verification. Manual Admin identity verification sets
+first-payout eligibility; the current flow stores no CNIC number or document.
 Login-attempt-bound issue/consume methods are implemented, but `authenticate()`
 does not invoke them yet. Live provider delivery is not complete.
 
@@ -53,8 +59,8 @@ does not invoke them yet. Live provider delivery is not complete.
 **Configuration foundation:** production startup validates database, Redis,
 JWT, email-provider, challenge-provider and CORS settings, rejects placeholder
 values, and refuses fake adapters. FR-83d and FR-84b settings are centralized in
-`src/config.js`; provisional Argon2id and general limiter values are listed in
-`open-questions.md` pending the benchmark and owner confirmation.
+`src/config.js`; production-sized Argon2 capacity measurement and real Redis
+verification remain deployment checks.
 
 | Source | How it was used |
 |---|---|
@@ -132,7 +138,7 @@ payout fields; append-only ledger/audit tables. Search stays in Postgres (a
 `listing_search` table, trigram, admin synonyms, a browser-matched suggestions file).
 Public pages get worker-generated HTML snapshots; React + Vite is kept (no Next.js).
 Target load: **10K concurrent visitors**. Full requirement rows: `specs.md` sections
-13–20 (FR-60 to FR-84b). **Initial hosting: Render** (decided 2026-10-17; FR-79h). PostgreSQL hosting, Redis, CDN, storage and connection configuration are chosen later; Render is not a commitment to any of them. Email: Nodemailer as the common interface behind a provider adapter, an HTTPS-API-compatible setup for the initial Render deployment, a secondary provider as fallback (FR-83e).
+13–20 (FR-60 to FR-84b). **Initial hosting: Render** (decided 2026-10-17; FR-79h). PostgreSQL hosting, Redis, CDN and connection configuration are chosen later. A storage adapter is decided: local disk initially, S3-compatible storage later; production storage is a launch choice. Render is not a commitment to any of those providers. Email: Nodemailer as the common interface behind a provider adapter, an HTTPS-API-compatible setup for the initial Render deployment, a secondary provider as fallback (FR-83e).
 
 ## 4. Payment model — escrow replaces COD (DECIDED 2026-10-13/14)
 
@@ -145,8 +151,8 @@ Target load: **10K concurrent visitors**. Full requirement rows: `specs.md` sect
 | Cash remittance reconciliation | Manual vs courier statements | Obsolete; gateway settlement reconciliation (FR-70, DISCUSS) |
 | Gateway fee | n/a | Platform absorbs it from commission (FR-64) |
 | Payouts | Manual by admin | Still manual at launch (FR-65) |
-| Seller ID verification | Only for high-value listings | Also before the first payout, any price (FR-66) |
-| Payout-detail changes | not specified | No cool-off (FR-67); protections proposed (SEC-35) |
+| Seller ID verification | Manual Admin check required before first payout at any price (FR-66/66a) | Current manual flow stores no CNIC number or document |
+| Payout-detail changes | Authenticator step-up, email notice and Admin changed-recently flag; no automatic change lock (SEC-35) | Recovered-seller payout pause follows FR-83l |
 | Hold window | ~5 days from delivery, ~2–3 day complaint window | Unchanged, started from Delivered (FR-45b) |
 | Partial refunds | OPEN | Allowed — **Claude's recommendation, unconfirmed** (FR-71, DISCUSS) |
 
@@ -161,7 +167,7 @@ chargeback liability, reservation duration, held funds for an unverified seller.
   approved version stays public; optional video published on the platform's YouTube
   channel with seller opt-in and moderator play-once approval (hosting and agreement
   OPEN); optional voice-story description producing three versions (details DEFERRED).
-- **Auth:** JWT in the Authorization header: a short-lived in-memory access token renewed by a rotating refresh-token cookie; **two-factor at every sign-in** — email code for ordinary buyers, authenticator app for admins/moderators, first admin enrolls TOTP through `npm run admin:create`, and passkeys later (FR-83h/FR-84). FR-83d limits and FR-84a token lifetimes are configurable and approved. FR-83g self-service password reset is approved for all roles; recovery after loss of all factors is separately parked (FR-83k). Seller requirements, step-up, and email delivery provider live checks remain open.
+- **Auth:** JWT in the Authorization header: a short-lived in-memory access token renewed by a rotating refresh-token cookie; **two-factor at every sign-in** — email code for ordinary buyers, authenticator app for admins/moderators, first admin enrolls TOTP through `npm run admin:create`, and passkeys later (FR-83h/FR-84). FR-83d limits and FR-84a token lifetimes are configurable and approved. FR-83g self-service password reset is approved for all roles. The 2026-10-21 owner-approved seller authenticator, step-up, new-device notice, backup-code and all-factor recovery rules are specified in `specs.md`; implementation remains pending.
 - **SEO-GATE:** wording and rules for titles, meta, headings, alt text, structured
   data, URLs, canonicals and snapshots are discussion-gated (FR-82–82d, `rules.md`
   Section 10); mechanical plumbing may be built.
@@ -196,7 +202,7 @@ in code in this consolidation.
    `open-questions.md` and `Phases.md` all exist (the handoff expected `Phases.md` to
    be unwritten); the highest FR number was FR-59, so new rows start at FR-60.
 
-6. **Clash review (2026-10-15).** The unified decisions were checked against `specs.md` and the code. Fixed in the spec: FR-20 vs moderated edits (FR-73), FR-32a's COD wording and its "record only after checkout" clash with FR-33/FR-62, FR-32b vs reservations (new FR-63c, DISCUSS), FR-73b's "money values never read from cache" vs the cached price (made precise; new FR-73e, DISCUSS), the undefined "editor" role (noted on FR-75b), the admin-only Delivered bottleneck (noted on FR-68). Recorded for confirmation: sessions vs two-factor (FR-84a, recommended resolution) and payout details with no cool-off (SEC-35, FR-83c, FR-83f). **Deferred by the human to the returns/refunds/disputes discussion:** the lost-parcel gap (FR-72e), the non-durable payout pause (FR-45g) and the cost of free cancellation.
+6. **Clash review (2026-10-15).** The unified decisions were checked against `specs.md` and the code. Fixed in the spec: FR-20 vs moderated edits (FR-73), FR-32a's COD wording and its "record only after checkout" clash with FR-33/FR-62, FR-32b vs reservations (new FR-63c, DISCUSS), FR-73b's "money values never read from cache" vs the cached price (made precise; new FR-73e, DISCUSS), the undefined "editor" role (noted on FR-75b), the admin-only Delivered bottleneck (noted on FR-68). At that time, sessions vs two-factor and payout details with no cool-off were recorded for confirmation; SEC-35, FR-83c and FR-83f were confirmed by the owner on 2026-10-21. **Deferred by the human to the returns/refunds/disputes discussion:** the lost-parcel gap (FR-72e), the non-durable dispute payout pause (FR-45g) and the cost of free cancellation.
 
 ## 8. Verification results (the handoff's section 15 checklist, answered from the files)
 

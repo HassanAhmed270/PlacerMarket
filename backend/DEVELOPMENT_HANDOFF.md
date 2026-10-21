@@ -1,6 +1,6 @@
 # DEVELOPMENT_HANDOFF.md — resuming Poshaak development
 
-**State as of 2026-10-21.** Poshaak (formerly "Marketplace" — same project) has
+**State updated 2026-10-21.** Poshaak (formerly "Marketplace" — same project) has
 a backend, React/Vite frontend, PostgreSQL queue, migrations, and completed
 Phase 0 auth implementation. Local verification is green except for the real
 Redis integration suite, which is skipped because no local Redis is available;
@@ -26,12 +26,24 @@ Reading order: `MASTER_PROJECT_CONTEXT.md` → `agent.md` → `rules.md` → `Ph
 3. Read the documents in the order above. Check `Phases.md` for the **Current phase**.
 4. Confirm the state with the human in a few lines before changing anything.
 
+**Owner decisions dated 2026-10-21:** Phase 1/2 seller application, atomic
+approval, measurement definition, payout protection, seller authenticator,
+step-up/recovery, key custody, manual ID verification, listing revision and
+photo-slot decisions are recorded in `specs.md` and `open-questions.md`.
+Implementation backlogs are in `Phases.md`; deferred items are in
+`END_OF_PHASES_REVIEW.md`. The later FR-66 decision requires manual
+`id_verified` before first payout; email verification remains only for
+high-value listings strictly above the threshold. Historical Phase 0 gate
+evidence still contains the prior first-payout email wording, documented as a
+conflict in `END_OF_PHASES_REVIEW.md`.
+
 ## 3. What to do next (Phase 0)
 
 Resume from the first incomplete stage in `PHASE0_PROGRESS.md`. Owner decisions
 dated 2026-10-21 set FR-83d limits, the FR-84b Argon2id/Redis scope, FR-83g
 self-service password reset, the strict high-value threshold, and the Phase 2
-gate amendment. FR-83k recovery after loss of all factors remains parked.
+gate amendment. FR-83k recovery policy is now decided; implementation is in the
+Phase 1 backlog, with the manual owner-only procedure used until then.
 Provider credentials and deployed behavior are listed in `LIVE_CHECKS.md`.
 
 Stage 1 centralizes runtime settings in `src/config.js` and adapter boundaries

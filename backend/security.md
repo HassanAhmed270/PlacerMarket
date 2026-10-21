@@ -26,9 +26,10 @@ verified here — they exist so the rule is written down once and copied into
 the frontend harness.
 
 **Decided:** auth uses a **JWT in the `Authorization` header** and two-factor on
-every login. Buyer email codes, staff TOTP, and first-admin TOTP enrollment are
-confirmed; recovery after loss of all factors, seller factors, and step-up remain
-parked (specs.md FR-83h, FR-83k). Phase 0 limits are recorded in FR-83d/FR-84b.
+every login. Buyer email codes, staff TOTP, first-admin TOTP enrollment, seller
+authenticator enrollment, step-up, and the all-factor recovery policy are
+confirmed (specs.md FR-83h, FR-83c, FR-83f, FR-83k). Passkeys and device-list UI
+are deferred. Phase 0 limits are recorded in FR-83d/FR-84b.
 
 **Decided:** the payment model is **escrow through a payment gateway**
 (2026-10-13, replaces COD) — see `Phases.md`. Section F covers webhooks and
@@ -54,7 +55,7 @@ money integrity; expect a payments section here once Phase 4 starts.
   *Enforced by:* `test/integration/known-mismatches.test.js` — SEC-07 rechecks current suspension state in PostgreSQL.
 - [ ] **SEC-08 Brute-force protection on login/register/reset.** Redis limits are per IP and per account; responses and timing class do not reveal whether an account exists. Email codes: 3 attempts per code, 60-second resend cooldown, 5/hour and 10/day per address, soft signal at 30/hour per IP (never a block), and 10 failed verifications/hour causes a 15-minute lock. All values are configurable (FR-83d, owner-approved 2026-10-21).
   *Enforced by:* `test/unit/rate-limit.test.js`, `test/unit/email-code-delivery.test.js`, `test/unit/users.email.routes.test.js`, `test/integration/known-mismatches.test.js`, and `test/integration/rate-limit.test.js` (real Redis test requires `TEST_REDIS_URL`). **Partial:** signup/login/reset request limits and email-code verification/send limits are implemented; real Redis verification, live email delivery, global/dispute coverage and proxy forwarding remain pending.
-- [x] **SEC-09 Two-factor authentication on every login.** Every login needs a second factor: email codes for ordinary buyers and TOTP for admins/moderators (never email); the first admin enrolls TOTP during the one-time bootstrap command. Passkeys come later (FR-83h). Seller requirements, step-up and recovery after loss of all factors remain parked (FR-83b, FR-83c, FR-83f, FR-83k).
+- [x] **SEC-09 Two-factor authentication on every login.** Every login needs a second factor: email codes for ordinary buyers and TOTP for admins/moderators (never email); the first admin enrolls TOTP during the one-time bootstrap command. Passkeys come later (FR-83h, FR-83b). Seller enrollment, step-up and recovery policy are owner-approved in FR-83c, FR-83f and FR-83k; implementation remains pending.
   *Enforced by:* `test/integration/known-mismatches.test.js` — FR-83h/SEC-09 exercises staff TOTP, replay protection and first-admin enrollment.
 - [x] **SEC-10 No default or seeded credentials.** The first admin is created by a one-time command run on the server (`npm run admin:create`, decided 2026-10-14), never by an endpoint or a hardcoded password.
   *Enforced by:* `test/integration/known-mismatches.test.js` — FR-84/SEC-10 verifies bootstrap and rejects reruns.
@@ -108,8 +109,9 @@ money integrity; expect a payments section here once Phase 4 starts.
   *Enforced by:* `test/unit/http-hardening.test.js` — SEC-27/28 asserts generic 500 response, request ID and no internal error text.
 - [ ] **SEC-29 Responses never include internal columns** *(added)*. No `RETURNING *` / `SELECT *` passed straight to a client on `users`; payout fields only to the owner or a permitted admin role; explicit column lists.
   *Enforced by:* review/test pending. **Partial:** registration returns named safe fields and password-hash tests pass; audit all user and payout responses before ticking.
-- [ ] **SEC-30 Payout and ID data protection.** `payout_bank_account`, `payout_wallet_number` and `id_verification_doc_url` are visible only to the owner and permitted roles. Application-level encryption of CNIC numbers and payout account details is decided (ciphertext + last digits for display + a blind index if lookup is needed — specs.md FR-79f); key management is open.
+- [ ] **SEC-30 Payout and ID data protection.** Payout details are visible only to the owner and permitted roles and encrypted at the application layer under FR-79f. Keep keys in secret environment settings, store a versioned key ID with each ciphertext, use the KeyProvider adapter (KMS later), document rotation and maintain an offline master-key backup held by the owner. The current manual identity-verification flow stores no CNIC number or document; any future document storage requires the legal review in END_OF_PHASES_REVIEW.md.
   *Enforced by:* review · *Today:* plain `TEXT` columns, access control not yet verified.
+  *Offline master-key backup:* owner-held backup is required; never store it in source control, the application database, or logs.
 
 ## F. Supply chain, webhooks & money
 
@@ -121,7 +123,7 @@ money integrity; expect a payments section here once Phase 4 starts.
   *Enforced by:* test · *Today:* n/a-yet (no webhooks; courier updates are manual).
 - [ ] **SEC-34 Money integrity** *(added; matters most under escrow)*. Amounts are `NUMERIC`/integer minor units, never floats; every money-state change runs inside `db.withTransaction`; operations are idempotent; the client never supplies an amount — price comes from the accepted offer. Decided (FR-79f): ledger and audit tables are append-only — the application role cannot update or delete, and corrections are reversing entries; payment creation uses idempotency keys (FR-63a, DISCUSS).
   *Enforced by:* review + test · *Today:* needs an audit once Phase 4 starts.
-- [ ] **SEC-35 Payout-detail changes are protected** *(added)*. Changing payout details requires re-entering the password, notifies the seller on every change, and shows the admin a "details changed recently" flag when a payout is processed. No cool-off (decided 2026-10-13). The no-cool-off decision relies on this row, FR-83c and FR-83f being confirmed: otherwise a hijacked account can change payout details and be paid (for ordinary buyers email is both the second factor and, presumably, the recovery channel).
+- [ ] **SEC-35 Payout-detail changes are protected.** Sellers must enroll an authenticator before first saving payout details. Every payout-detail change requires authenticator step-up and sends an email notification; Admins see a “changed recently” flag when processing a payout. Payout-detail writes remain disabled until FR-79f key custody is implemented. There is no automatic 72-hour payout-detail change lock; recovered sellers' payouts follow FR-83l.
   *Enforced by:* test · *Today:* **FAILS** — `updateSellerPayoutMethod` changes details with no re-authentication and no notification.
 
 - [ ] **SEC-36 Private, money and auth routes are never cached** *(added)*. They send `Cache-Control: private, no-store`; public routes never set cookies; money values are never read from a cache (specs.md FR-73b–FR-73d, DISCUSS).
@@ -136,7 +138,6 @@ money integrity; expect a payments section here once Phase 4 starts.
 
 ## Open security decisions
 
-Logged in `open-questions.md`; an agent must not guess these (`rules.md` Section 1):
-recovery after loss of all second factors (FR-83k), seller factor requirements
-(FR-83c), step-up behavior (FR-83f), key management for encrypted fields
-(SEC-30), and RLS (SEC-14).
+Remaining undecided items are logged in `open-questions.md`; an agent must not
+guess them (`rules.md` Section 1): RLS adoption (SEC-14). The FR-83c/f/k and
+SEC-30 policies are decided; their implementation and verification remain work.
