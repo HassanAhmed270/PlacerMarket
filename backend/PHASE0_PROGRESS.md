@@ -151,3 +151,114 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Live checks added:** select/test real provider and verify encrypted-key
   rotation, queue retry/failure behavior, Redis concurrency and deployed proxy.
 - **Next:** Stage 5 — LOGIN + SESSIONS.
+
+## Stage 5 — LOGIN + SESSIONS — implementation complete; live checks pending (2026-10-21)
+
+- **Files:** `src/config.js`, `src/lib/jwt.js`, `src/lib/totp.js`,
+  `src/middleware/auth.js`, `src/middleware/rateLimit.js`,
+  `src/modules/users.service.js`, `src/routes/users.routes.js`,
+  migration `005_staff_totp_replay_guard.sql`, generated `schema.sql`, and
+  auth/TOTP/config/migration unit and PostgreSQL integration tests.
+- **Migrations:** `005_staff_totp_replay_guard.sql` stores the last accepted
+  TOTP time step to prevent replay; schema snapshot regenerated.
+- **Behavior:** buyer login verifies Argon2id then sends an attempt-bound email
+  code; staff login requires password plus encrypted TOTP. Access JWTs use
+  pinned HS256, issuer/audience/expiry and a durable session ID. Refresh cookies
+  are Secure/HttpOnly/SameSite=Strict and scoped to refresh; refresh rotates
+  hashed tokens, enforces absolute and idle limits, and reuse revokes the family.
+  Logout revokes the current family. Every bearer request rechecks session,
+  suspension and role state in PostgreSQL.
+- **Verification:** full backend unit suite — 32 suites / 335 tests passed at
+  this checkpoint; full PostgreSQL integration suite — 4 suites / 67 tests
+  passed, one real-Redis suite skipped because local `TEST_REDIS_URL` is absent.
+  Focused auth route/TOTP/JWT/config/migration run — 7 suites / 29 tests passed;
+  `db:check-schema` passed. Final counts are recorded in
+  `PHASE0_GATE_REPORT.md`.
+- **Rows ticked:** FR-84a and SEC-03/04/05/07/38 have named passing tests.
+  SEC-02 remains unticked pending a reviewed key-rotation
+  runbook; SEC-08/24 remain unticked pending real Redis and broader scope.
+- **Parked:** FR-83k recovery after loss of factors; FR-83b passkey fallback;
+  FR-83c seller factor policy; FR-83f step-up/device/backup rules.
+- **Live checks:** email/challenge provider delivery, deployed refresh-cookie and
+  Origin behavior, staff TOTP key management, production TLS and real Redis.
+- **Next:** Stage 6 — FORGOT-PASSWORD.
+
+## Stage 6 — FORGOT-PASSWORD — implementation complete; email provider pending (2026-10-21)
+
+- **Files:** `src/modules/users.service.js`, `src/lib/emailCodeDelivery.js`,
+  `src/lib/authValidation.js`, `src/routes/users.routes.js`, config and
+  `.env.example`, reset route/service/integration tests.
+- **Migrations:** none; uses `password_reset_tokens` from
+  `003_auth_foundation.sql`.
+- **Behavior:** reset requests return the same 202 response for known/unknown
+  addresses. Tokens are random, single-use and stored only as SHA-256 digests;
+  expiry is configurable with a 30-minute default. Success hashes the new
+  password, consumes the token, revokes all sessions and queues a notice.
+- **Verification:** FR-83g PostgreSQL integration test exercises concurrent
+  reuse, password replacement, session revocation and notification enqueue;
+  route tests cover uniform response and strict body allowlists. Full backend
+  suites recorded in the final report.
+- **Provisional:** 30-minute expiry is owner-approved as a configurable value;
+  general reset rate-limit defaults remain provisional.
+- **Live check:** deliver reset and password-change emails through selected
+  providers; check retry/failover.
+- **Next:** Stage 7 — ADMIN BOOTSTRAP.
+
+## Stage 7 — ADMIN BOOTSTRAP — implementation complete; deployment key pending (2026-10-21)
+
+- **Files:** `scripts/create-admin.js`, `package.json`,
+  `src/modules/users.service.js`, `src/lib/totp.js`, and PostgreSQL integration
+  coverage.
+- **Migrations:** none beyond migration 005.
+- **Behavior:** `npm run admin:create` prompts for account details, requires
+  the operator to enroll and confirm an authenticator code, hashes the password
+  with the bounded Argon2id pool, encrypts TOTP material at rest, and uses an
+  advisory transaction lock to make bootstrap one-time even under concurrency.
+  No endpoint or default credential exists.
+- **Verification:** named FR-84/SEC-09/10 PostgreSQL test proves encrypted
+  enrollment and rejects rerun. Full backend integration result is in final
+  report.
+- **Rows ticked:** SEC-09/10, with tests named in the preceding bullet.
+- **Live check:** provision `STAFF_TOTP_ENCRYPTION_SECRET` through the hosting
+  secret store and complete first-admin enrollment on the deployed database.
+- **Next:** Stage 8 — HARDENING AUDIT.
+
+## Stage 8 — HARDENING AUDIT — verified items ticked; remaining scope recorded (2026-10-21)
+
+- **Evidence:** JWT tests name SEC-02/03; auth routes and frontend transport test
+  SEC-04/05; PostgreSQL suspension/session tests name SEC-07; Redis unit tests
+  name SEC-08 but the real Redis test is skipped locally; auth and reset route
+  validators reject extra fields; smoke tests name SEC-16/25; CORS and error
+  handler tests name SEC-22/28; session integration tests name SEC-38.
+- **Rows ticked:** SEC-03/04/05/07/09/10/22/23/25/28/38 only. SEC-02 awaits a
+  reviewed key-rotation plan, SEC-08/24 await local/hosted real Redis evidence,
+  SEC-01 awaits production TLS, SEC-16/27/29 require broader API audit evidence.
+  SEC-15 remains a review-only audit item.
+- **Next:** Stage 9 — FRONTEND.
+
+## Stage 9 — FRONTEND — auth screens implemented; real provider checks pending (2026-10-21)
+
+- **Files:** `frontend/src/App.jsx`, `src/App.css`, `src/lib/api.js`, API tests,
+  `vite.config.js`, and `.env.example`.
+- **Behavior:** login supports buyer email code and staff TOTP, registration,
+  forgot/reset password, bearer requests and cookie-only refresh. Access tokens
+  remain in React memory. The existing public catalog page remains unchanged.
+  An explicit `VITE_AUTH_MOCK=true` development mock is labeled in the UI;
+  production builds refuse that setting.
+- **Verification:** frontend lint passed; 3 Node tests passed; production Vite
+  build passed. Audit found 0 production vulnerabilities.
+- **Live check:** exercise login, email delivery, refresh and deep links against
+  deployed frontend/API origins; provider challenge widget integration remains
+  pending with provider selection.
+- **Next:** Stage 10 — CI.
+
+## Stage 10 — CI — workflow added; hosted run pending (2026-10-21)
+
+- **Files:** `.github/workflows/phase0.yml`.
+- **Behavior:** GitHub Actions provisions PostgreSQL 18 and Redis, runs backend
+  unit/integration/schema/audit jobs and frontend lint/test/build/audit jobs.
+- **Verification:** equivalent local suites passed except the real Redis suite
+  (skipped because the local environment has no Redis service). The GitHub-hosted
+  workflow has not run from this workspace; report any earlier hosted failure
+  as unverified because no hosted logs are available.
+- **Next:** Stage 11 — FINAL GATE REPORT.

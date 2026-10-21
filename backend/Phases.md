@@ -115,18 +115,23 @@ satisfied by this stage resolution.
 
 **Frontend**
 - Scaffold against the API (React + Vite) using the prototype's `styles.css`
-  theme; auth client and the two-factor login screens; route guards; shared error
-  handling; admin code kept out of the public bundle from the start (FR-81d).
-  Tick nothing from the gap list yet other than the login flow row.
+  theme; React auth routes for login (buyer email code and staff TOTP), registration, forgot/reset, in-memory access tokens and cookie refresh. The existing public catalog page remains unchanged. The development mock is explicit and production builds refuse it.
 
-**Security rows to close:** SEC-01, 02, 03, 04, 07, 08, 10, 15, 16 (framework),
-22, 23, 24, 25, 27, 28, 29, 38, and SEC-09 for the confirmed part (FR-83, FR-83a).
+**Implementation checkpoint (2026-10-21):** Stage 5–7 backend login, refresh,
+reset and admin-bootstrap flows and Stage 9 account screens have been implemented
+and locally tested. Stage 10 adds GitHub Actions with PostgreSQL 18 and Redis.
+The local Redis integration test was skipped because no service was available;
+the hosted workflow has not run. Email/challenge providers, production secrets,
+TLS/cookie behavior, and the remaining security audit items stay open. The
+checkboxes below remain the release gate and the current phase remains Phase 0.
 
-**Decisions (updated 2026-10-21):** sessions and token lifetimes (FR-84, FR-84a), buyer email and staff TOTP scope including first-admin enrollment (FR-83h), code values, Argon2id bounded execution and Redis rate limits (FR-83d, FR-84b), self-service password reset (FR-83g), the email adapter (FR-83e), queue selection (FR-77f), and Render hosting (FR-79h) are approved. All security limits are configurable. SEC-07 requires current suspension state on every authenticated request. Durable refresh/TOTP/challenge persistence and staff TOTP key management remain implementation/live-readiness requirements. Recovery after loss of all factors is parked under FR-83k; email delivery providers need live checks before real login. Deployment-level PgBouncer compatibility is required before Phase 6.
+**Security rows still open:** consult the unchecked items in `security.md`; SEC-08/24 await real Redis and expanded scope, while several unrelated Phase 0 API authorization/input/logging checks remain incomplete.
+
+**Decisions (updated 2026-10-21):** sessions and token lifetimes (FR-84, FR-84a), buyer email and staff TOTP scope including first-admin enrollment (FR-83h), code values, Argon2id bounded execution and Redis rate limits (FR-83d, FR-84b), self-service password reset (FR-83g), the email adapter (FR-83e), queue selection (FR-77f), and Render hosting (FR-79h) are approved. All security limits are configurable. SEC-07 requires current suspension state on every authenticated request. Refresh/TOTP persistence and bootstrap are implemented; live provider delivery, secret rotation, Redis concurrency and deployment behavior remain readiness requirements. Recovery after loss of all factors is parked under FR-83k; email delivery providers need live checks before real login. Deployment-level PgBouncer compatibility is required before Phase 6.
 
 **Gate**
 - [ ] Backend 0a, 0b, 0c done, with real-Postgres integration tests
-- [ ] Frontend scaffold and login flow done
+- [x] Frontend scaffold and login flow done (local lint, tests, and build passed)
 - [ ] SEC rows above ticked
 - [ ] Decisions above resolved
 - [ ] `npm test` green and `npm audit --omit=dev` clean

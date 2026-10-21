@@ -134,6 +134,10 @@ describe('known schema and service mismatches', () => {
     try {
       const session = await users.completeBuyerLogin(attemptId, '516204', email);
       expect(session).toMatchObject({ user: { id: fixture.userId, role: 'buyer' }, accessExpiresIn: 900 });
+      const claims = require('../../src/lib/jwt').verifyAccessToken(session.accessToken, {
+        secret: process.env.JWT_ACCESS_SECRET,
+      });
+      expect(claims.sid).toBe(session.sessionId);
       const { rows: stored } = await db.query('SELECT refresh_token_hash FROM auth_sessions WHERE id = $1', [session.sessionId]);
       expect(stored[0].refresh_token_hash).not.toBe(session.refreshToken);
       await expect(users.getAuthenticationPrincipal(fixture.userId, session.sessionId))
@@ -185,6 +189,8 @@ describe('known schema and service mismatches', () => {
       expect(results.find(Boolean)).toMatchObject({ user: { id: fixture.userId, role: 'admin' } });
       const { rows } = await db.query('SELECT last_used_step FROM staff_totp_credentials WHERE user_id = $1', [fixture.userId]);
       expect(rows[0].last_used_step).not.toBeNull();
+      const { rows: storedSecret } = await db.query('SELECT encrypted_secret FROM staff_totp_credentials WHERE user_id = $1', [fixture.userId]);
+      expect(storedSecret[0].encrypted_secret.toString()).not.toContain(secret);
     } finally {
       if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
       else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
@@ -224,6 +230,7 @@ describe('known schema and service mismatches', () => {
       expect(revoked[0]).toMatchObject({ revoke_reason: 'password_reset' });
       expect(revoked[0].revoked_at).not.toBeNull();
       expect(queueSpy).toHaveBeenCalledTimes(1);
+      expect(queueSpy.mock.calls[0][1].encryptedPayload.ciphertext).not.toContain(rawToken);
     } finally {
       queueSpy.mockRestore();
       if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;

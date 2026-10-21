@@ -21,12 +21,14 @@ image/video/story pipeline, a CDN and cache headers, PgBouncer,
 the `listing_search` table and
 suggestions, worker-generated HTML snapshots, JWT auth with two-factor login,
 escrow payments through a gateway, versioned listing content, encrypted
-CNIC/payout fields and append-only ledger tables. Phase 0 has started the
-authentication foundation: validated buyer registration with Argon2id hashing
-and durable session/factor/reset tables. Email verification, high-value
-approval gating and signup/login/message/offer limits are implemented, with
-provider and real-Redis checks pending. Login/session issuance, password reset,
-full login-factor flows and TOTP behavior remain incomplete. The COD-era harness
+CNIC/payout fields and append-only ledger tables. Phase 0 authentication now
+includes validated Argon2id registration, buyer email-code login, staff TOTP,
+durable rotating refresh sessions, self-service password reset, and one-time
+TOTP-enrolled admin bootstrap. Email verification, strict high-value approval
+gating and signup/login/reset/message/offer limits are implemented. Live
+provider delivery, real-Redis verification and deployment checks remain pending.
+Seller factor requirements, passkey fallback, recovery and step-up remain parked.
+The COD-era harness
 described below remains the baseline for the rest of the system.
 
 Runtime configuration is centralized in `src/config.js`; credential-dependent
@@ -34,6 +36,13 @@ interfaces live under `src/lib/adapters/`. Production requires configured
 provider credentials and rejects placeholders/fakes. Non-production fakes
 require explicit adapter selection and `ALLOW_FAKE_ADAPTERS=true`. Live checks
 are tracked in `LIVE_CHECKS.md`.
+
+`npm run admin:create` is an interactive, one-time bootstrap. It requires
+`STAFF_TOTP_ENCRYPTION_SECRET` from the deployment secret store and asks the
+operator to confirm TOTP enrollment. Never put that key in `.env.example` or
+source control. Frontend auth routes are under `/login`, `/register`,
+`/forgot-password`, and `/reset-password`; `VITE_AUTH_MOCK=true` is a labeled
+development-only demo flag and production builds reject it.
 
 **SEO-GATE:** work touching titles, meta descriptions, headings, alt text,
 keywords, structured data, URLs/slugs, canonical/robots rules, the sitemap or
@@ -97,7 +106,7 @@ add a guard where one isn't needed, and don't remove the two that exist.
 | **FR-45a** | Dispute resolution granularity (partial refund) — undefined | `disputes.service.resolveDispute()` throws `NotYetSpecifiedError('FR-45a', ...)` if the amount is anything other than 0 or the full order total. Binary resolution works normally. |
 | **FR-50a** | Settlement math for a partial refund — blocked on FR-45a | `settlement.service.calculateSettlement()` carries the same guard defensively, fed by `resolutionAmountToBuyer` passed in from `payout.service.js` (not queried directly — see "Cross-module dependency map" below). |
 | **FR-18a** | Verified-badge criteria — undefined | **No guard.** `listings.service.setVerifiedBadge()` is a plain manual boolean a moderator sets after reviewing evidence — that IS the decided interim behavior. |
-| **FR-08b** | High-value listing pending registered-email verification under the temporary policy | Email verification is scheduled for implementation in Phase 1 before Phase 2; it is not implemented yet. Current listing code blocks publication above the configured threshold. No manual identity-review path or `held_pending_id` status is used. Email verification confirms control of the address, not legal identity, and must not set `seller_profiles.id_verified`. |
+| **FR-08b** | High-value listing pending registered-email verification under the temporary policy | Address verification is implemented in Phase 0 through an encrypted queue and single-use codes; live provider delivery remains pending. Current listing code blocks publication above the configured threshold. No manual identity-review path or `held_pending_id` status is used. Email verification confirms control of the address, not legal identity, and must not set `seller_profiles.id_verified`. |
 
 `FR-40a` (delivery partner count/city assignment) isn't in the table above
 because it has no guard either — `delivery_partners.city_id` is nullable on
@@ -158,7 +167,7 @@ purpose so the schema works whichever way this eventually gets decided.
   [node-argon2 v0.45.1](https://github.com/ranisalt/node-argon2/tree/v0.45.1).
 - `db/migrations/003_auth_foundation.sql` adds session-family, email-code,
   password-reset, and encrypted staff-TOTP persistence plus user timestamps.
-  Password reset and TOTP flows consume these tables in later Phase 0 stages.
+  Password reset, staff TOTP login, and one-time admin bootstrap consume these tables in Phase 0.
 - `npm run password:benchmark` selected 65,536 KiB / time cost 3 / parallelism
   1 at 213 ms median on this development machine. Re-benchmark on the production
   host; the worker-pool cap remains provisional.
@@ -205,14 +214,7 @@ purpose so the schema works whichever way this eventually gets decided.
 
 ## Known gaps to close before this is production-ready (not hallucinated as "done")
 
-- **Authentication is partial.** Protected routes now verify strict HS256
-  bearer tokens and load the current role/suspension state on every request.
-  Argon2id is the owner's selected password-hashing algorithm, but
-  `users.service.authenticate()` still does not hash passwords or issue
-  tokens. Refresh-token/session persistence, CSRF-protected refresh, 2FA and
-  first-admin enrollment are not implemented; see `open-questions.md` for the
-  session-schema approval, email-provider live checks, and the unresolved
-  security-critical recovery questions. Argon2id, bounded hashing, Redis limiters,
+- **Authentication implementation is complete for confirmed Phase 0 buyer/staff flows.** Login verifies Argon2id and the required email/TOTP factor; durable rotating sessions, reset, current suspension checks and one-time TOTP admin bootstrap have tests. Live provider, Redis and deployment checks remain pending. Seller factors, recovery, passkey fallback and step-up remain parked in `open-questions.md`. Argon2id, bounded hashing, Redis limiters,
   and Phase 6 WAF deferral are owner-approved for Phase 0.
 - **No `dotenv` wired in.** `.env.example` documents the required vars but
   nothing in `src/server.js` actually loads a `.env` file — either add

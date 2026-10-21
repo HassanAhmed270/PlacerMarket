@@ -84,6 +84,16 @@ describe('FR-84c: production configuration validation', () => {
     expect(DEFAULTS.ARGON2_MEMORY_KIB).toBeGreaterThan(0);
   });
 
+  test('FR-84c: reset expiry is configurable and staff TOTP key is required in production', () => {
+    const config = getRuntimeConfig({
+      ...validProductionEnv(),
+      PASSWORD_RESET_TTL_SECONDS: '900',
+    });
+    expect(config.limits.PASSWORD_RESET_TTL_SECONDS).toBe(900);
+    expect(() => getRuntimeConfig(validProductionEnv({ STAFF_TOTP_ENCRYPTION_SECRET: undefined })))
+      .toThrow('STAFF_TOTP_ENCRYPTION_SECRET is missing');
+  });
+
   test('rejects invalid configured limits', () => {
     expect(() => getRuntimeConfig({
       JWT_ACCESS_SECRET: 'j'.repeat(32), CORS_ORIGINS: 'http://localhost:5173',

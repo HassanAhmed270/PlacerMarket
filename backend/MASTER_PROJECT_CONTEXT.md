@@ -6,12 +6,19 @@ inspected and tested directly) with the later Poshaak development (decisions
 recorded in a handoff document). **Poshaak is the single, current name** — files
 and chats that say "Marketplace" mean the same project.
 
-**Phase 0 owner update (2026-10-21):** Auth implementation is underway. The
+**Phase 0 owner update (2026-10-21):** Auth implementation includes buyer email-code login, staff TOTP, durable rotating refresh sessions, password reset and one-time admin bootstrap. The
 owner approved the FR-83d code limits, FR-84b Argon2id/Redis scope, FR-83g
 self-service password reset, strict high-value threshold, and Phase 2 gate
 amendment. Recovery after loss of all factors (FR-83k) remains parked. Current
 stage evidence is maintained in `PHASE0_PROGRESS.md`; production checks are in
 `LIVE_CHECKS.md`.
+
+Backend unit, PostgreSQL integration, schema, frontend lint/test/build and
+production dependency audits have been run. The local Redis integration suite
+was skipped because no Redis service is available; the GitHub Actions workflow
+has not yet run. Email/challenge provider setup, production secrets/TLS and
+deployed cookie behavior remain live checks. Current phase stays Phase 0 until
+the remaining gate items are evidenced.
 
 **Precedence rule used to merge:** where two sources conflict, the human's latest
 *finalized* decision wins; a recommendation that was only proposed (by Claude) is
@@ -25,15 +32,12 @@ values remain provisional in `open-questions.md` pending owner confirmation.
 
 **Password foundation (2026-10-21):** registration hashes with pinned
 `argon2@0.45.1` in bounded worker threads; the local benchmark selected 65,536
-KiB, time cost 3, parallelism 1. The login/session/factor flows remain
-unfinished. Migration `003_auth_foundation.sql` adds their persistence tables.
+KiB, time cost 3, parallelism 1. Stages 5–7 implement login/session/factor flows, reset, and bootstrap. Migrations 003–005 hold their persistence.
 
 **Rate-limit foundation (2026-10-21):** atomic Redis Lua counters enforce
 per-IP/account hourly limits on signup/login and existing message/offer writes.
 Redis failures fail closed with 503; the email-code IP threshold is exposed as
-a non-blocking challenge signal and the code-send route is implemented. Reset
-and login-factor routes are not implemented yet. Real Redis concurrency
-verification is pending because this workspace has no Redis service; general
+a non-blocking challenge signal and the code-send route is implemented. Reset and login-factor routes are implemented. Real Redis concurrency verification is pending because this workspace has no Redis service; general
 defaults remain provisional.
 
 **Email verification (2026-10-21):** buyer/seller address verification is

@@ -1,8 +1,10 @@
 # DEVELOPMENT_HANDOFF.md — resuming Poshaak development
 
 **State as of 2026-10-21.** Poshaak (formerly "Marketplace" — same project) has
-a backend, React/Vite frontend, PostgreSQL queue, migrations, and a passing
-unit/integration baseline. Phase 0 auth and frontend auth remain in progress.
+a backend, React/Vite frontend, PostgreSQL queue, migrations, and completed
+Phase 0 auth implementation. Local verification is green except for the real
+Redis integration suite, which is skipped because no local Redis is available;
+the hosted workflow and live providers remain unverified.
 Read `MASTER_PROJECT_CONTEXT.md` and `PHASE0_PROGRESS.md` for current evidence.
 
 ## 1. What you are working with
@@ -34,15 +36,16 @@ Provider credentials and deployed behavior are listed in `LIVE_CHECKS.md`.
 
 Stage 1 centralizes runtime settings in `src/config.js` and adapter boundaries
 under `src/lib/adapters/`; no production provider implementation is claimed yet.
-Stage 2 adds Argon2id registration and the auth foundation migration. Resume from
-`PHASE0_PROGRESS.md`; do not treat the unimplemented login/session routes as live.
+Stage 2 added Argon2id registration and the auth foundation migration. Stages 5–7 now implement login/session flows; live-provider and deployment checks remain open.
 Stage 3 adds fail-closed Redis fixed-window limits for signup/login and existing
-message/offer writes. Email-code requests add address caps and a soft IP signal
-in Stage 4; reset remains for a later stage. Real Redis concurrency verification
+message/offer writes. Email-code requests add address caps and a soft IP signal in Stage 4; Stage 6 adds rate-limited reset requests and confirmation. Real Redis concurrency verification
 requires `TEST_REDIS_URL`; Redis is unavailable in the current workspace.
 Stage 4 adds address verification, encrypted queue delivery, code attempt and
-send limits, and the high-value email-ownership gate. It does not complete the
-login email-factor flow or select a live delivery provider.
+send limits, and the high-value email-ownership gate. Stages 5–7 add buyer email
+factor login, staff TOTP, rotating refresh sessions, reset flows and the one-time
+admin bootstrap. Stage 9 adds frontend account screens. Resume from Stage 11 in
+`PHASE0_PROGRESS.md`; complete remaining external gates and publish the final
+gate report before changing the current phase.
 
 ## 4. Working agreements (details in `rules.md`)
 

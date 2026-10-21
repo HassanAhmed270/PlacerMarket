@@ -15,6 +15,14 @@ tracked separately in [`LIVE_CHECKS.md`](./LIVE_CHECKS.md). Phase 2 design and
 migrations may begin, but Phase 2 routes stay unavailable to real users until
 authentication is complete.
 
+**Phase 0 auth status (2026-10-21):** buyer email-code login, staff TOTP,
+rotating sessions, forgot/reset password, and the one-time admin bootstrap are
+implemented. See [`PHASE0_PROGRESS.md`](./PHASE0_PROGRESS.md) and
+[`PHASE0_GATE_REPORT.md`](./PHASE0_GATE_REPORT.md) for test evidence and open
+deployment gates. Real email/challenge providers, Redis integration, production
+TLS/secrets and hosted CI still need verification. Seller factor policy and
+recovery/step-up decisions remain parked.
+
 **Start here if you're an agent or a new contributor:** read [`agent.md`](./agent.md)
 first — it maps every FR number to the file that owns it, records open
 spec decisions and how each is handled in code, and documents the
