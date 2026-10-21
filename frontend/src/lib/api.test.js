@@ -35,3 +35,22 @@ test('API client reports non-success responses without exposing response content
     return true
   })
 })
+
+test('FR-84, SEC-04/05: login uses a bearer challenge flow and refresh sends only the refresh cookie', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({ accessToken: 'short-lived-token' }) }
+    },
+  })
+  await client.login({ email: 'buyer@example.test', password: 'correct-horse-battery' })
+  await client.refresh()
+  assert.equal(calls[0].url, 'https://api.example.test/api/users/login')
+  assert.equal(calls[0].options.headers.Authorization, undefined)
+  assert.equal(calls[1].url, 'https://api.example.test/api/users/auth/refresh')
+  assert.equal(calls[1].options.credentials, 'include')
+  assert.equal(calls[1].options.headers.Authorization, undefined)
+  assert.equal(Object.hasOwn(globalThis, 'localStorage'), false)
+})
