@@ -8,8 +8,8 @@
  * - catalog.service.getMeasurementFieldDefs() to validate FR-15a values
  *   against the admin-defined field set for the listing's sub-category.
  * - users.service.isApprovedSeller() / isIdVerificationRequired()
- *   to gate seller listing actions (FR-08) and high-value publication until
- *   temporary email verification is implemented (FR-08a, FR-19b).
+ *   to gate seller listing actions (FR-08) and high-value publication on
+ *   registered-email verification (FR-08a, FR-19b).
  * - catalog.service.assertReplicaDisclosureIfNeeded() / assertNotRentalListing()
  *   for FR-14/FR-14a validation at creation time.
  *
@@ -244,8 +244,7 @@ async function approveListing(listingId, reviewerId) {
     assertValidListingImageCount(imageRows[0].count);
 
     const requiresEmailVerification = await users.isIdVerificationRequired(listing.asking_price); // FR-08a
-    if (requiresEmailVerification) {
-      // FR-08a/FR-08b: email verification is scheduled before Phase 2; no verification mechanism exists yet.
+    if (requiresEmailVerification && !(await users.isEmailVerified(listing.seller_id))) {
       throw new ForbiddenError(
         'Listing crosses the high-value threshold and cannot be published until the seller email is verified (FR-08a)'
       );

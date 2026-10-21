@@ -83,11 +83,13 @@ only after confirming compatibility; then run `npm.cmd run db:seed`.
   `npm run db:migrate:baseline` to record it without replaying DDL.
 - `db/seed.js` — inserts the `platform_settings` rows (`commission_percent`, `high_value_threshold_pkr`, `payout_hold_days`, `complaint_window_days`) that a large part of the service layer reads via `getSetting()`. Without this step, calls like `users.service.isIdVerificationRequired()` or `payout.service.startHold()` will throw `NotFoundError`.
 
-Redis rate limits currently protect signup/login and message/offer creation.
-Reset and email-code-send limiters are prepared for their route stages; the
-email-code IP threshold is a soft challenge signal, never a block. Fixed-window
-defaults are provisional in `open-questions.md`. Real Redis concurrency
-verification uses `TEST_REDIS_URL` with `npm run test:integration`.
+Redis rate limits protect signup/login, email-code requests, and existing
+message/offer writes. Reset remains for a later stage; the email-code IP
+threshold is a soft challenge signal, never a block. Verification codes are
+stored as keyed hashes and queued email content is encrypted. The real sender
+provider remains a live check. Fixed-window defaults are provisional in
+`open-questions.md`; real Redis concurrency verification uses `TEST_REDIS_URL`
+with `npm run test:integration`.
 
 `schema.sql` is generated from migrations with `npm run db:generate-schema`;
 use `npm run db:check-schema` to verify the snapshot. The initial migration

@@ -21,6 +21,7 @@ describe('FR-79b migration support', () => {
   test('snapshot generator orders numbered SQL migrations and includes only each up section', () => {
     expect(migrationFiles()).toEqual([
       '001_initial_schema.sql', '002_pgboss_schema.sql', '003_auth_foundation.sql',
+      '004_email_code_purpose.sql',
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');

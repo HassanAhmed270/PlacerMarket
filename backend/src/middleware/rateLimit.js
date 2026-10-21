@@ -1,4 +1,4 @@
-const { createHash } = require('node:crypto');
+const { createHmac } = require('node:crypto');
 const { getSecurityLimits } = require('../config');
 const { getSharedRedisClient } = require('../lib/redis');
 const { ServiceUnavailableError } = require('../lib/errors');
@@ -18,7 +18,8 @@ return count
 `;
 
 function digest(value) {
-  return createHash('sha256').update(String(value)).digest('hex');
+  const secret = process.env.JWT_ACCESS_SECRET || 'non-production-rate-limit-test-key';
+  return createHmac('sha256', secret).update(String(value)).digest('hex');
 }
 
 function identityFromRequest(req, kind) {
@@ -91,7 +92,7 @@ function createConfiguredRateLimiters(env = process.env, clientProvider = getSha
     message: make('message', 'MESSAGE'),
     emailCodeIpSignal: createSoftChallengeSignal({
       threshold: limits.EMAIL_CODE_IP_SOFT_HOURLY_SIGNAL,
-      windowSeconds,
+      windowSeconds: limits.EMAIL_CODE_IP_SIGNAL_WINDOW_SECONDS,
       clientProvider,
     }),
   });

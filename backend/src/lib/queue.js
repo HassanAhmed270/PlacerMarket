@@ -13,14 +13,16 @@ const QUEUES = Object.freeze({
   MONEY: 'money-offers',
   MEDIA: 'media',
   NOTIFICATIONS: 'notifications',
+  EMAIL: 'email',
   DEAD_LETTER: 'dead-letter',
 });
 
-const QUEUE_NAMES = Object.freeze([QUEUES.MONEY, QUEUES.MEDIA, QUEUES.NOTIFICATIONS]);
+const QUEUE_NAMES = Object.freeze([QUEUES.MONEY, QUEUES.MEDIA, QUEUES.NOTIFICATIONS, QUEUES.EMAIL]);
 const WORKER_CONCURRENCY = Object.freeze({
   [QUEUES.MONEY]: 1,
   [QUEUES.MEDIA]: 2,
   [QUEUES.NOTIFICATIONS]: 4,
+  [QUEUES.EMAIL]: 2,
 });
 
 const RETRY_LIMIT = 5;

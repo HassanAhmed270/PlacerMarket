@@ -37,9 +37,12 @@ under `src/lib/adapters/`; no production provider implementation is claimed yet.
 Stage 2 adds Argon2id registration and the auth foundation migration. Resume from
 `PHASE0_PROGRESS.md`; do not treat the unimplemented login/session routes as live.
 Stage 3 adds fail-closed Redis fixed-window limits for signup/login and existing
-message/offer writes. Reset and email-code-send paths await the stages that add
-those endpoints. Real Redis concurrency verification requires `TEST_REDIS_URL`;
-Redis was unavailable in the current workspace.
+message/offer writes. Email-code requests add address caps and a soft IP signal
+in Stage 4; reset remains for a later stage. Real Redis concurrency verification
+requires `TEST_REDIS_URL`; Redis is unavailable in the current workspace.
+Stage 4 adds address verification, encrypted queue delivery, code attempt and
+send limits, and the high-value email-ownership gate. It does not complete the
+login email-factor flow or select a live delivery provider.
 
 ## 4. Working agreements (details in `rules.md`)
 

@@ -9,8 +9,12 @@ const DEFAULTS = Object.freeze({
   EMAIL_CODE_ADDRESS_HOURLY_MAX: 5,
   EMAIL_CODE_ADDRESS_DAILY_MAX: 10,
   EMAIL_CODE_IP_SOFT_HOURLY_SIGNAL: 30,
+  EMAIL_CODE_IP_SIGNAL_WINDOW_SECONDS: 3600,
   EMAIL_CODE_FAILURES_HOURLY_LOCK: 10,
+  EMAIL_CODE_FAILURE_WINDOW_SECONDS: 3600,
   EMAIL_CODE_LOCK_SECONDS: 900,
+  EMAIL_CODE_HOURLY_WINDOW_SECONDS: 3600,
+  EMAIL_CODE_DAILY_WINDOW_SECONDS: 86400,
   PASSWORD_HASH_MAX_CONCURRENCY: 4,
   ARGON2_MEMORY_KIB: 65536,
   ARGON2_TIME_COST: 3,
@@ -60,6 +64,9 @@ function assertUrl(env, key, protocols) {
 function getSecurityLimits(env = process.env) {
   const limits = {};
   for (const key of Object.keys(DEFAULTS)) limits[key] = positiveInteger(env, key);
+  if (limits.EMAIL_CODE_LENGTH > 12) {
+    throw new Error('Configuration error: EMAIL_CODE_LENGTH must not exceed 12.');
+  }
   return Object.freeze(limits);
 }
 
@@ -81,6 +88,7 @@ function getRuntimeConfig(env = process.env) {
     assertCredential(env, 'JWT_ACCESS_SECRET', { minimumBytes: 32 });
     redis = assertUrl(env, 'REDIS_URL', ['redis:', 'rediss:']);
     assertCredential(env, 'EMAIL_PROVIDER_API_KEY');
+    assertCredential(env, 'EMAIL_QUEUE_ENCRYPTION_SECRET', { minimumBytes: 32 });
     assertCredential(env, 'CHALLENGE_PROVIDER_KEY');
     if (env.EMAIL_SENDER_ADAPTER === 'fake' || env.CHALLENGE_VERIFIER_ADAPTER === 'fake' || env.ALLOW_FAKE_ADAPTERS === 'true') {
       throw new Error('Configuration error: fake credential adapters are forbidden in production.');

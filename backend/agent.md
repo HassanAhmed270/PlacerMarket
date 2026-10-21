@@ -23,9 +23,11 @@ suggestions, worker-generated HTML snapshots, JWT auth with two-factor login,
 escrow payments through a gateway, versioned listing content, encrypted
 CNIC/payout fields and append-only ledger tables. Phase 0 has started the
 authentication foundation: validated buyer registration with Argon2id hashing
-and durable session/factor/reset tables. Login, session issuance, rate limits,
-email verification, reset flows and TOTP behavior remain incomplete. The
-COD-era harness described below remains the baseline for the rest of the system.
+and durable session/factor/reset tables. Email verification, high-value
+approval gating and signup/login/message/offer limits are implemented, with
+provider and real-Redis checks pending. Login/session issuance, password reset,
+full login-factor flows and TOTP behavior remain incomplete. The COD-era harness
+described below remains the baseline for the rest of the system.
 
 Runtime configuration is centralized in `src/config.js`; credential-dependent
 interfaces live under `src/lib/adapters/`. Production requires configured
@@ -160,6 +162,10 @@ purpose so the schema works whichever way this eventually gets decided.
 - `npm run password:benchmark` selected 65,536 KiB / time cost 3 / parallelism
   1 at 213 ms median on this development machine. Re-benchmark on the production
   host; the worker-pool cap remains provisional.
+- Email verification persistence is owned by `users.service.js`. Codes are
+  HMACed with the JWT secret; queued email content uses AES-GCM with
+  `EMAIL_QUEUE_ENCRYPTION_SECRET`. The worker consumes the `email` pg-boss queue.
+  The explicit fake sender is opt-in; no live provider implementation is selected.
 
 ## Files outside src/ — what they're for
 

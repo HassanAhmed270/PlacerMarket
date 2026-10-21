@@ -20,8 +20,8 @@ never treated as a decision. Conflicts found are listed in section 7.
 **Configuration foundation:** production startup validates database, Redis,
 JWT, email-provider, challenge-provider and CORS settings, rejects placeholder
 values, and refuses fake adapters. FR-83d and FR-84b settings are centralized in
-`src/config.js`; provisional Argon2id and general limiter values are listed in
-`open-questions.md` pending the benchmark and owner confirmation.
+`src/config.js`; the local Argon2 benchmark is recorded and general limiter
+values remain provisional in `open-questions.md` pending owner confirmation.
 
 **Password foundation (2026-10-21):** registration hashes with pinned
 `argon2@0.45.1` in bounded worker threads; the local benchmark selected 65,536
@@ -31,9 +31,18 @@ unfinished. Migration `003_auth_foundation.sql` adds their persistence tables.
 **Rate-limit foundation (2026-10-21):** atomic Redis Lua counters enforce
 per-IP/account hourly limits on signup/login and existing message/offer writes.
 Redis failures fail closed with 503; the email-code IP threshold is exposed as
-a non-blocking challenge signal for the email-code stage. Reset and code-send
-routes are not implemented yet. Real Redis concurrency verification is pending
-because this workspace has no Redis service; defaults remain provisional.
+a non-blocking challenge signal and the code-send route is implemented. Reset
+and login-factor routes are not implemented yet. Real Redis concurrency
+verification is pending because this workspace has no Redis service; general
+defaults remain provisional.
+
+**Email verification (2026-10-21):** buyer/seller address verification is
+queued through pg-boss with AES-GCM encrypted email payloads. Six-digit codes
+are HMAC-hashed in `email_login_codes`, single-use, expire after five minutes,
+and use the approved resend/address/failure limits. Verified email gates only
+high-value listing approval and never sets seller identity verification.
+Login-attempt-bound issue/consume methods are implemented, but `authenticate()`
+does not invoke them yet. Live provider delivery is not complete.
 
 ## 0. Provenance and honesty
 

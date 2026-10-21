@@ -3,8 +3,17 @@
 const { createQueueClient, QUEUES, WORKER_CONCURRENCY } = require('./src/lib/queue');
 const { createRedisClient } = require('./src/lib/redis');
 const notifications = require('./src/modules/notifications.service');
+const { createEmailSender } = require('./src/lib/adapters/emailSender');
+const { decryptEmailPayload } = require('./src/lib/emailQueuePayload');
 
-async function startWorker() {
+async function startWorker({ emailSender } = {}) {
+  const selectedEmailSender = emailSender || (process.env.EMAIL_SENDER_ADAPTER
+    ? createEmailSender({
+      adapter: process.env.EMAIL_SENDER_ADAPTER,
+      allowFake: process.env.ALLOW_FAKE_ADAPTERS === 'true',
+      production: process.env.NODE_ENV === 'production',
+    })
+    : null);
   const redis = createRedisClient();
   const databaseUrl = process.env.QUEUE_DATABASE_URL || process.env.DATABASE_URL;
   const queue = createQueueClient({ connectionString: databaseUrl, worker: true });
@@ -15,6 +24,15 @@ async function startWorker() {
       QUEUES.NOTIFICATIONS,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.NOTIFICATIONS], transactional: true },
       async ([job], transactionDb) => notifications.processNotificationJob(job.data, transactionDb)
+    );
+    await queue.boss.work(
+      QUEUES.EMAIL,
+      { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.EMAIL], transactional: false },
+      async ([job]) => {
+        if (!selectedEmailSender) throw new Error('No email sender is configured for queued email delivery.');
+        const message = decryptEmailPayload(job.data?.encryptedPayload);
+        await selectedEmailSender.send(message);
+      }
     );
     // eslint-disable-next-line no-console
     console.log('Poshaak worker started');

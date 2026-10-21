@@ -3,6 +3,8 @@ const users = require('../modules/users.service');
 const { requireAuth } = require('../middleware/auth');
 const { validateRegistration, validateLogin } = require('../lib/authValidation');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
+const { createChallengeVerifier } = require('../lib/adapters/challengeVerifier');
+const { ValidationError } = require('../lib/errors');
 
 const limiters = createConfiguredRateLimiters();
 
@@ -16,6 +18,33 @@ router.post('/register', limiters.signup, async (req, res) => {
 
 router.post('/login', limiters.login, async (req, res) => {
   res.json(await users.authenticate(validateLogin(req.body))); // FR-02 / SEC-16
+});
+
+router.post('/email/verification/request', limiters.emailCodeIpSignal, async (req, res) => {
+  if (Object.keys(req.body).some((key) => !['email', 'challengeToken'].includes(key)) ||
+      typeof req.body.email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.body.email)) {
+    throw new ValidationError('A valid email address is required.');
+  }
+  if (req.challengeSignal) {
+    const verifier = req.app.locals.challengeVerifier || createChallengeVerifier({
+      adapter: process.env.CHALLENGE_VERIFIER_ADAPTER,
+      allowFake: process.env.ALLOW_FAKE_ADAPTERS === 'true',
+      production: process.env.NODE_ENV === 'production',
+    });
+    const verification = await verifier.verify(req.body.challengeToken);
+    if (!verification?.verified) return res.status(202).json({ message: 'If the address can be verified, instructions will be sent.' });
+  }
+  await users.requestEmailVerification(req.body.email);
+  res.status(202).json({ message: 'If the address can be verified, instructions will be sent.' });
+});
+
+router.post('/email/verification/confirm', async (req, res) => {
+  if (Object.keys(req.body).some((key) => !['email', 'code'].includes(key))) {
+    throw new ValidationError('Invalid verification request.');
+  }
+  const verified = await users.confirmEmailVerification(req.body.email, req.body.code);
+  if (!verified) return res.status(400).json({ error: 'The verification code is invalid or expired.' });
+  res.status(200).json({ message: 'Email address verified.' });
 });
 
 router.get('/cities', async (req, res) => {

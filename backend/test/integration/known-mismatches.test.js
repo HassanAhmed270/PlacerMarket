@@ -9,6 +9,8 @@ const request = require('supertest');
 const app = require('../../src/app');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { passwordHashPool } = require('../../src/lib/passwordHashPool');
+const { hashCode, addressDigest } = require('../../src/lib/emailCodeDelivery');
+const { getSharedRedisClient, setSharedRedisClient } = require('../../src/lib/redis');
 
 let fixture;
 let registrationPhone;
@@ -57,6 +59,60 @@ describe('known schema and service mismatches', () => {
     expect(stored.rows[0].full_name).toBe('Registered Probe');
     expect(stored.rows[0].password_hash).toMatch(/^\$argon2id\$/);
     expect(stored.rows[0].password_hash).not.toBe('registered-probe-password-2026');
+  });
+
+  test('FR-83d: email verification code is single-use under concurrent confirmation', async () => {
+    const email = `verify-${Date.now()}@example.test`;
+    const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
+    process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';
+    const digest = addressDigest(email);
+    await db.query('UPDATE users SET email = $2, email_verified_at = NULL WHERE id = $1', [fixture.userId, email]);
+    await db.query(
+      `INSERT INTO email_login_codes
+        (login_attempt_id, user_id, email_digest, code_hash, expires_at, purpose)
+       VALUES ($1, $2, $3, $4, now() + interval '5 minutes', 'verify_email')`,
+      [require('node:crypto').randomUUID(), fixture.userId, digest, hashCode('654321')]
+    );
+    const previousRedis = getSharedRedisClient();
+    setSharedRedisClient({ isOpen: true, eval: async (_script, { arguments: args }) => args[2] === '0' ? 0 : 1 });
+    try {
+      const results = await Promise.all([
+        users.confirmEmailVerification(email, '654321'),
+        users.confirmEmailVerification(email, '654321'),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(await users.isEmailVerified(fixture.userId)).toBe(true);
+    } finally {
+      setSharedRedisClient(previousRedis);
+      if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
+    }
+  });
+
+  test('FR-83d: login email code is bound to its login attempt and is single-use', async () => {
+    const email = `login-factor-${Date.now()}@example.test`;
+    const attemptId = require('node:crypto').randomUUID();
+    const wrongAttemptId = require('node:crypto').randomUUID();
+    const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
+    process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';
+    await db.query('UPDATE users SET email = $2 WHERE id = $1', [fixture.userId, email]);
+    await db.query(
+      `INSERT INTO email_login_codes
+        (login_attempt_id, user_id, email_digest, code_hash, expires_at, purpose)
+       VALUES ($1, $2, $3, $4, now() + interval '5 minutes', 'login')`,
+      [attemptId, fixture.userId, addressDigest(email), hashCode('827304')]
+    );
+    const previousRedis = getSharedRedisClient();
+    setSharedRedisClient({ isOpen: true, eval: async (_script, { arguments: args }) => args[2] === '0' ? 0 : 1 });
+    try {
+      await expect(users.confirmLoginEmailCode(wrongAttemptId, '827304')).resolves.toBeNull();
+      await expect(users.confirmLoginEmailCode(attemptId, '827304')).resolves.toBe(fixture.userId);
+      await expect(users.confirmLoginEmailCode(attemptId, '827304')).resolves.toBeNull();
+    } finally {
+      setSharedRedisClient(previousRedis);
+      if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
+    }
   });
 
   test.failing('seller application submission creates a pending application for the existing user', async () => {
@@ -439,6 +495,19 @@ describe('known schema and service mismatches', () => {
       'SELECT status FROM listings WHERE id = $1', [fixture.listingId]
     );
     expect(stillPendingAfterLegacyFlag[0].status).toBe('pending_review');
+    await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [fixture.userId]);
+    await expect(listings.approveListing(fixture.listingId, fixture.userId)).resolves.toMatchObject({ status: 'published' });
+  });
+
+  test('FR-19b: a price equal to the threshold can be approved without email verification', async () => {
+    const { rows } = await db.query(
+      "SELECT value::numeric AS threshold FROM platform_settings WHERE key = 'high_value_threshold_pkr'"
+    );
+    await db.query('UPDATE users SET email_verified_at = NULL WHERE id = $1', [fixture.userId]);
+    await db.query('UPDATE listings SET asking_price = $2 WHERE id = $1', [fixture.listingId, Number(rows[0].threshold)]);
+    await addListingPhotos(fixture, 3);
+    await listings.submitListingForReview(fixture.listingId, fixture.userId);
+    await expect(listings.approveListing(fixture.listingId, fixture.userId)).resolves.toMatchObject({ status: 'published' });
   });
 
   test('FR-18, FR-19a: granting a verified badge persists reviewer metadata independently', async () => {

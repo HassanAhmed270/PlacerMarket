@@ -5,6 +5,8 @@ put live credentials in this file, source control, test output, or logs.
 
 - [ ] Email primary and secondary providers selected; verify real delivery,
   provider authentication, retry behavior, rate limits, and failover.
+- [ ] Verify queued email delivery with the selected provider, including retry
+  and failure behavior; production currently has no live sender implementation.
 - [ ] Challenge verifier selected; verify the soft per-IP challenge signal and
   confirm the fake adapter cannot be selected in production.
 - [ ] Verify Redis limit counters under concurrent traffic, eviction/failover,
@@ -12,6 +14,8 @@ put live credentials in this file, source control, test output, or logs.
   Redis is unavailable.
 - [ ] Production secrets and required credential variables provisioned through
   the hosting secret store; startup rejects missing values and placeholders.
+- [ ] Provision and document rotation for `EMAIL_QUEUE_ENCRYPTION_SECRET`; queued
+  codes are encrypted at rest and expire independently after five minutes.
 - [ ] Staff TOTP encryption key provisioned outside PostgreSQL/source control;
   document secure rotation and recovery before enrollment is enabled.
 - [ ] Re-run the Argon2 benchmark on each production-sized host; verify latency,

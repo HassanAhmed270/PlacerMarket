@@ -10,6 +10,7 @@ function validProductionEnv(overrides = {}) {
     CORS_ORIGINS: 'https://poshaak.test',
     EMAIL_SENDER_ADAPTER: 'provider',
     EMAIL_PROVIDER_API_KEY: 'email-provider-secret',
+    EMAIL_QUEUE_ENCRYPTION_SECRET: 'email-queue-encryption-secret-material-32bytes',
     CHALLENGE_VERIFIER_ADAPTER: 'provider',
     CHALLENGE_PROVIDER_KEY: 'challenge-provider-secret',
     ...overrides,
@@ -26,6 +27,8 @@ describe('FR-84c: production configuration validation', () => {
   test('refuses placeholder credentials and the disposable integration database', () => {
     expect(() => getRuntimeConfig(validProductionEnv({ EMAIL_PROVIDER_API_KEY: 'CHANGE_ME' })))
       .toThrow('EMAIL_PROVIDER_API_KEY is missing');
+    expect(() => getRuntimeConfig(validProductionEnv({ EMAIL_QUEUE_ENCRYPTION_SECRET: 'CHANGE_ME' })))
+      .toThrow('EMAIL_QUEUE_ENCRYPTION_SECRET is missing');
     expect(() => getRuntimeConfig(validProductionEnv({ DATABASE_URL: 'postgres://user:pass@db.test/testing_only' })))
       .toThrow('cannot target testing_only');
   });
@@ -70,7 +73,10 @@ describe('FR-84c: production configuration validation', () => {
       EMAIL_CODE_ADDRESS_DAILY_MAX: 10,
       EMAIL_CODE_IP_SOFT_HOURLY_SIGNAL: 30,
       EMAIL_CODE_FAILURES_HOURLY_LOCK: 10,
+      EMAIL_CODE_FAILURE_WINDOW_SECONDS: 3600,
       EMAIL_CODE_LOCK_SECONDS: 900,
+      EMAIL_CODE_HOURLY_WINDOW_SECONDS: 3600,
+      EMAIL_CODE_DAILY_WINDOW_SECONDS: 86400,
       PASSWORD_HASH_MAX_CONCURRENCY: 2,
       RATE_LIMIT_LOGIN_ACCOUNT_MAX: 8,
     });

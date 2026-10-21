@@ -100,11 +100,10 @@ Resume at the first incomplete stage. Completed stages are not repeated.
   429 responses are generic. Reset limiter and email-code IP challenge signal
   are exposed for their upcoming routes. The challenge signal does not block.
 - **Verification:** `npm.cmd test -- --runInBand` — 28 suites, 300 tests passed;
-  `npm.cmd run db:check-schema` — passed. `test/integration/rate-limit.test.js`
-  exercises concurrent counters against real Redis, but the integration suite
-  could not start because `TEST_DATABASE_URL` is absent; no Redis service or
-  `TEST_REDIS_URL` is available in this workspace. Do not mark SEC-08, SEC-24,
-  or FR-84b complete based on the unit fake.
+  `npm.cmd run db:check-schema` — passed; integration run with the local `.env`
+  loaded — 4 suites / 60 tests passed on PostgreSQL 18.6, with the real-Redis
+  limiter suite skipped because `TEST_REDIS_URL` and a Redis service are absent.
+  Do not mark SEC-08, SEC-24, or FR-84b complete based on the unit fake.
 - **Rows ticked:** none. SEC-08, SEC-24 and FR-84b remain unticked until missing
   routes and real Redis integration evidence are complete.
 - **Parked:** FR-83k, FR-83b, FR-83c, FR-83f as recorded above; no new security
@@ -115,3 +114,40 @@ Resume at the first incomplete stage. Completed stages are not repeated.
   trusted proxy IP forwarding added to `LIVE_CHECKS.md`.
 - **Next:** Stage 4 — EMAIL + VERIFICATION (with the Redis test prerequisites
   still to be supplied for final verification).
+
+## Stage 4 — EMAIL + VERIFICATION — implementation complete; provider/Redis checks pending (2026-10-21)
+
+- **Files:** `db/migrations/004_email_code_purpose.sql`, generated `schema.sql`,
+  `.env.example`, `src/config.js`, `src/lib/emailQueuePayload.js`,
+  `src/lib/emailCodeDelivery.js`, `src/lib/queue.js`, `src/modules/users.service.js`,
+  `src/modules/listings.service.js`, `src/routes/users.routes.js`, `worker.js`,
+  email/code/queue/config/worker and real-Postgres integration tests, plus
+  `agent.md`, `open-questions.md`, `specs.md`, `security.md`, `LIVE_CHECKS.md`,
+  `README.md`, `MASTER_PROJECT_CONTEXT.md`, `DEVELOPMENT_HANDOFF.md`, and this file.
+- **Migrations:** `004_email_code_purpose.sql` adds a purpose discriminator and
+  one-active-address-verification constraint to `email_login_codes`; snapshot
+  regenerated through the ordered migration generator.
+- **Behavior:** email verification uses configurable six-digit, five-minute,
+  single-use codes; HMAC hashes and HMAC address digests; three attempts per
+  code; atomic 60-second resend, 5/hour and 10/day address caps; and a
+  configurable 10-failures/hour, 15-minute lock. Unknown addresses get the same
+  accepted API response and message type. Email content is AES-GCM encrypted in
+  pg-boss, then decrypted by the email worker. Email proof never sets seller ID
+  verification; it gates high-value listing approval only.
+- **Verification:** `npm.cmd test -- --runInBand` — 30 suites / 322 tests passed;
+  integration with `.env` loaded — 4 suites / 63 tests passed on PostgreSQL
+  18.6; real-Redis limiter suite skipped because `TEST_REDIS_URL` is absent;
+  `npm.cmd run db:check-schema` — passed. Tests include `FR-83d` code hashing,
+  queue encryption, resend caps, attempts/lock, route anti-enumeration,
+  concurrent single-use confirmation, and FR-08a/FR-19b approval behavior.
+- **Rows ticked:** FR-08a and FR-19b, justified by the two named passing
+  PostgreSQL integration tests above. FR-83a/FR-83d remain unticked because
+  `authenticate()` does not yet invoke the login-attempt-bound code methods,
+  and real Redis verification is still pending.
+- **Parked:** FR-83k, FR-83b, FR-83c, FR-83f; no new security-critical choice
+  was needed. Live email provider selection and delivery remain pending.
+- **Provisional assumptions:** general hourly limits and pool cap remain
+  provisional; email-code limits and durations are owner-approved and configurable.
+- **Live checks added:** select/test real provider and verify encrypted-key
+  rotation, queue retry/failure behavior, Redis concurrency and deployed proxy.
+- **Next:** Stage 5 — LOGIN + SESSIONS.
