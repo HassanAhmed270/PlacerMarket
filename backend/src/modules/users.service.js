@@ -48,7 +48,7 @@ async function getAuthenticationPrincipal(userId) {
 async function authenticate({ email, password }) {
   // TODO FR-02/FR-84: implement after refresh-session and required 2FA
   // persistence are approved. The owner selected Argon2id (FR-84b).
-  throw new NotImplementedError('authenticate() — required session and 2FA persistence is not implemented');
+  throw new NotImplementedError('authenticate() — required session and 2FA persistence');
 }
 
 // ---- FR-03, FR-04: city verification ----

@@ -16,20 +16,49 @@ the standing rules for how to behave on every task (spec discipline,
 ownership rules, when to stop and ask vs. proceed, testing and commit
 requirements). This README only covers running the thing.
 
-## Setup
+## Local setup (Windows PowerShell)
 
-```bash
-npm install
-cp .env.example .env    # fill in DATABASE_URL and REDIS_URL
-npm run db:setup        # applies schema.sql, then seeds platform_settings
-npm start                # or: npm run dev (auto-restart on file change)
-# in another process, run the worker:
-npm run worker
+Use a dedicated development database for the application. Never point
+`DATABASE_URL` at the disposable `testing_only` database: the integration
+harness resets that database. Start local PostgreSQL and Redis first, and
+create an empty development database using your normal PostgreSQL tooling.
+
+In PowerShell terminal 1:
+
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# Edit .env locally: set DATABASE_URL to the dedicated development database,
+# REDIS_URL=redis://localhost:6379, and CORS_ORIGINS=http://localhost:5173.
+# Leave TEST_DATABASE_URL pointed at the disposable testing_only database.
+npm.cmd ci
+npm.cmd run db:setup
+$jwtBytes = [byte[]]::new(32)
+[System.Security.Cryptography.RandomNumberGenerator]::Fill($jwtBytes)
+$env:JWT_ACCESS_SECRET = [Convert]::ToBase64String($jwtBytes)
+[Array]::Clear($jwtBytes, 0, $jwtBytes.Length)
+npm.cmd run dev
 ```
 
+The secret above is generated in the current PowerShell process and is not
+printed. Generate it again in a new terminal, or keep it in a secure local
+secret store; never commit it. `db:setup` expects an empty development
+database. For an existing legacy schema, inspect it and use the explicit
+baseline workflow below only after confirming compatibility.
+
+In PowerShell terminal 2, run the worker when exercising background jobs:
+
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+npm.cmd run worker
+```
+
+Terminal 1 starts the backend at `http://localhost:3000`. Start the frontend
+in its own terminal using the steps in [`../frontend/README.md`](../frontend/README.md).
+
 The setup command expects an empty database. For a database that already has
-the legacy schema, first inspect it and run `npm run db:migrate:baseline` only
-after confirming compatibility; then run `npm run db:seed`.
+the legacy schema, first inspect it and run `npm.cmd run db:migrate:baseline`
+only after confirming compatibility; then run `npm.cmd run db:seed`.
 
 `npm run db:setup` runs the versioned migration runner, then seeds the database.
 - `db/migrate.js` — applies ordered SQL files from `db/migrations/`, tracks

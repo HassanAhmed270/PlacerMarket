@@ -147,9 +147,17 @@ describe('FR-77, FR-77a: PostgreSQL queue durability and worker guarantees', () 
     });
     try {
       await withTimeout(finished, 10000, 'Retry timed out');
-      const { rows } = await effectPool.query('SELECT count(*)::int AS count FROM queue_effect_probe WHERE idempotency_key = $1', [key]);
+      const deadline = Date.now() + 5000;
+      let effectCount = 0;
+      while (Date.now() < deadline && effectCount === 0) {
+        const { rows } = await effectPool.query(
+          'SELECT count(*)::int AS count FROM queue_effect_probe WHERE idempotency_key = $1', [key]
+        );
+        effectCount = rows[0].count;
+        if (effectCount === 0) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
       expect(attempts).toBe(2);
-      expect(rows[0].count).toBe(1);
+      expect(effectCount).toBe(1);
     } finally {
       await worker.stop();
       if (queueCreated) await producer.boss.deleteQueue(sourceName);
