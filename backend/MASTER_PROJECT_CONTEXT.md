@@ -6,6 +6,13 @@ inspected and tested directly) with the later Poshaak development (decisions
 recorded in a handoff document). **Poshaak is the single, current name** — files
 and chats that say "Marketplace" mean the same project.
 
+**Phase 0 owner update (2026-10-21):** Auth implementation is underway. The
+owner approved the FR-83d code limits, FR-84b Argon2id/Redis scope, FR-83g
+self-service password reset, strict high-value threshold, and Phase 2 gate
+amendment. Recovery after loss of all factors (FR-83k) remains parked. Current
+stage evidence is maintained in `PHASE0_PROGRESS.md`; production checks are in
+`LIVE_CHECKS.md`.
+
 **Precedence rule used to merge:** where two sources conflict, the human's latest
 *finalized* decision wins; a recommendation that was only proposed (by Claude) is
 never treated as a decision. Conflicts found are listed in section 7.
@@ -117,7 +124,7 @@ chargeback liability, reservation duration, held funds for an unverified seller.
   approved version stays public; optional video published on the platform's YouTube
   channel with seller opt-in and moderator play-once approval (hosting and agreement
   OPEN); optional voice-story description producing three versions (details DEFERRED).
-- **Auth:** JWT in the Authorization header: a short-lived in-memory access token renewed by a rotating refresh-token cookie (decided 2026-10-17); **two-factor at every sign-in** — an email code for ordinary buyers, an authenticator app for admins and moderators, passkeys later (FR-83h); first admin via `npm run admin:create`. The email-code rules (FR-83d) and token lifetimes (FR-84a: access 15 min; buyer refresh 30 days absolute / 7 days inactivity; staff refresh 8 hours absolute / 30 minutes inactivity) are approved; seller rules, step-up, recovery and the rest of the hardening are still proposals (FR-83b, FR-83c, FR-83f, FR-83g, FR-83i, FR-83j).
+- **Auth:** JWT in the Authorization header: a short-lived in-memory access token renewed by a rotating refresh-token cookie; **two-factor at every sign-in** — email code for ordinary buyers, authenticator app for admins/moderators, first admin enrolls TOTP through `npm run admin:create`, and passkeys later (FR-83h/FR-84). FR-83d limits and FR-84a token lifetimes are configurable and approved. FR-83g self-service password reset is approved for all roles; recovery after loss of all factors is separately parked (FR-83k). Seller requirements, step-up, and email delivery provider live checks remain open.
 - **SEO-GATE:** wording and rules for titles, meta, headings, alt text, structured
   data, URLs, canonicals and snapshots are discussion-gated (FR-82–82d, `rules.md`
   Section 10); mechanical plumbing may be built.

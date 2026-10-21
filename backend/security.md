@@ -50,9 +50,9 @@ money integrity; expect a payments section here once Phase 4 starts.
   *Enforced by:* review · *Today:* n/a-yet (no auth code yet).
 - [ ] **SEC-07 Suspended users are rejected immediately** (FR-10), even with a valid unexpired token: check user status on each request, or keep lifetimes short enough that revocation is acceptable (decide and write it down).
   *Enforced by:* test · *Today:* n/a-yet.
-- [ ] **SEC-08 Brute-force protection on login/register/reset.** Rate limit per IP and per account; identical error for "no such user" and "wrong password" (no user enumeration). Email verification codes: 3 attempts per code, a resend cooldown and sending caps (specs.md FR-83d, approved 2026-10-17).
+- [ ] **SEC-08 Brute-force protection on login/register/reset.** Redis limits are per IP and per account; responses and timing class do not reveal whether an account exists. Email codes: 3 attempts per code, 60-second resend cooldown, 5/hour and 10/day per address, soft signal at 30/hour per IP (never a block), and 10 failed verifications/hour causes a 15-minute lock. All values are configurable (FR-83d, owner-approved 2026-10-21).
   *Enforced by:* test · *Today:* n/a-yet (no auth endpoints, no limiter).
-- [ ] **SEC-09 Two-factor authentication on every login.** **Required** (decided): every login needs a second factor, and email is the code channel for ordinary buyers (specs.md FR-83, FR-83a). Decided 2026-10-17: email codes for ordinary buyers, an authenticator app (never email) for admins and moderators, passkeys later (FR-83h). Code hardening, seller rules, step-up and recovery are still DISCUSS/OPEN (FR-83b–FR-83g).
+- [ ] **SEC-09 Two-factor authentication on every login.** Every login needs a second factor: email codes for ordinary buyers and TOTP for admins/moderators (never email); the first admin enrolls TOTP during the one-time bootstrap command. Passkeys come later (FR-83h). Seller requirements, step-up and recovery after loss of all factors remain parked (FR-83b, FR-83c, FR-83f, FR-83k).
   *Enforced by:* test · *Today:* n/a-yet (no auth code yet; design details unconfirmed).
 - [ ] **SEC-10 No default or seeded credentials.** The first admin is created by a one-time command run on the server (`npm run admin:create`, decided 2026-10-14), never by an endpoint or a hardcoded password.
   *Enforced by:* review · *Today:* holds (`db/seed.js` creates no users) — but there is no way yet to create the first admin (`admin:create` is a Phase 0 task).
@@ -135,4 +135,6 @@ money integrity; expect a payments section here once Phase 4 starts.
 ## Open security decisions
 
 Logged in `open-questions.md`; an agent must not guess these (`rules.md` Section 1):
-the remaining details of two-factor login (SEC-09), token lifetimes (FR-84a), key management for the encrypted fields (SEC-30), and RLS (SEC-14).
+recovery after loss of all second factors (FR-83k), seller factor requirements
+(FR-83c), step-up behavior (FR-83f), key management for encrypted fields
+(SEC-30), and RLS (SEC-14).

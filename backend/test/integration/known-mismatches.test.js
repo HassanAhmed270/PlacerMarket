@@ -191,14 +191,32 @@ describe('known schema and service mismatches', () => {
       .rejects.toMatchObject({ name: 'NotFoundError', statusCode: 404 });
   });
 
-  test('seller application queue filters by status and profile gates reflect persisted state', async () => {
+  test('FR-08a: email verification is required strictly above the configured threshold', async () => {
     expect(await users.getSellerApplicationQueue({ status: 'pending' }))
       .toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.applicationId, status: 'pending' })]));
     expect(await users.isApprovedSeller(fixture.userId)).toBe(true);
     await db.query("UPDATE users SET role = 'buyer' WHERE id = $1", [fixture.userId]);
     expect(await users.isApprovedSeller(fixture.userId)).toBe(false);
     await db.query("UPDATE users SET role = 'seller' WHERE id = $1", [fixture.userId]);
-    expect(await users.isIdVerificationRequired(100000)).toBe(true);
+    const { rows: settings } = await db.query(
+      "SELECT value::numeric AS threshold FROM platform_settings WHERE key = 'high_value_threshold_pkr'"
+    );
+    const threshold = Number(settings[0].threshold);
+    expect(await users.isIdVerificationRequired(threshold)).toBe(false);
+    expect(await users.isIdVerificationRequired(threshold + 1)).toBe(true);
+    await db.query(
+      "UPDATE listings SET status = 'pending_review', asking_price = $2 WHERE id = $1",
+      [fixture.listingId, threshold]
+    );
+    let moderationQueue = await listings.getModerationQueue();
+    expect(moderationQueue).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: fixture.listingId, is_high_value: false }),
+    ]));
+    await db.query('UPDATE listings SET asking_price = $2 WHERE id = $1', [fixture.listingId, threshold + 1]);
+    moderationQueue = await listings.getModerationQueue();
+    expect(moderationQueue).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: fixture.listingId, is_high_value: true }),
+    ]));
     expect(await users.isIdVerificationRequired(1)).toBe(false);
     expect(await users.isIdVerified(fixture.userId)).toBe(false);
     await users.markIdVerified(fixture.userId, fixture.userId);
@@ -395,11 +413,11 @@ describe('known schema and service mismatches', () => {
     expect(rows[0].status).toBe('pending_review');
   });
 
-  test('FR-08a, FR-19b: a high-value listing remains pending until email verification is implemented', async () => {
+  test('FR-08a, FR-19b: the threshold is not high-value and prices above it remain pending', async () => {
     const { rows: settings } = await db.query(
       "SELECT value::numeric AS threshold FROM platform_settings WHERE key = 'high_value_threshold_pkr'"
     );
-    await db.query('UPDATE listings SET asking_price = $2 WHERE id = $1', [fixture.listingId, settings[0].threshold]);
+    await db.query('UPDATE listings SET asking_price = $2 WHERE id = $1', [fixture.listingId, Number(settings[0].threshold) + 1]);
     await addListingPhotos(fixture, 3);
     const submitted = await listings.submitListingForReview(fixture.listingId, fixture.userId);
     expect(submitted.requires_id_verification).toBe(true);

@@ -179,7 +179,9 @@ purpose so the schema works whichever way this eventually gets decided.
   `users.service.authenticate()` still does not hash passwords or issue
   tokens. Refresh-token/session persistence, CSRF-protected refresh, 2FA and
   first-admin enrollment are not implemented; see `open-questions.md` for the
-  remaining FR-84b discussion and required session-schema approval.
+  session-schema approval, email-provider live checks, and the unresolved
+  security-critical recovery questions. Argon2id, bounded hashing, Redis limiters,
+  and Phase 6 WAF deferral are owner-approved for Phase 0.
 - **No `dotenv` wired in.** `.env.example` documents the required vars but
   nothing in `src/server.js` actually loads a `.env` file — either add
   `require('dotenv').config()` there or rely on real env vars being

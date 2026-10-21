@@ -216,7 +216,7 @@ async function setVerifiedBadge(listingId, { granted, reviewerId }) {
 async function getModerationQueue() {
   const { rows } = await db.query(
     `SELECT l.*,
-            (l.asking_price >= (SELECT value::numeric FROM platform_settings WHERE key = 'high_value_threshold_pkr')) AS is_high_value,
+            (l.asking_price > (SELECT value::numeric FROM platform_settings WHERE key = 'high_value_threshold_pkr')) AS is_high_value,
             EXISTS(SELECT 1 FROM listing_evidence e WHERE e.listing_id = l.id) AS has_evidence_submitted
      FROM listings l
      WHERE l.status = 'pending_review'

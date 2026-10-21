@@ -18,17 +18,15 @@ first called "Marketplace").
    log them in `open-questions.md`; SEO work is discussion-gated; the human's
    latest decision wins over any recommendation.
 
-## 1. Project state
+## 1. Project state (refreshed 2026-10-21)
 
-- The code is a **COD-era Express scaffold** (Express 5, plain `pg`, 13 service modules,
-  Jest). Every test mocks the database; nothing has run against a real Postgres.
-  Auth is a stub. No escrow, queue, worker, Redis, 2FA, media or search code exists.
-- **Phase 0 has not started.** `specs.md` has 183 FR rows, **0 ticked**; of
-  them 11 are tagged OPEN, 29 DISCUSS (proposals awaiting the human),
-  11 DEFERRED and 7 SUPERSEDED. `security.md` has 38 rows, none ticked.
-- This round changed documents only. No implementation or testing was marked complete.
+- This checkout includes the backend, React/Vite frontend, PostgreSQL queue,
+  migration runner, and real-PostgreSQL tests. Phase 0 auth and frontend auth
+  remain unfinished. See `PHASE0_PROGRESS.md` for staged evidence.
+- Phase 0 owner decisions and gate changes dated 2026-10-21 are in
+  `Phases.md`, `specs.md`, `security.md`, and `open-questions.md`.
 
-## 2. Decisions approved on 2026-10-17 (recorded in the files named)
+## 2. Decisions approved through 2026-10-21 (recorded in the files named)
 
 - **FR-83d, buyer email codes:** six digits; five-minute expiry; single use; only a
   hash stored; **at most 3 verification attempts per code**; resend cooldown and

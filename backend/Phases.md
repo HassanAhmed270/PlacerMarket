@@ -46,6 +46,13 @@ snapshots; edits to live listings go through moderation (FR-73–FR-81d).
 
 **Auth.** JWT in the Authorization header: a short-lived access token in memory plus a rotating refresh-token cookie; two-factor at every sign-in (email code for buyers, authenticator app for admins and moderators, passkeys later); first admin via `npm run admin:create` (FR-83, FR-83a, FR-83h, FR-84).
 
+**Phase 0 gate amendment (owner-approved 2026-10-21):** Phase 2 design and
+expand-only migrations may begin now. No Phase 2 route may be exposed to real
+users until authentication is complete. FR-83g self-service password reset is
+in Phase 0; account recovery after loss of every factor remains parked. Email
+verification proves control of the address only, never legal identity, and
+does not set `seller_profiles.id_verified` or add a `held_pending_id` state.
+
 ---
 
 ## Phase 0 — Foundation and platform infrastructure
@@ -94,6 +101,7 @@ satisfied by this stage resolution.
 
 **Backend — 0c auth and hardening**
 - JWT login with server-side password hashing, the refresh-cookie flow, suspended users rejected immediately (FR-01, FR-02, FR-10, FR-84); two-factor at sign-in: email code for buyers, authenticator app for admins and moderators (FR-83, FR-83a, FR-83h); `npm run admin:create` with authenticator enrollment (FR-84).
+- Argon2id in a bounded worker pool with benchmark-selected parameters and a concurrency cap; saturation returns 503. Redis per-IP/account limits cover login, signup, reset, email-code send, offers, and messages. WAF/bot protection is Phase 6. Forgot-password is self-service for all roles; loss-of-factor recovery remains parked.
 - Email sending behind a provider adapter: Nodemailer as the common interface, an HTTPS-API-compatible provider for the initial Render deployment, and a secondary-provider failover implemented and tested before production (FR-83a, FR-83e).
 - Hardening: helmet, CORS allowlist, rate limiting, explicit body limit, an error
   handler that never leaks, responses that never include `password_hash`, an
@@ -108,7 +116,7 @@ satisfied by this stage resolution.
 **Security rows to close:** SEC-01, 02, 03, 04, 07, 08, 10, 15, 16 (framework),
 22, 23, 24, 25, 27, 28, 29, 38, and SEC-09 for the confirmed part (FR-83, FR-83a).
 
-**Decisions:** decided 2026-10-17 — sessions and token lifetimes (FR-84, FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the Phase 0b queue selection gate (stage-specific FR-77f resolution below), and Render for initial hosting (FR-79h). Argon2id was selected for password hashing on 2026-10-20; FR-84b's bounded execution, Redis rate-limit and WAF proposals remain DISCUSS. SEC-07 was resolved on 2026-10-20: read current suspension state on every authenticated request. Still open for Phase 0c are FR-83d resend-cooldown and sending-cap values, durable refresh/TOTP/challenge persistence, and the account-recovery policy. Email delivery providers must be selected before real email login; deployment-level PgBouncer compatibility is required before Phase 6.
+**Decisions (updated 2026-10-21):** sessions and token lifetimes (FR-84, FR-84a), buyer email and staff TOTP scope including first-admin enrollment (FR-83h), code values, Argon2id bounded execution and Redis rate limits (FR-83d, FR-84b), self-service password reset (FR-83g), the email adapter (FR-83e), queue selection (FR-77f), and Render hosting (FR-79h) are approved. All security limits are configurable. SEC-07 requires current suspension state on every authenticated request. Durable refresh/TOTP/challenge persistence and staff TOTP key management remain implementation/live-readiness requirements. Recovery after loss of all factors is parked under FR-83k; email delivery providers need live checks before real login. Deployment-level PgBouncer compatibility is required before Phase 6.
 
 **Gate**
 - [ ] Backend 0a, 0b, 0c done, with real-Postgres integration tests
@@ -135,7 +143,7 @@ Wallet payout field.
 
 **Security rows to close:** SEC-11, 12, 13 (audit), 30, 35.
 
-**Decisions needed first:** account recovery (FR-83g); key management for the
+**Decisions needed first:** recovery after loss of all factors (FR-83k); key management for the
 encrypted fields; confirm SEC-35.
 
 **Gate**

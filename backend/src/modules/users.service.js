@@ -154,7 +154,7 @@ async function isApprovedSeller(userId) {
 /** FR-08a: ID verification is required only once a listing crosses the admin-configurable threshold. */
 async function isIdVerificationRequired(listingPrice) {
   const thresholdPkr = await settlement.getSetting('high_value_threshold_pkr');
-  return Number(listingPrice) >= Number(thresholdPkr);
+  return Number(listingPrice) > Number(thresholdPkr);
 }
 
 /** FR-08a: whether the seller has completed ID verification. */

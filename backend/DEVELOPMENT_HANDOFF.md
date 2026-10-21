@@ -1,8 +1,9 @@
 # DEVELOPMENT_HANDOFF.md — resuming Poshaak development
 
-**State as of 2026-10-14.** Poshaak (formerly "Marketplace" — same project) has a
-tested but COD-era harness and a large, mostly *documented* plan. **No phase has
-started: Phase 0 is next.** Read `MASTER_PROJECT_CONTEXT.md` for the full picture.
+**State as of 2026-10-21.** Poshaak (formerly "Marketplace" — same project) has
+a backend, React/Vite frontend, PostgreSQL queue, migrations, and a passing
+unit/integration baseline. Phase 0 auth and frontend auth remain in progress.
+Read `MASTER_PROJECT_CONTEXT.md` and `PHASE0_PROGRESS.md` for current evidence.
 
 ## 1. What you are working with
 
@@ -25,9 +26,11 @@ Reading order: `MASTER_PROJECT_CONTEXT.md` → `agent.md` → `rules.md` → `Ph
 
 ## 3. What to do next (Phase 0)
 
-Decided on 2026-10-17: sessions (a rotating refresh-token cookie) and their lifetimes (FR-84a), the Phase 0 two-factor scope (FR-83h), the email-code rules (FR-83d), the email architecture (FR-83e), the queue strategy (FR-77f) and Render for initial hosting (FR-79h). Still open for Phase 0: the resend-cooldown and sending-cap values, the queue library verification (before a library is committed) and the SEC-07 choice. Then Phase 0a (real-Postgres tests,
-migration runner, fix the schema/code mismatches), 0b (queue + worker), 0c (JWT +
-two-factor + hardening). The frontend scaffold runs in parallel.
+Resume from the first incomplete stage in `PHASE0_PROGRESS.md`. Owner decisions
+dated 2026-10-21 set FR-83d limits, the FR-84b Argon2id/Redis scope, FR-83g
+self-service password reset, the strict high-value threshold, and the Phase 2
+gate amendment. FR-83k recovery after loss of all factors remains parked.
+Provider credentials and deployed behavior are listed in `LIVE_CHECKS.md`.
 
 ## 4. Working agreements (details in `rules.md`)
 

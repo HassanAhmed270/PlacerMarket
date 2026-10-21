@@ -40,6 +40,16 @@ repo root so it is found.
   code or tests.
 - Stay inside the task. No drive-by refactors, no unrelated files.
 
+## Credential-dependent features
+- Put email, challenge, and other credential-backed integrations behind a small
+  adapter interface. Supply a fake only for local/tests, and require an explicit
+  opt-in flag to use it; production startup must refuse missing credentials,
+  placeholders, or fake-adapter selection.
+- Keep live provider configuration and account-specific checks in `LIVE_CHECKS.md`.
+  Tests using fakes do not prove live delivery, provider failover, challenge quality,
+  or production credential validity. Never log secrets, codes, tokens, hashes, or
+  connection strings.
+
 ## Definition of done
 `npm test` green; `npm audit --omit=dev` clean; every row you ticked has a named test;
 documents you must update are updated in the same commit; nothing tagged OPEN or

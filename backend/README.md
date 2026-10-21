@@ -8,6 +8,13 @@ Plain Node.js + Express 5 backend for the Poshaak C2C marketplace. Plain
 JavaScript (no TypeScript), no DI framework, one `modules/*.service.js`
 file per spec module, routes call services directly (no controllers).
 
+Phase 0 owner decisions dated 2026-10-21 are recorded in `Phases.md`,
+`specs.md`, `security.md`, and `open-questions.md`. Run checks from this
+repository's backend and frontend workspaces; production provider checks are
+tracked separately in [`LIVE_CHECKS.md`](./LIVE_CHECKS.md). Phase 2 design and
+migrations may begin, but Phase 2 routes stay unavailable to real users until
+authentication is complete.
+
 **Start here if you're an agent or a new contributor:** read [`agent.md`](./agent.md)
 first — it maps every FR number to the file that owns it, flags the 5 OPEN
 spec decisions and how each is actually handled in code, and documents the
