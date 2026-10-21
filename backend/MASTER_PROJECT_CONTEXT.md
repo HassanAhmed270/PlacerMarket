@@ -28,6 +28,13 @@ values, and refuses fake adapters. FR-83d and FR-84b settings are centralized in
 KiB, time cost 3, parallelism 1. The login/session/factor flows remain
 unfinished. Migration `003_auth_foundation.sql` adds their persistence tables.
 
+**Rate-limit foundation (2026-10-21):** atomic Redis Lua counters enforce
+per-IP/account hourly limits on signup/login and existing message/offer writes.
+Redis failures fail closed with 503; the email-code IP threshold is exposed as
+a non-blocking challenge signal for the email-code stage. Reset and code-send
+routes are not implemented yet. Real Redis concurrency verification is pending
+because this workspace has no Redis service; defaults remain provisional.
+
 ## 0. Provenance and honesty
 
 **Configuration foundation:** production startup validates database, Redis,

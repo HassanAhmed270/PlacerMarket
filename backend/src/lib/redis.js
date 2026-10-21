@@ -2,6 +2,16 @@
 
 const { createClient } = require('redis');
 
+let sharedClient = null;
+
+function setSharedRedisClient(client) {
+  sharedClient = client || null;
+}
+
+function getSharedRedisClient() {
+  return sharedClient;
+}
+
 function createRedisClient({ url = process.env.REDIS_URL, clientFactory = createClient, logger = console } = {}) {
   if (!url) throw new Error('REDIS_URL is required to start the Redis client.');
   const parsed = new URL(url);
@@ -10,6 +20,7 @@ function createRedisClient({ url = process.env.REDIS_URL, clientFactory = create
   }
 
   const client = clientFactory({ url });
+  setSharedRedisClient(client);
   client.on('error', (error) => {
     logger.error('Redis connection error', { code: error?.code || 'unknown' });
   });
@@ -26,4 +37,4 @@ function createRedisClient({ url = process.env.REDIS_URL, clientFactory = create
   };
 }
 
-module.exports = { createRedisClient };
+module.exports = { createRedisClient, getSharedRedisClient, setSharedRedisClient };

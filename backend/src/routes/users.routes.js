@@ -2,16 +2,19 @@ const { Router } = require('express');
 const users = require('../modules/users.service');
 const { requireAuth } = require('../middleware/auth');
 const { validateRegistration, validateLogin } = require('../lib/authValidation');
+const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
+
+const limiters = createConfiguredRateLimiters();
 
 const router = Router();
 
-router.post('/register', async (req, res) => {
+router.post('/register', limiters.signup, async (req, res) => {
   const input = validateRegistration(req.body); // FR-01 / SEC-16
   await users.registerUser(input); // SEC-01: only the server hashes passwords.
   res.status(202).json({ message: 'Registration request received.' });
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', limiters.login, async (req, res) => {
   res.json(await users.authenticate(validateLogin(req.body))); // FR-02 / SEC-16
 });
 

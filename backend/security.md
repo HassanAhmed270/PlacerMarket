@@ -53,7 +53,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [ ] **SEC-07 Suspended users are rejected immediately** (FR-10), even with a valid unexpired token: check user status on each request, or keep lifetimes short enough that revocation is acceptable (decide and write it down).
   *Enforced by:* test · *Today:* n/a-yet.
 - [ ] **SEC-08 Brute-force protection on login/register/reset.** Redis limits are per IP and per account; responses and timing class do not reveal whether an account exists. Email codes: 3 attempts per code, 60-second resend cooldown, 5/hour and 10/day per address, soft signal at 30/hour per IP (never a block), and 10 failed verifications/hour causes a 15-minute lock. All values are configurable (FR-83d, owner-approved 2026-10-21).
-  *Enforced by:* test · *Today:* n/a-yet (no auth endpoints, no limiter).
+  *Enforced by:* `test/unit/rate-limit.test.js` and `test/integration/rate-limit.test.js` (real Redis test requires `TEST_REDIS_URL`). **Partial:** signup/login limits exist; reset and email-code routes, anti-enumeration login behavior, and live Redis verification remain pending. Do not tick yet.
 - [ ] **SEC-09 Two-factor authentication on every login.** Every login needs a second factor: email codes for ordinary buyers and TOTP for admins/moderators (never email); the first admin enrolls TOTP during the one-time bootstrap command. Passkeys come later (FR-83h). Seller requirements, step-up and recovery after loss of all factors remain parked (FR-83b, FR-83c, FR-83f, FR-83k).
   *Enforced by:* test · *Today:* n/a-yet (no auth code yet; design details unconfirmed).
 - [ ] **SEC-10 No default or seeded credentials.** The first admin is created by a one-time command run on the server (`npm run admin:create`, decided 2026-10-14), never by an endpoint or a hardcoded password.
@@ -94,7 +94,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [ ] **SEC-23 Security headers.** `helmet` with a real CSP.
   *Enforced by:* test · *Today:* **FAILS** — absent from `app.js` and `package.json`.
 - [ ] **SEC-24 Rate limiting.** Global limit, stricter on auth, messaging, offers and dispute filing; correct `trust proxy` setting behind a proxy.
-  *Enforced by:* test · *Today:* **FAILS** — absent.
+  *Enforced by:* `test/unit/rate-limit.test.js` and `test/integration/rate-limit.test.js` (real Redis test requires `TEST_REDIS_URL`). **Partial:** auth signup/login and message/offer writes are covered; global/dispute limits and deployed proxy configuration remain pending.
 - [ ] **SEC-25 Explicit request-size limit** *(added)*. `express.json({ limit })` set deliberately.
   *Enforced by:* test · *Today:* relies on Express's 100 kB default, not stated anywhere.
 

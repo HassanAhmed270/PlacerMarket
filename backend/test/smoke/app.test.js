@@ -5,6 +5,19 @@ const request = require('supertest');
 // as the routes under test don't touch the DB.
 const app = require('../../src/app');
 const users = require('../../src/modules/users.service');
+const { setSharedRedisClient } = require('../../src/lib/redis');
+
+const smokeCounters = new Map();
+setSharedRedisClient({
+  isOpen: true,
+  async eval(_script, { keys }) {
+    return keys.map((key) => {
+      const count = (smokeCounters.get(key) || 0) + 1;
+      smokeCounters.set(key, count);
+      return count;
+    });
+  },
+});
 
 describe('smoke: app boots and routes respond', () => {
   test('GET /api/catalog/condition-types returns the fixed list (no DB touch)', async () => {

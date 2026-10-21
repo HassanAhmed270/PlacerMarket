@@ -36,6 +36,10 @@ Stage 1 centralizes runtime settings in `src/config.js` and adapter boundaries
 under `src/lib/adapters/`; no production provider implementation is claimed yet.
 Stage 2 adds Argon2id registration and the auth foundation migration. Resume from
 `PHASE0_PROGRESS.md`; do not treat the unimplemented login/session routes as live.
+Stage 3 adds fail-closed Redis fixed-window limits for signup/login and existing
+message/offer writes. Reset and email-code-send paths await the stages that add
+those endpoints. Real Redis concurrency verification requires `TEST_REDIS_URL`;
+Redis was unavailable in the current workspace.
 
 ## 4. Working agreements (details in `rules.md`)
 

@@ -16,8 +16,8 @@ migrations may begin, but Phase 2 routes stay unavailable to real users until
 authentication is complete.
 
 **Start here if you're an agent or a new contributor:** read [`agent.md`](./agent.md)
-first — it maps every FR number to the file that owns it, flags the 5 OPEN
-spec decisions and how each is actually handled in code, and documents the
+first — it maps every FR number to the file that owns it, records open
+spec decisions and how each is handled in code, and documents the
 non-obvious cross-module dependencies. Then read [`rules.md`](./rules.md) —
 the standing rules for how to behave on every task (spec discipline,
 ownership rules, when to stop and ask vs. proceed, testing and commit
@@ -32,11 +32,6 @@ and `ALLOW_FAKE_ADAPTERS=true`; production startup rejects fake adapters.
 Registration hashes passwords on the server using the bounded worker pool.
 Run `npm run password:benchmark` to measure and select Argon2id parameters for
 the current machine; production-host measurements remain a live check.
-
-Configuration keys for email-code controls, hashing, and rate limits are
-listed in `.env.example`. `CHANGE_ME` values are examples only and are rejected
-in production. Development fakes require both an explicit adapter selection
-and `ALLOW_FAKE_ADAPTERS=true`; production startup rejects fake adapters.
 
 Use a dedicated development database for the application. Never point
 `DATABASE_URL` at the disposable `testing_only` database: the integration
@@ -87,6 +82,12 @@ only after confirming compatibility; then run `npm.cmd run db:seed`.
   compatible with the initial migration, explicitly run
   `npm run db:migrate:baseline` to record it without replaying DDL.
 - `db/seed.js` — inserts the `platform_settings` rows (`commission_percent`, `high_value_threshold_pkr`, `payout_hold_days`, `complaint_window_days`) that a large part of the service layer reads via `getSetting()`. Without this step, calls like `users.service.isIdVerificationRequired()` or `payout.service.startHold()` will throw `NotFoundError`.
+
+Redis rate limits currently protect signup/login and message/offer creation.
+Reset and email-code-send limiters are prepared for their route stages; the
+email-code IP threshold is a soft challenge signal, never a block. Fixed-window
+defaults are provisional in `open-questions.md`. Real Redis concurrency
+verification uses `TEST_REDIS_URL` with `npm run test:integration`.
 
 `schema.sql` is generated from migrations with `npm run db:generate-schema`;
 use `npm run db:check-schema` to verify the snapshot. The initial migration

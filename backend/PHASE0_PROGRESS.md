@@ -85,3 +85,33 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Live checks:** repeat Argon2 benchmark on production-sized host and verify
   memory headroom/saturation; other provider checks remain in `LIVE_CHECKS.md`.
 - **Next:** Stage 3 — RATE LIMITS.
+
+## Stage 3 — RATE LIMITS — implementation complete; Redis integration pending (2026-10-21)
+
+- **Files:** `src/lib/redis.js`, `src/middleware/rateLimit.js`,
+  `src/routes/users.routes.js`, `src/routes/negotiation.routes.js`,
+  `test/unit/rate-limit.test.js`, `test/integration/rate-limit.test.js`, smoke
+  tests, `.env.example`, `LIVE_CHECKS.md`, `MASTER_PROJECT_CONTEXT.md`,
+  `DEVELOPMENT_HANDOFF.md`, `README.md`, `open-questions.md`, `security.md`,
+  `specs.md`, and this checkpoint.
+- **Migrations:** none.
+- **Behavior:** atomic Redis Lua fixed-window counters enforce IP/account limits
+  on signup/login and existing offer/message writes. Redis failure returns 503;
+  429 responses are generic. Reset limiter and email-code IP challenge signal
+  are exposed for their upcoming routes. The challenge signal does not block.
+- **Verification:** `npm.cmd test -- --runInBand` — 28 suites, 300 tests passed;
+  `npm.cmd run db:check-schema` — passed. `test/integration/rate-limit.test.js`
+  exercises concurrent counters against real Redis, but the integration suite
+  could not start because `TEST_DATABASE_URL` is absent; no Redis service or
+  `TEST_REDIS_URL` is available in this workspace. Do not mark SEC-08, SEC-24,
+  or FR-84b complete based on the unit fake.
+- **Rows ticked:** none. SEC-08, SEC-24 and FR-84b remain unticked until missing
+  routes and real Redis integration evidence are complete.
+- **Parked:** FR-83k, FR-83b, FR-83c, FR-83f as recorded above; no new security
+  decision was needed.
+- **Provisional assumptions:** configurable hourly limits remain provisional;
+  fixed-window counter behavior is documented in `open-questions.md`.
+- **Live checks added:** production Redis concurrency, eviction/failover, and
+  trusted proxy IP forwarding added to `LIVE_CHECKS.md`.
+- **Next:** Stage 4 — EMAIL + VERIFICATION (with the Redis test prerequisites
+  still to be supplied for final verification).
