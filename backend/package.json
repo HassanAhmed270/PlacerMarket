@@ -12,6 +12,7 @@
     "worker": "node --env-file-if-exists=.env worker.js",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
     "test:integration": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --config test/integration/jest.config.js",
+    "password:benchmark": "node scripts/benchmark-argon2.js",
     "prepare": "node hooks/install.js",
     "hooks:install": "node hooks/install.js",
     "db:migrate": "node --env-file-if-exists=.env db/migrate.js",
@@ -22,6 +23,7 @@
     "db:setup": "npm run db:migrate && npm run db:seed"
   },
   "dependencies": {
+    "argon2": "0.45.1",
     "express": "^5.3.0",
     "helmet": "8.3.0",
     "node-pg-migrate": "9.0.0",

@@ -4,6 +4,7 @@ const request = require('supertest');
 // until a query actually runs — safe to require the real app here as long
 // as the routes under test don't touch the DB.
 const app = require('../../src/app');
+const users = require('../../src/modules/users.service');
 
 describe('smoke: app boots and routes respond', () => {
   test('GET /api/catalog/condition-types returns the fixed list (no DB touch)', async () => {
@@ -15,9 +16,48 @@ describe('smoke: app boots and routes respond', () => {
     expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/i);
   });
 
-  test('SEC-01: public registration stays unavailable until server-side password hashing is implemented', async () => {
-    const res = await request(app).post('/api/users/register').send({ passwordHash: 'client-controlled' });
-    expect(res.status).toBe(501);
+  test('FR-01, SEC-01, SEC-16: registration rejects client password hashes and accepts only validated fields', async () => {
+    const register = jest.spyOn(users, 'registerUser')
+      .mockResolvedValueOnce({ id: 'new-user' }).mockResolvedValueOnce(null);
+    const rejected = await request(app).post('/api/users/register').send({ passwordHash: 'client-controlled' });
+    expect(rejected.status).toBe(400);
+    expect(register).not.toHaveBeenCalled();
+
+    const accepted = await request(app).post('/api/users/register').send({
+      name: 'Test Buyer', phone: '+14155550123', email: ' TEST@EXAMPLE.TEST ',
+      password: 'long-enough-test-password', extra: 'not-forwarded',
+    });
+    expect(accepted.status).toBe(400);
+    expect(register).not.toHaveBeenCalled();
+
+    const valid = await request(app).post('/api/users/register').send({
+      name: 'Test Buyer', phone: '+14155550123', email: ' TEST@EXAMPLE.TEST ',
+      password: 'long-enough-test-password',
+    });
+    expect(valid.status).toBe(202);
+    expect(valid.body).toEqual({ message: 'Registration request received.' });
+    expect(register).toHaveBeenCalledWith({
+      name: 'Test Buyer', phone: '+14155550123', email: 'test@example.test',
+      password: 'long-enough-test-password', cityId: null,
+    });
+    expect(JSON.stringify(valid.body)).not.toContain('password_hash');
+    const duplicate = await request(app).post('/api/users/register').send({
+      name: 'Test Buyer', phone: '+14155550123', email: ' TEST@EXAMPLE.TEST ',
+      password: 'long-enough-test-password',
+    });
+    expect({ status: duplicate.status, body: duplicate.body }).toEqual({ status: valid.status, body: valid.body });
+    expect(register).toHaveBeenCalledTimes(2);
+    register.mockRestore();
+  });
+
+  test('SEC-16: login validates its boundary and does not accept extra fields', async () => {
+    const authenticate = jest.spyOn(users, 'authenticate').mockResolvedValue({ token: 'unused-test-token' });
+    const res = await request(app).post('/api/users/login').send({
+      email: 'buyer@example.test', password: 'long-enough-test-password', role: 'admin',
+    });
+    expect(res.status).toBe(400);
+    expect(authenticate).not.toHaveBeenCalled();
+    authenticate.mockRestore();
   });
 
   test('SEC-25: rejects JSON bodies larger than the explicit one-megabyte limit', async () => {

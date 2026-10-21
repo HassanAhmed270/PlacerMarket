@@ -29,6 +29,9 @@ Configuration keys for email-code controls, hashing, and rate limits are
 listed in `.env.example`. `CHANGE_ME` values are examples only and are rejected
 in production. Development fakes require both an explicit adapter selection
 and `ALLOW_FAKE_ADAPTERS=true`; production startup rejects fake adapters.
+Registration hashes passwords on the server using the bounded worker pool.
+Run `npm run password:benchmark` to measure and select Argon2id parameters for
+the current machine; production-host measurements remain a live check.
 
 Configuration keys for email-code controls, hashing, and rate limits are
 listed in `.env.example`. `CHANGE_ME` values are examples only and are rejected

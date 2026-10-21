@@ -57,6 +57,12 @@ function assertUrl(env, key, protocols) {
   return parsed;
 }
 
+function getSecurityLimits(env = process.env) {
+  const limits = {};
+  for (const key of Object.keys(DEFAULTS)) limits[key] = positiveInteger(env, key);
+  return Object.freeze(limits);
+}
+
 function getRuntimeConfig(env = process.env) {
   const production = env.NODE_ENV === 'production';
   const jwt = getJwtConfig(env);
@@ -89,8 +95,7 @@ function getRuntimeConfig(env = process.env) {
     }
   }
 
-  const limits = {};
-  for (const key of Object.keys(DEFAULTS)) limits[key] = positiveInteger(env, key);
+  const limits = getSecurityLimits(env);
   const jwtConfig = { ...jwt };
   return Object.freeze({
     production,
@@ -106,4 +111,4 @@ function getRuntimeConfig(env = process.env) {
   });
 }
 
-module.exports = { DEFAULTS, getRuntimeConfig };
+module.exports = { DEFAULTS, getSecurityLimits, getRuntimeConfig };

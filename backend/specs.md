@@ -7,7 +7,7 @@
 ---
 
 ## 1. Identity & Users
-- [ ] FR-01 Users can register an account (buyer by default).
+- [x] FR-01 Users can register an account (buyer by default).
 - [ ] FR-02 Users can authenticate and manage sessions.
 - [ ] FR-03 System requires location/city verification before buying or selling.
 - [ ] FR-04 Admin can configure supported marketplace cities.

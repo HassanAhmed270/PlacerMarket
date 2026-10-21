@@ -1,18 +1,18 @@
 const { Router } = require('express');
 const users = require('../modules/users.service');
 const { requireAuth } = require('../middleware/auth');
-const { NotImplementedError } = require('../lib/errors');
+const { validateRegistration, validateLogin } = require('../lib/authValidation');
 
 const router = Router();
 
 router.post('/register', async (req, res) => {
-  // FR-01 / SEC-01: keep registration closed until the approved Argon2id
-  // implementation and the remaining FR-84b/auth-persistence requirements are in place.
-  throw new NotImplementedError('FR-01 registration pending server-side password hashing');
+  const input = validateRegistration(req.body); // FR-01 / SEC-16
+  await users.registerUser(input); // SEC-01: only the server hashes passwords.
+  res.status(202).json({ message: 'Registration request received.' });
 });
 
 router.post('/login', async (req, res) => {
-  res.json(await users.authenticate(req.body)); // FR-02
+  res.json(await users.authenticate(validateLogin(req.body))); // FR-02 / SEC-16
 });
 
 router.get('/cities', async (req, res) => {

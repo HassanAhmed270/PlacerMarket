@@ -21,8 +21,11 @@ image/video/story pipeline, a CDN and cache headers, PgBouncer,
 the `listing_search` table and
 suggestions, worker-generated HTML snapshots, JWT auth with two-factor login,
 escrow payments through a gateway, versioned listing content, encrypted
-CNIC/payout fields and append-only ledger tables. What IS built is the
-COD-era harness described below.
+CNIC/payout fields and append-only ledger tables. Phase 0 has started the
+authentication foundation: validated buyer registration with Argon2id hashing
+and durable session/factor/reset tables. Login, session issuance, rate limits,
+email verification, reset flows and TOTP behavior remain incomplete. The
+COD-era harness described below remains the baseline for the rest of the system.
 
 Runtime configuration is centralized in `src/config.js`; credential-dependent
 interfaces live under `src/lib/adapters/`. Production requires configured
@@ -57,7 +60,7 @@ later): `disputes.service.fileDispute()` (reads `orders`),
 
 | Module (specs.md #) | FR range | Service file | Tables owned |
 |---|---|---|---|
-| 1. Identity & Users | FR-01–10 | `modules/users.service.js` | cities, users, seller_applications, seller_profiles |
+| 1. Identity & Users | FR-01–10 | `modules/users.service.js` | cities, users, seller_applications, seller_profiles, auth_sessions, email_login_codes, password_reset_tokens, staff_totp_credentials |
 | 2. Catalog | FR-11–14a | `modules/catalog.service.js` | main_categories, sub_categories, measurement_field_defs |
 | 3. Listings | FR-15–21a | `modules/listings.service.js` | listings, listing_measurements, listing_images, listing_evidence |
 | 4. Search & Discovery | FR-22–27b | `modules/discovery.service.js` | favorites (listing images read via listings.service.js; reviews read via orders.service.js) |
@@ -140,6 +143,23 @@ purpose so the schema works whichever way this eventually gets decided.
 - FR-41a (cash-remittance reconciliation) lives in `payments.service.js`
   (on the `cod_collections` table), not `delivery.service.js` — confirmed
   against schema.sql's actual column placement.
+
+## Authentication foundation and dependency rationale
+
+- `authValidation.js` validates and allowlists registration/login inputs at the
+  route boundary. `passwordHashPool.js` runs both Argon2id hash and verify calls
+  in bounded Node worker threads; it rejects saturation as HTTP 503.
+- `argon2@0.45.1` is pinned exactly. The upstream package supports Argon2id and
+  PHC hashes, declares Node `>=16.17.0` (compatible with this project's Node
+  `>=22.12.0`), and the stable release was published more than 14 days before
+  this task. Native work stays inside the bounded worker pool. Upstream:
+  [node-argon2 v0.45.1](https://github.com/ranisalt/node-argon2/tree/v0.45.1).
+- `db/migrations/003_auth_foundation.sql` adds session-family, email-code,
+  password-reset, and encrypted staff-TOTP persistence plus user timestamps.
+  Password reset and TOTP flows consume these tables in later Phase 0 stages.
+- `npm run password:benchmark` selected 65,536 KiB / time cost 3 / parallelism
+  1 at 213 ms median on this development machine. Re-benchmark on the production
+  host; the worker-pool cap remains provisional.
 
 ## Files outside src/ — what they're for
 

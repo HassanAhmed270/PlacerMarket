@@ -34,6 +34,8 @@ Provider credentials and deployed behavior are listed in `LIVE_CHECKS.md`.
 
 Stage 1 centralizes runtime settings in `src/config.js` and adapter boundaries
 under `src/lib/adapters/`; no production provider implementation is claimed yet.
+Stage 2 adds Argon2id registration and the auth foundation migration. Resume from
+`PHASE0_PROGRESS.md`; do not treat the unimplemented login/session routes as live.
 
 ## 4. Working agreements (details in `rules.md`)
 

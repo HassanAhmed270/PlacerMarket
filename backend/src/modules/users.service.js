@@ -21,19 +21,25 @@ const db = require('../db.service');
 const settlement = require('./settlement.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
+const { hashPassword } = require('../lib/passwordHashPool');
 const { NotFoundError, ForbiddenError, ValidationError, NotImplementedError } = require('../lib/errors');
 
 // ---- FR-01, FR-02: registration & auth ----
 
 /** FR-01: register a new user, buyer role by default. */
-async function registerUser({ name, phone, email, passwordHash, cityId }) {
+async function registerUser({ name, phone, email, password, cityId }) {
+  if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
+    throw new ValidationError('Password must be 12 to 128 characters');
+  }
+  const passwordHash = await hashPassword(password);
   const { rows } = await db.query(
     `INSERT INTO users (full_name, phone, email, password_hash, city_id, role)
      VALUES ($1, $2, $3, $4, $5, 'buyer')
+     ON CONFLICT DO NOTHING
      RETURNING id, full_name, phone, email, city_id, role, created_at`,
     [name, phone, email, passwordHash, cityId]
   );
-  return rows[0];
+  return rows[0] || null;
 }
 
 /** FR-02, SEC-07: load current authorization fields for a verified access-token subject. */

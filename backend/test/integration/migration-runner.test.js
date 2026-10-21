@@ -13,6 +13,15 @@ fs.copyFileSync(
   path.join(__dirname, '..', '..', 'db', 'migrations', '001_initial_schema.sql'),
   path.join(applicationMigrationDir, '001_initial_schema.sql')
 );
+const authMigrationDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poshaak-auth-migrations-'));
+fs.copyFileSync(
+  path.join(__dirname, '..', '..', 'db', 'migrations', '001_initial_schema.sql'),
+  path.join(authMigrationDir, '001_initial_schema.sql')
+);
+fs.copyFileSync(
+  path.join(__dirname, '..', '..', 'db', 'migrations', '003_auth_foundation.sql'),
+  path.join(authMigrationDir, '003_auth_foundation.sql')
+);
 
 function newSchemaName() {
   const name = `migration_probe_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
@@ -33,9 +42,33 @@ afterEach(async () => {
   for (const schema of [...schemas]) await dropSchema(schema);
 });
 
-afterAll(() => fs.rmSync(applicationMigrationDir, { recursive: true, force: true }));
+afterAll(() => {
+  fs.rmSync(applicationMigrationDir, { recursive: true, force: true });
+  fs.rmSync(authMigrationDir, { recursive: true, force: true });
+});
 
 describe('FR-79b PostgreSQL migration runner', () => {
+  test('FR-84: the auth foundation migration creates sessions, factor, reset, and code tables', async () => {
+    const schema = newSchemaName();
+    const applied = await runMigrations({ databaseUrl, schema, migrationsDir: authMigrationDir });
+    expect(applied).toHaveLength(2);
+    const { rows } = await db.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = $1 AND table_name = ANY($2::text[]) ORDER BY table_name`,
+      [schema, ['auth_sessions', 'email_login_codes', 'password_reset_tokens', 'staff_totp_credentials']]
+    );
+    expect(rows.map((row) => row.table_name)).toEqual([
+      'auth_sessions', 'email_login_codes', 'password_reset_tokens', 'staff_totp_credentials',
+    ]);
+    const columns = await db.query(
+      'SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
+      [schema, 'users']
+    );
+    expect(columns.rows.map((row) => row.column_name)).toEqual(expect.arrayContaining([
+      'email_verified_at', 'password_changed_at',
+    ]));
+  });
+
   test('fresh schema applies its ordered migration once and is idempotent', async () => {
     const schema = newSchemaName();
     const first = await runMigrations({ databaseUrl, schema, migrationsDir: applicationMigrationDir });

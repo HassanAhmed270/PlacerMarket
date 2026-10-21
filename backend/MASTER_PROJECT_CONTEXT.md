@@ -23,6 +23,11 @@ values, and refuses fake adapters. FR-83d and FR-84b settings are centralized in
 `src/config.js`; provisional Argon2id and general limiter values are listed in
 `open-questions.md` pending the benchmark and owner confirmation.
 
+**Password foundation (2026-10-21):** registration hashes with pinned
+`argon2@0.45.1` in bounded worker threads; the local benchmark selected 65,536
+KiB, time cost 3, parallelism 1. The login/session/factor flows remain
+unfinished. Migration `003_auth_foundation.sql` adds their persistence tables.
+
 ## 0. Provenance and honesty
 
 **Configuration foundation:** production startup validates database, Redis,

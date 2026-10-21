@@ -8,6 +8,7 @@ const { createFixture } = require('./fixtures');
 const request = require('supertest');
 const app = require('../../src/app');
 const { signAccessToken } = require('../../src/lib/jwt');
+const { passwordHashPool } = require('../../src/lib/passwordHashPool');
 
 let fixture;
 let registrationPhone;
@@ -39,17 +40,23 @@ afterEach(async () => {
   await fixture.cleanup();
 });
 
+afterAll(async () => {
+  await passwordHashPool.close();
+});
+
 describe('known schema and service mismatches', () => {
-  test('registration persists the supplied name in the user full_name field', async () => {
+  test('FR-01, SEC-01: registration stores a server-generated Argon2id password hash', async () => {
     registrationPhone = `+1999${Date.now().toString().slice(-9)}`;
     const created = await users.registerUser({
-      name: 'Registered Probe', phone: registrationPhone, email: null,
-      passwordHash: 'fixture-hash', cityId: fixture.cityId,
+      name: 'Registered Probe', phone: registrationPhone, email: `register-${Date.now()}@example.test`,
+      password: 'registered-probe-password-2026', cityId: fixture.cityId,
     });
     expect(created).not.toHaveProperty('password_hash');
     expect(created).toMatchObject({ full_name: 'Registered Probe', role: 'buyer' });
-    const stored = await db.query('SELECT full_name FROM users WHERE id = $1', [created.id]);
-    expect(stored.rows[0]).toEqual({ full_name: 'Registered Probe' });
+    const stored = await db.query('SELECT full_name, password_hash FROM users WHERE id = $1', [created.id]);
+    expect(stored.rows[0].full_name).toBe('Registered Probe');
+    expect(stored.rows[0].password_hash).toMatch(/^\$argon2id\$/);
+    expect(stored.rows[0].password_hash).not.toBe('registered-probe-password-2026');
   });
 
   test.failing('seller application submission creates a pending application for the existing user', async () => {

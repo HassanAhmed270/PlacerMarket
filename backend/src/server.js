@@ -3,6 +3,7 @@ const queue = require('./lib/queue');
 const { createRedisClient } = require('./lib/redis');
 const { getJwtConfig } = require('./lib/jwt');
 const { getRuntimeConfig } = require('./config');
+const { passwordHashPool } = require('./lib/passwordHashPool');
 
 function safeConfigurationMessage(error) {
   const message = error?.message;
@@ -20,6 +21,7 @@ async function startServer({
   redisFactory = createRedisClient,
   validateJwt = getJwtConfig,
   validateConfiguration = getRuntimeConfig,
+  hashPool = passwordHashPool,
   logger = console,
 } = {}) {
   let redis;
@@ -52,6 +54,7 @@ async function startServer({
         await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
         await queueClient.stopProducer();
         await redis.stop();
+        await hashPool.close();
         await dbPool.end();
       })();
       return shuttingDown;

@@ -39,7 +39,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 ## A. Authentication & sessions (JWT in Authorization header)
 
 - [ ] **SEC-01 Passwords hashed server-side.** argon2id (or bcrypt, cost ≥ 12). The client sends the password over TLS, never a hash; `password_hash` never appears in any response or log.
-  *Enforced by:* test · *Today:* **FAILS** — `registerUser` takes `passwordHash` from the request body (nothing hashes it server-side), and `authenticate()` is an unimplemented stub.
+  *Enforced by:* tests `test/unit/users.service.test.js`, `test/smoke/app.test.js`, and `test/integration/known-mismatches.test.js` — FR-01/SEC-01 tests prove server-side Argon2id hashing and no hash in responses. **Partial:** production TLS hosting remains a live check, so this row stays unticked.
 - [ ] **SEC-02 JWT secret/keys are strong and external.** ≥ 32 random bytes (HS256) or an RS256 keypair, loaded from env, never committed, never a real value in `.env.example`. The app refuses to start if it's missing or too short. A rotation plan exists.
   *Enforced by:* test · *Today:* n/a-yet (no JWT code).
 - [ ] **SEC-03 JWT verification is pinned and strict.** Fixed algorithm (reject `none` and algorithm switching), verify `exp`, `iss`, `aud`; short access-token lifetime (values are configurable; approved defaults in specs.md FR-84a — access token 15 minutes).
