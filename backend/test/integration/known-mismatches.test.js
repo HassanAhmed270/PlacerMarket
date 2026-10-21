@@ -11,6 +11,8 @@ const { signAccessToken } = require('../../src/lib/jwt');
 const { passwordHashPool } = require('../../src/lib/passwordHashPool');
 const { hashCode, addressDigest } = require('../../src/lib/emailCodeDelivery');
 const { getSharedRedisClient, setSharedRedisClient } = require('../../src/lib/redis');
+const { hashPassword } = require('../../src/lib/passwordHashPool');
+const { generateTotpSecret, generateTotpCode, encryptStaffTotpSecret } = require('../../src/lib/totp');
 
 let fixture;
 let registrationPhone;
@@ -112,6 +114,147 @@ describe('known schema and service mismatches', () => {
       setSharedRedisClient(previousRedis);
       if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
       else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
+    }
+  });
+
+  test('FR-84, FR-84a, SEC-38: refresh rotation hashes tokens and reuse revokes the family', async () => {
+    const email = `session-${Date.now()}@example.test`;
+    const attemptId = require('node:crypto').randomUUID();
+    const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
+    process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';
+    await db.query("UPDATE users SET email = $2, role = 'buyer', is_suspended = false WHERE id = $1", [fixture.userId, email]);
+    await db.query(
+      `INSERT INTO email_login_codes
+        (login_attempt_id, user_id, email_digest, code_hash, expires_at, purpose)
+       VALUES ($1, $2, $3, $4, now() + interval '5 minutes', 'login')`,
+      [attemptId, fixture.userId, addressDigest(email), hashCode('516204')]
+    );
+    const previousRedis = getSharedRedisClient();
+    setSharedRedisClient({ isOpen: true, eval: async (_script, { arguments: args }) => args[2] === '0' ? 0 : 1 });
+    try {
+      const session = await users.completeBuyerLogin(attemptId, '516204', email);
+      expect(session).toMatchObject({ user: { id: fixture.userId, role: 'buyer' }, accessExpiresIn: 900 });
+      const { rows: stored } = await db.query('SELECT refresh_token_hash FROM auth_sessions WHERE id = $1', [session.sessionId]);
+      expect(stored[0].refresh_token_hash).not.toBe(session.refreshToken);
+      await expect(users.getAuthenticationPrincipal(fixture.userId, session.sessionId))
+        .resolves.toMatchObject({ id: fixture.userId, role: 'buyer', is_suspended: false });
+
+      const refreshResults = await Promise.all([
+        users.refreshSession(session.refreshToken),
+        users.refreshSession(session.refreshToken),
+      ]);
+      expect(refreshResults.filter(Boolean)).toHaveLength(1);
+      const rotated = refreshResults.find(Boolean);
+      expect(rotated.refreshToken).not.toBe(session.refreshToken);
+      await expect(users.getAuthenticationPrincipal(fixture.userId, session.sessionId)).resolves.toBeNull();
+      await expect(users.refreshSession(rotated.refreshToken)).resolves.toBeNull();
+      await expect(users.getAuthenticationPrincipal(fixture.userId, rotated.sessionId)).resolves.toBeNull();
+    } finally {
+      setSharedRedisClient(previousRedis);
+      if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
+    }
+  });
+
+  test('FR-83h, SEC-09: staff TOTP codes are encrypted and cannot be replayed concurrently', async () => {
+    const email = `staff-totp-${Date.now()}@example.test`;
+    const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
+    const previousTotpKey = process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+    process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';
+    process.env.STAFF_TOTP_ENCRYPTION_SECRET = 'integration-staff-totp-encryption-key-material';
+    const passwordHash = await hashPassword('staff-integration-password-2026');
+    const secret = generateTotpSecret();
+    const encrypted = encryptStaffTotpSecret(secret);
+    await db.query(
+      "UPDATE users SET email = $2, role = 'admin', is_suspended = false, password_hash = $3 WHERE id = $1",
+      [fixture.userId, email, passwordHash]
+    );
+    await db.query(
+      `INSERT INTO staff_totp_credentials
+        (user_id, encrypted_secret, nonce, auth_tag, key_version, enabled_at)
+       VALUES ($1, $2, $3, $4, $5, now())`,
+      [fixture.userId, encrypted.encryptedSecret, encrypted.nonce, encrypted.authTag, encrypted.keyVersion]
+    );
+    const code = generateTotpCode(secret);
+    try {
+      const results = await Promise.all([
+        users.authenticateStaffWithTotp({ email, password: 'staff-integration-password-2026', code }),
+        users.authenticateStaffWithTotp({ email, password: 'staff-integration-password-2026', code }),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(results.find(Boolean)).toMatchObject({ user: { id: fixture.userId, role: 'admin' } });
+      const { rows } = await db.query('SELECT last_used_step FROM staff_totp_credentials WHERE user_id = $1', [fixture.userId]);
+      expect(rows[0].last_used_step).not.toBeNull();
+    } finally {
+      if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
+      if (previousTotpKey === undefined) delete process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+      else process.env.STAFF_TOTP_ENCRYPTION_SECRET = previousTotpKey;
+    }
+  });
+
+  test('FR-83g: password reset token is single-use, changes the password, and revokes every session', async () => {
+    const crypto = require('node:crypto');
+    const email = `reset-${Date.now()}@example.test`;
+    const rawToken = crypto.randomBytes(32).toString('base64url');
+    const digest = crypto.createHash('sha256').update(rawToken).digest('hex');
+    const originalHash = await hashPassword('previous-reset-password-2026');
+    await db.query("UPDATE users SET email = $2, role = 'buyer', password_hash = $3 WHERE id = $1", [fixture.userId, email, originalHash]);
+    await db.query('INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval \'30 minutes\')', [fixture.userId, digest]);
+    const { rows: sessionRows } = await db.query(`INSERT INTO auth_sessions
+      (family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at)
+      VALUES ($1, $2, $3, now() + interval '1 day', now() + interval '2 days') RETURNING id`,
+    [crypto.randomUUID(), fixture.userId, crypto.randomBytes(32).toString('hex')]);
+    const queue = require('../../src/lib/queue');
+    const queueSpy = jest.spyOn(queue, 'enqueue').mockResolvedValue('job');
+    const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
+    const previousEmailKey = process.env.EMAIL_QUEUE_ENCRYPTION_SECRET;
+    process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';
+    process.env.EMAIL_QUEUE_ENCRYPTION_SECRET = 'integration-email-queue-encryption-key-material';
+    try {
+      const results = await Promise.all([
+        users.resetPassword(rawToken, 'replacement-password-2026'),
+        users.resetPassword(rawToken, 'replacement-password-2026'),
+      ]);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      const { rows: changed } = await db.query('SELECT password_hash FROM users WHERE id = $1', [fixture.userId]);
+      expect(changed[0].password_hash).not.toBe(originalHash);
+      expect(changed[0].password_hash).toMatch(/^\$argon2id\$/);
+      const { rows: revoked } = await db.query('SELECT revoked_at, revoke_reason FROM auth_sessions WHERE id = $1', [sessionRows[0].id]);
+      expect(revoked[0]).toMatchObject({ revoke_reason: 'password_reset' });
+      expect(revoked[0].revoked_at).not.toBeNull();
+      expect(queueSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      queueSpy.mockRestore();
+      if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
+      if (previousEmailKey === undefined) delete process.env.EMAIL_QUEUE_ENCRYPTION_SECRET;
+      else process.env.EMAIL_QUEUE_ENCRYPTION_SECRET = previousEmailKey;
+    }
+  });
+
+  test('FR-84, SEC-09/10: one-time bootstrap creates an Argon2id admin with encrypted, verified TOTP and refuses reruns', async () => {
+    const email = `bootstrap-${Date.now()}@example.test`;
+    registrationPhone = `+1888${Date.now().toString().slice(-9)}`;
+    const previousTotpKey = process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+    process.env.STAFF_TOTP_ENCRYPTION_SECRET = 'integration-staff-totp-encryption-key-material';
+    const secret = generateTotpSecret();
+    const input = {
+      name: 'Bootstrap Admin', email, phone: registrationPhone,
+      password: 'bootstrap-admin-password-2026', totpSecret: secret, totpCode: generateTotpCode(secret),
+    };
+    try {
+      const result = await users.createInitialAdmin(input);
+      expect(result).toMatchObject({ email, role: 'admin' });
+      const { rows } = await db.query(`SELECT u.password_hash, t.encrypted_secret, t.enabled_at
+        FROM users u JOIN staff_totp_credentials t ON t.user_id = u.id WHERE u.id = $1`, [result.id]);
+      expect(rows[0].password_hash).toMatch(/^\$argon2id\$/);
+      expect(rows[0].encrypted_secret.toString()).not.toContain(secret);
+      expect(rows[0].enabled_at).not.toBeNull();
+      await expect(users.createInitialAdmin(input)).rejects.toThrow('one-time only');
+    } finally {
+      if (previousTotpKey === undefined) delete process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+      else process.env.STAFF_TOTP_ENCRYPTION_SECRET = previousTotpKey;
     }
   });
 

@@ -58,20 +58,27 @@ function createRateLimiter({ category, ipMax, accountMax, windowSeconds, clientP
 }
 
 function createSoftChallengeSignal({ threshold, windowSeconds, clientProvider = getSharedRedisClient }) {
-  return async function softChallengeSignal(req, _res, next) {
+  async function evaluate(req) {
     const client = clientProvider();
     if (!client?.isOpen || typeof client.eval !== 'function') {
-      return next(new ServiceUnavailableError('Request protection is temporarily unavailable.'));
+      throw new ServiceUnavailableError('Request protection is temporarily unavailable.');
     }
     const key = `pm:challenge:ip:${digest(identityFromRequest(req, 'ip'))}`;
     try {
       const count = Number(await client.eval(SOFT_SIGNAL_LUA, { keys: [key], arguments: [String(windowSeconds)] }));
-      req.challengeSignal = count > threshold;
-      return next();
+      return count > threshold;
     } catch {
-      return next(new ServiceUnavailableError('Request protection is temporarily unavailable.'));
+      throw new ServiceUnavailableError('Request protection is temporarily unavailable.');
     }
+  }
+  const middleware = async (req, _res, next) => {
+    try {
+      req.challengeSignal = await evaluate(req);
+      return next();
+    } catch (error) { return next(error); }
   };
+  middleware.evaluate = evaluate;
+  return middleware;
 }
 
 function createConfiguredRateLimiters(env = process.env, clientProvider = getSharedRedisClient) {

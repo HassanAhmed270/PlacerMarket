@@ -19,18 +19,66 @@
  *   here instead of re-implementing it.
  */
 
-const { randomUUID } = require('node:crypto');
+const { randomUUID, randomBytes, createHash } = require('node:crypto');
 const db = require('../db.service');
 const settlement = require('./settlement.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
-const { hashPassword } = require('../lib/passwordHashPool');
-const { NotFoundError, ForbiddenError, ValidationError, NotImplementedError } = require('../lib/errors');
+const { hashPassword, verifyPassword } = require('../lib/passwordHashPool');
+const { signAccessToken, getJwtConfig } = require('../lib/jwt');
+const { decryptStaffTotpSecret, matchingTotpStep } = require('../lib/totp');
+const { encryptStaffTotpSecret, verifyTotpCode } = require('../lib/totp');
+const { NotFoundError, ForbiddenError, ValidationError } = require('../lib/errors');
 const { getSecurityLimits } = require('../config');
 const {
-  makeCode, addressDigest, queueCodeEmail, reserveAddressSend, emailVerificationLocked,
+  makeCode, addressDigest, queueCodeEmail, queueEmail, reserveAddressSend, emailVerificationLocked,
   emailCodeLockedForDigest, hashCode, equalHash,
 } = require('../lib/emailCodeDelivery');
+
+const STAFF_ROLES = new Set(['admin', 'moderator']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function refreshPolicy(role) {
+  const limits = getSecurityLimits();
+  const staff = STAFF_ROLES.has(role);
+  return {
+    absoluteSeconds: limits[staff ? 'AUTH_STAFF_REFRESH_ABSOLUTE_SECONDS' : 'AUTH_BUYER_REFRESH_ABSOLUTE_SECONDS'],
+    idleSeconds: limits[staff ? 'AUTH_STAFF_REFRESH_IDLE_SECONDS' : 'AUTH_BUYER_REFRESH_IDLE_SECONDS'],
+  };
+}
+
+function tokenDigest(token) {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function issueAccessToken(userId, sessionId) {
+  const jwt = getJwtConfig();
+  return { token: signAccessToken(userId, { ...jwt, sessionId }), lifetimeSeconds: jwt.lifetimeSeconds };
+}
+
+async function insertSession(client, user, { familyId = randomUUID(), absoluteExpiresAt } = {}) {
+  const now = Date.now();
+  const policy = refreshPolicy(user.role);
+  const absolute = absoluteExpiresAt || new Date(now + policy.absoluteSeconds * 1000);
+  const expiresAt = new Date(Math.min(now + policy.idleSeconds * 1000, absolute.getTime()));
+  const refreshToken = randomBytes(32).toString('base64url');
+  const sessionId = randomUUID();
+  const access = issueAccessToken(user.id, sessionId);
+  const { rows } = await client.query(
+    `INSERT INTO auth_sessions
+      (id, family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [sessionId, familyId, user.id, tokenDigest(refreshToken), expiresAt, absolute]
+  );
+  return {
+    accessToken: access.token,
+    accessExpiresIn: access.lifetimeSeconds,
+    refreshToken,
+    refreshMaxAge: Math.max(0, Math.floor((expiresAt.getTime() - now) / 1000)),
+    user: { id: user.id, role: user.role },
+    sessionId: rows[0].id,
+  };
+}
 
 // ---- FR-01, FR-02: registration & auth ----
 
@@ -51,10 +99,15 @@ async function registerUser({ name, phone, email, password, cityId }) {
 }
 
 /** FR-02, SEC-07: load current authorization fields for a verified access-token subject. */
-async function getAuthenticationPrincipal(userId) {
-  const { rows } = await db.query(
-    'SELECT id, role, is_suspended FROM users WHERE id = $1', [userId]
-  );
+async function getAuthenticationPrincipal(userId, sessionId) {
+  const { rows } = sessionId
+    ? await db.query(
+      `SELECT u.id, u.role, u.is_suspended FROM users u
+       JOIN auth_sessions s ON s.user_id = u.id
+       WHERE u.id = $1 AND s.id = $2 AND s.revoked_at IS NULL AND s.consumed_at IS NULL
+         AND s.expires_at > now() AND s.absolute_expires_at > now()`, [userId, sessionId]
+    )
+    : await db.query('SELECT id, role, is_suspended FROM users WHERE id = $1', [userId]);
   return rows[0] || null;
 }
 
@@ -124,7 +177,7 @@ async function confirmEmailVerification(email, code) {
 
 /** FR-83d: issue an email factor code bound to one login attempt UUID. */
 async function requestLoginEmailCode(loginAttemptId, userId, email) {
-  if (typeof loginAttemptId !== 'string' || !/^[0-9a-f-]{36}$/i.test(loginAttemptId) ||
+  if (typeof loginAttemptId !== 'string' || !UUID.test(loginAttemptId) ||
       typeof email !== 'string' || email.trim().length > 255) {
     throw new ValidationError('A valid login attempt and email address are required.');
   }
@@ -157,7 +210,7 @@ async function requestLoginEmailCode(loginAttemptId, userId, email) {
 /** FR-83d: consume a login factor only for the attempt that received it. */
 async function confirmLoginEmailCode(loginAttemptId, code) {
   const length = getSecurityLimits().EMAIL_CODE_LENGTH;
-  if (typeof loginAttemptId !== 'string' || !/^[0-9a-f-]{36}$/i.test(loginAttemptId) ||
+  if (typeof loginAttemptId !== 'string' || !UUID.test(loginAttemptId) ||
       typeof code !== 'string' || !new RegExp(`^\\d{${length}}$`).test(code)) return null;
   const located = await db.query(
     `SELECT email_digest FROM email_login_codes
@@ -192,11 +245,204 @@ async function confirmLoginEmailCode(loginAttemptId, code) {
   return result.userId || null;
 }
 
-/** FR-02: authenticate credentials and issue/manage a session. */
+/** FR-02, FR-83h: verify password and begin the required role-specific second factor. */
 async function authenticate({ email, password }) {
-  // TODO FR-02/FR-84: implement after refresh-session and required 2FA
-  // persistence are approved. The owner selected Argon2id (FR-84b).
-  throw new NotImplementedError('authenticate() — required session and 2FA persistence');
+  const { rows } = await db.query(
+    `SELECT id, email, password_hash, role, is_suspended
+     FROM users WHERE email = $1`, [email]
+  );
+  const user = rows[0];
+  if (!user) {
+    await hashPassword(password); // SEC-08: keep the unknown-account password path in the same Argon2 timing class.
+    return null;
+  }
+  const passwordMatches = await verifyPassword(user.password_hash, password);
+  if (!passwordMatches || user.is_suspended) return null;
+  if (user.role === 'buyer') {
+    return { challengeRequired: true, factor: 'email', loginAttemptId: randomUUID(), userId: user.id, email: user.email };
+  }
+  if (STAFF_ROLES.has(user.role)) return { challengeRequired: true, factor: 'totp' };
+  // Seller factor requirements remain parked under FR-83c; do not issue a session.
+  return null;
+}
+
+/** FR-02, FR-83h: finish a buyer login only with its matching single-use email code. */
+async function completeBuyerLogin(loginAttemptId, code, email) {
+  const userId = await confirmLoginEmailCode(loginAttemptId, code);
+  if (!userId) return null;
+  const { rows } = await db.query(
+    'SELECT id, email, role, is_suspended FROM users WHERE id = $1', [userId]
+  );
+  const principal = rows[0];
+  if (!principal || principal.is_suspended || principal.role !== 'buyer' || principal.email !== email) return null;
+  return db.withTransaction((client) => insertSession(client, principal));
+}
+
+/** FR-02, FR-83h: staff login requires a valid password plus the enrolled authenticator. */
+async function authenticateStaffWithTotp({ email, password, code }) {
+  const { rows } = await db.query(
+    `SELECT id, email, password_hash, role, is_suspended
+     FROM users WHERE email = $1`, [email]
+  );
+  const user = rows[0];
+  if (!user) {
+    await hashPassword(password);
+    return null;
+  }
+  const passwordMatches = await verifyPassword(user.password_hash, password);
+  if (!passwordMatches || user.is_suspended || !STAFF_ROLES.has(user.role)) return null;
+  return db.withTransaction(async (client) => {
+    const { rows: credentials } = await client.query(
+      `SELECT encrypted_secret, nonce, auth_tag, key_version, enabled_at, last_used_step
+       FROM staff_totp_credentials WHERE user_id = $1 FOR UPDATE`, [user.id]
+    );
+    const credential = credentials[0];
+    if (!credential?.enabled_at) return null;
+    let secret;
+    try { secret = decryptStaffTotpSecret({
+      encrypted_secret: credential.encrypted_secret,
+      nonce: credential.nonce,
+      auth_tag: credential.auth_tag,
+      key_version: credential.key_version,
+    }); } catch { return null; }
+    const matchedStep = matchingTotpStep(secret, code);
+    if (matchedStep === null || (credential.last_used_step !== null && matchedStep <= Number(credential.last_used_step))) return null;
+    await client.query('UPDATE staff_totp_credentials SET last_used_step = $1, updated_at = now() WHERE user_id = $2', [matchedStep, user.id]);
+    return insertSession(client, user);
+  });
+}
+
+/** FR-83g: request a reset with the same public response for known and unknown addresses. */
+async function requestPasswordReset(email) {
+  if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 255) {
+    throw new ValidationError('A valid email address is required.');
+  }
+  const normalized = email.trim().toLowerCase();
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query('SELECT id FROM users WHERE email = $1 FOR UPDATE', [normalized]);
+    const userId = rows[0]?.id;
+    if (userId) {
+      const raw = randomBytes(32).toString('base64url');
+      await client.query(`UPDATE password_reset_tokens SET consumed_at = now()
+        WHERE user_id = $1 AND consumed_at IS NULL`, [userId]);
+      await client.query(`INSERT INTO password_reset_tokens (user_id, token_hash, expires_at)
+        VALUES ($1, $2, now() + ($3 * interval '1 second'))`, [userId, tokenDigest(raw), getSecurityLimits().PASSWORD_RESET_TTL_SECONDS]);
+      await queueEmail(normalized, 'Reset your Poshaak password',
+        `Use this one-time password reset token within 30 minutes: ${raw}`, {
+          transaction: client, idempotencyKey: `password-reset:${randomUUID()}`,
+        });
+    }
+    return { accepted: true };
+  });
+}
+
+/** FR-83g: atomically consume a reset token, update the password and revoke all sessions. */
+async function resetPassword(token, password) {
+  if (typeof token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(token) ||
+      typeof password !== 'string' || password.length < 12 || password.length > 128) return false;
+  const passwordHash = await hashPassword(password);
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(`SELECT t.id, t.user_id, u.email FROM password_reset_tokens t
+      JOIN users u ON u.id = t.user_id
+      WHERE t.token_hash = $1 AND t.consumed_at IS NULL AND t.expires_at > now() FOR UPDATE OF t` , [tokenDigest(token)]);
+    const record = rows[0];
+    if (!record) return false;
+    await client.query('UPDATE password_reset_tokens SET consumed_at = now() WHERE id = $1', [record.id]);
+    await client.query('UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2', [passwordHash, record.user_id]);
+    await client.query(`UPDATE auth_sessions SET revoked_at = now(), revoke_reason = 'password_reset'
+      WHERE user_id = $1 AND revoked_at IS NULL`, [record.user_id]);
+    await queueEmail(record.email, 'Your Poshaak password was changed',
+      'Your password was changed. If you did not make this change, contact the account owner.', {
+        transaction: client, idempotencyKey: `password-reset-notice:${record.id}`,
+      });
+    return true;
+  });
+}
+
+/** SEC-10, FR-84: create the sole initial administrator and enroll verified TOTP in one transaction. */
+async function createInitialAdmin({ name, email, phone, password, totpSecret, totpCode }) {
+  if (typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof phone !== 'string' ||
+      !/^\+?[1-9]\d{7,19}$/.test(phone) || typeof password !== 'string' ||
+      password.length < 12 || password.length > 128 || !verifyTotpCode(totpSecret, totpCode)) {
+    throw new ValidationError('Valid initial administrator details and authenticator code are required.');
+  }
+  const passwordHash = await hashPassword(password);
+  const encrypted = encryptStaffTotpSecret(totpSecret);
+  return db.withTransaction(async (client) => {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('poshaak-initial-admin-bootstrap'))");
+    const { rows: existing } = await client.query("SELECT id FROM users WHERE role = 'admin' LIMIT 1 FOR UPDATE");
+    if (existing.length) throw new ValidationError('An administrator already exists; bootstrap is one-time only.');
+    const { rows } = await client.query(`INSERT INTO users (full_name, phone, email, password_hash, role)
+      VALUES ($1, $2, $3, $4, 'admin') RETURNING id`, [name.trim(), phone, email.trim().toLowerCase(), passwordHash]);
+    const user = rows[0];
+    await client.query(`INSERT INTO staff_totp_credentials
+      (user_id, encrypted_secret, nonce, auth_tag, key_version, enabled_at, last_used_step)
+      VALUES ($1, $2, $3, $4, $5, now(), $6)`, [
+      user.id, encrypted.encryptedSecret, encrypted.nonce, encrypted.authTag, encrypted.keyVersion,
+      Math.floor(Date.now() / 30000),
+    ]);
+    return { id: user.id, email: email.trim().toLowerCase(), role: 'admin' };
+  });
+}
+
+/** FR-84: rotate a hashed refresh token, enforce both expiry limits, and revoke its family on reuse. */
+async function refreshSession(refreshToken) {
+  if (typeof refreshToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(refreshToken)) return null;
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT s.id, s.family_id, s.user_id, s.expires_at, s.absolute_expires_at,
+              s.consumed_at, s.revoked_at, u.role, u.is_suspended
+       FROM auth_sessions s JOIN users u ON u.id = s.user_id
+       WHERE s.refresh_token_hash = $1 FOR UPDATE OF s`, [tokenDigest(refreshToken)]
+    );
+    const session = rows[0];
+    if (!session) return null;
+    if (session.consumed_at) {
+      await client.query(
+        `UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, now()),
+          revoke_reason = COALESCE(revoke_reason, 'refresh_reuse')
+         WHERE family_id = $1`, [session.family_id]
+      );
+      return null;
+    }
+    if (session.revoked_at || session.is_suspended ||
+        session.expires_at <= new Date() || session.absolute_expires_at <= new Date()) {
+      await client.query(
+        `UPDATE auth_sessions SET revoked_at = COALESCE(revoked_at, now()),
+          revoke_reason = COALESCE(revoke_reason, 'expired_or_suspended')
+         WHERE family_id = $1`, [session.family_id]
+      );
+      return null;
+    }
+    const rotated = await insertSession(client, {
+      id: session.user_id,
+      role: session.role,
+    }, { familyId: session.family_id, absoluteExpiresAt: session.absolute_expires_at });
+    await client.query(
+      `UPDATE auth_sessions SET consumed_at = now(), last_used_at = now(),
+        replaced_by_session_id = $1 WHERE id = $2`, [rotated.sessionId, session.id]
+    );
+    return rotated;
+  });
+}
+
+/** FR-84: logout revokes every active refresh-token family for the authenticated user. */
+async function revokeAllSessions(userId) {
+  await db.query(
+    `UPDATE auth_sessions SET revoked_at = now(), revoke_reason = 'logout'
+     WHERE user_id = $1 AND revoked_at IS NULL`, [userId]
+  );
+}
+
+/** FR-84: logout revokes the current refresh-token family. */
+async function revokeSessionFamily(userId, sessionId) {
+  if (!sessionId) return revokeAllSessions(userId);
+  await db.query(
+    `UPDATE auth_sessions SET revoked_at = now(), revoke_reason = 'logout'
+     WHERE family_id = (SELECT family_id FROM auth_sessions WHERE id = $1 AND user_id = $2)
+       AND revoked_at IS NULL`, [sessionId, userId]
+  );
 }
 
 // ---- FR-03, FR-04: city verification ----
@@ -354,6 +600,14 @@ async function suspendSeller(userId, { adminId, reason }) {
 module.exports = {
   registerUser,
   authenticate,
+  authenticateStaffWithTotp,
+  requestPasswordReset,
+  resetPassword,
+  createInitialAdmin,
+  completeBuyerLogin,
+  refreshSession,
+  revokeAllSessions,
+  revokeSessionFamily,
   getAuthenticationPrincipal,
   requestEmailVerification,
   confirmEmailVerification,

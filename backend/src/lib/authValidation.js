@@ -1,10 +1,15 @@
 const { ValidationError } = require('./errors');
+const { getSecurityLimits } = require('../config');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE = /^\+?[1-9]\d{7,19}$/;
 const REGISTER_FIELDS = new Set(['name', 'phone', 'email', 'password', 'cityId']);
-const LOGIN_FIELDS = new Set(['email', 'password']);
+const LOGIN_FIELDS = new Set(['email', 'password', 'challengeToken']);
+const LOGIN_CODE_FIELDS = new Set(['email', 'loginAttemptId', 'code']);
+const STAFF_LOGIN_FIELDS = new Set(['email', 'password', 'code']);
+const RESET_REQUEST_FIELDS = new Set(['email']);
+const RESET_FIELDS = new Set(['token', 'password']);
 
 function assertOnlyFields(body, fields) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -53,7 +58,44 @@ function validateRegistration(body) {
 
 function validateLogin(body) {
   assertOnlyFields(body, LOGIN_FIELDS);
-  return { email: normalizeEmail(body.email), password: validatePassword(body.password) };
+  if (body.challengeToken !== undefined && (typeof body.challengeToken !== 'string' || body.challengeToken.length > 4096)) {
+    throw new ValidationError('A valid challenge response is required');
+  }
+  return { email: normalizeEmail(body.email), password: validatePassword(body.password), ...(body.challengeToken ? { challengeToken: body.challengeToken } : {}) };
 }
 
-module.exports = { validateRegistration, validateLogin };
+function validateLoginCode(body) {
+  assertOnlyFields(body, LOGIN_CODE_FIELDS);
+  const email = normalizeEmail(body.email);
+  const codePattern = new RegExp(`^\\d{${getSecurityLimits().EMAIL_CODE_LENGTH}}$`);
+  if (typeof body.loginAttemptId !== 'string' || !UUID.test(body.loginAttemptId) ||
+      typeof body.code !== 'string' || !codePattern.test(body.code)) {
+    throw new ValidationError('A valid login attempt and email code are required');
+  }
+  return { email, loginAttemptId: body.loginAttemptId, code: body.code };
+}
+
+function validateStaffLogin(body) {
+  assertOnlyFields(body, STAFF_LOGIN_FIELDS);
+  if (typeof body.code !== 'string' || !/^\d{6}$/.test(body.code)) {
+    throw new ValidationError('A valid authenticator code is required');
+  }
+  return {
+    email: normalizeEmail(body.email),
+    password: validatePassword(body.password),
+    code: body.code,
+  };
+}
+
+function validateResetRequest(body) {
+  assertOnlyFields(body, RESET_REQUEST_FIELDS);
+  return { email: normalizeEmail(body.email) };
+}
+
+function validatePasswordReset(body) {
+  assertOnlyFields(body, RESET_FIELDS);
+  if (typeof body.token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.token)) throw new ValidationError('A valid reset token is required');
+  return { token: body.token, password: validatePassword(body.password) };
+}
+
+module.exports = { validateRegistration, validateLogin, validateLoginCode, validateStaffLogin, validateResetRequest, validatePasswordReset };

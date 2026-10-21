@@ -92,6 +92,15 @@ async function queueCodeEmail(email, code, { transaction, idempotencyKey } = {})
   });
 }
 
+async function queueEmail(email, subject, text, { transaction, idempotencyKey } = {}) {
+  const encryptedPayload = encryptEmailPayload({ to: email, subject, text });
+  return queue.enqueue(queue.QUEUES.EMAIL, { encryptedPayload }, {
+    idempotencyKey,
+    orderingKey: `email-code:${addressDigest(email)}`,
+    transaction,
+  });
+}
+
 async function emailCodeLockedForDigest(digest, { failed = false, client = getSharedRedisClient(), limits = getSecurityLimits() } = {}) {
   if (!client?.isOpen || typeof client.eval !== 'function') {
     throw new ServiceUnavailableError('Request protection is temporarily unavailable.');
@@ -116,6 +125,6 @@ async function emailVerificationLocked(email, options) {
 }
 
 module.exports = {
-  makeCode, addressDigest, queueCodeEmail, reserveAddressSend, emailVerificationLocked, emailCodeLockedForDigest,
+  makeCode, addressDigest, queueCodeEmail, queueEmail, reserveAddressSend, emailVerificationLocked, emailCodeLockedForDigest,
   hashCode, equalHash,
 };

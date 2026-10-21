@@ -11,6 +11,7 @@ function validProductionEnv(overrides = {}) {
     EMAIL_SENDER_ADAPTER: 'provider',
     EMAIL_PROVIDER_API_KEY: 'email-provider-secret',
     EMAIL_QUEUE_ENCRYPTION_SECRET: 'email-queue-encryption-secret-material-32bytes',
+    STAFF_TOTP_ENCRYPTION_SECRET: 'staff-totp-encryption-key-material-at-least-32bytes',
     CHALLENGE_VERIFIER_ADAPTER: 'provider',
     CHALLENGE_PROVIDER_KEY: 'challenge-provider-secret',
     ...overrides,

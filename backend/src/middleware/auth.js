@@ -28,11 +28,14 @@ async function authenticateRequest(req, res, next) {
     return next(error);
   }
   try {
-    const principal = await users.getAuthenticationPrincipal(claims.sub);
+    const principal = claims.sid
+      ? await users.getAuthenticationPrincipal(claims.sub, claims.sid)
+      : await users.getAuthenticationPrincipal(claims.sub);
     if (!principal || principal.is_suspended) {
       return res.status(401).json({ error: 'Login required', requestId: req.requestId });
     }
     req.user = { id: principal.id, role: principal.role };
+    if (claims.sid) req.authSessionId = claims.sid;
     return next();
   } catch (error) {
     return next(error);

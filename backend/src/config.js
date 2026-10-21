@@ -19,6 +19,11 @@ const DEFAULTS = Object.freeze({
   ARGON2_MEMORY_KIB: 65536,
   ARGON2_TIME_COST: 3,
   ARGON2_PARALLELISM: 1,
+  AUTH_BUYER_REFRESH_ABSOLUTE_SECONDS: 2592000,
+  AUTH_BUYER_REFRESH_IDLE_SECONDS: 604800,
+  AUTH_STAFF_REFRESH_ABSOLUTE_SECONDS: 28800,
+  AUTH_STAFF_REFRESH_IDLE_SECONDS: 1800,
+  PASSWORD_RESET_TTL_SECONDS: 1800,
   RATE_LIMIT_WINDOW_SECONDS: 3600,
   RATE_LIMIT_LOGIN_IP_MAX: 30,
   RATE_LIMIT_LOGIN_ACCOUNT_MAX: 10,
@@ -89,6 +94,7 @@ function getRuntimeConfig(env = process.env) {
     redis = assertUrl(env, 'REDIS_URL', ['redis:', 'rediss:']);
     assertCredential(env, 'EMAIL_PROVIDER_API_KEY');
     assertCredential(env, 'EMAIL_QUEUE_ENCRYPTION_SECRET', { minimumBytes: 32 });
+    assertCredential(env, 'STAFF_TOTP_ENCRYPTION_SECRET', { minimumBytes: 32 });
     assertCredential(env, 'CHALLENGE_PROVIDER_KEY');
     if (env.EMAIL_SENDER_ADAPTER === 'fake' || env.CHALLENGE_VERIFIER_ADAPTER === 'fake' || env.ALLOW_FAKE_ADAPTERS === 'true') {
       throw new Error('Configuration error: fake credential adapters are forbidden in production.');

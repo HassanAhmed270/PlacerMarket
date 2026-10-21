@@ -23,14 +23,17 @@ function encodeJson(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function signAccessToken(userId, { secret, now = Math.floor(Date.now() / 1000), lifetimeSeconds = DEFAULT_ACCESS_TTL_SECONDS } = {}) {
+function signAccessToken(userId, { secret, now = Math.floor(Date.now() / 1000), lifetimeSeconds = DEFAULT_ACCESS_TTL_SECONDS, sessionId } = {}) {
   if (typeof secret !== 'string' || Buffer.byteLength(secret, 'utf8') < 32) {
     throw new TypeError('Signing requires at least 32 bytes of key material.');
   }
   if (typeof userId !== 'string' || !UUID.test(userId)) throw new TypeError('A UUID user ID is required.');
   if (!Number.isSafeInteger(lifetimeSeconds) || lifetimeSeconds < 1) throw new TypeError('A positive access-token lifetime is required.');
   const header = encodeJson({ alg: 'HS256', typ: 'JWT' });
-  const payload = encodeJson({ sub: userId, iss: ISSUER, aud: AUDIENCE, iat: now, exp: now + lifetimeSeconds });
+  const payload = encodeJson({
+    sub: userId, iss: ISSUER, aud: AUDIENCE, iat: now, exp: now + lifetimeSeconds,
+    ...(sessionId ? { sid: sessionId } : {}),
+  });
   const unsigned = `${header}.${payload}`;
   const signature = crypto.createHmac('sha256', secret).update(unsigned).digest('base64url');
   return `${unsigned}.${signature}`;
@@ -67,6 +70,7 @@ function verifyAccessToken(token, { secret, now = Math.floor(Date.now() / 1000) 
     throw new TypeError('Invalid bearer token.');
   }
   if (claims.iss !== ISSUER || claims.aud !== AUDIENCE || !UUID.test(claims.sub || '') ||
+      (claims.sid !== undefined && !UUID.test(claims.sid)) ||
       !Number.isSafeInteger(claims.iat) || claims.iat > now + 60 ||
       !Number.isSafeInteger(claims.exp) || claims.exp <= now) {
     throw new TypeError('Invalid bearer token.');

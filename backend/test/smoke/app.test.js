@@ -20,7 +20,7 @@ setSharedRedisClient({
 });
 
 describe('smoke: app boots and routes respond', () => {
-  test('GET /api/catalog/condition-types returns the fixed list (no DB touch)', async () => {
+  test('SEC-23: app sets Helmet security headers and CSP (no DB touch)', async () => {
     const res = await request(app).get('/api/catalog/condition-types');
     expect(res.status).toBe(200);
     expect(res.body).toEqual(['brand_new', 'pre_owned', 'custom_made', 'replica']);
@@ -32,6 +32,7 @@ describe('smoke: app boots and routes respond', () => {
   test('FR-01, SEC-01, SEC-16: registration rejects client password hashes and accepts only validated fields', async () => {
     const register = jest.spyOn(users, 'registerUser')
       .mockResolvedValueOnce({ id: 'new-user' }).mockResolvedValueOnce(null);
+    const verification = jest.spyOn(users, 'requestEmailVerification').mockResolvedValue({ accepted: true });
     const rejected = await request(app).post('/api/users/register').send({ passwordHash: 'client-controlled' });
     expect(rejected.status).toBe(400);
     expect(register).not.toHaveBeenCalled();
@@ -60,7 +61,9 @@ describe('smoke: app boots and routes respond', () => {
     });
     expect({ status: duplicate.status, body: duplicate.body }).toEqual({ status: valid.status, body: valid.body });
     expect(register).toHaveBeenCalledTimes(2);
+    expect(verification).toHaveBeenCalledTimes(2);
     register.mockRestore();
+    verification.mockRestore();
   });
 
   test('SEC-16: login validates its boundary and does not accept extra fields', async () => {

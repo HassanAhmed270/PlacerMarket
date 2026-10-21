@@ -1,5 +1,5 @@
 jest.mock('../../src/db.service', () => ({ query: jest.fn(), withTransaction: jest.fn() }));
-jest.mock('../../src/lib/passwordHashPool', () => ({ hashPassword: jest.fn() }));
+jest.mock('../../src/lib/passwordHashPool', () => ({ hashPassword: jest.fn(), verifyPassword: jest.fn() }));
 jest.mock('../../src/lib/emailCodeDelivery', () => ({
   makeCode: jest.fn(() => '123456'),
   addressDigest: jest.fn(() => 'a'.repeat(64)),
@@ -13,13 +13,28 @@ jest.mock('../../src/lib/emailCodeDelivery', () => ({
 
 const db = require('../../src/db.service');
 const { hashPassword } = require('../../src/lib/passwordHashPool');
+const { verifyPassword } = require('../../src/lib/passwordHashPool');
 const emailCode = require('../../src/lib/emailCodeDelivery');
 const users = require('../../src/modules/users.service');
 
-describe('users service incomplete authentication message', () => {
-  test('does not duplicate the not-implemented suffix', async () => {
-    await expect(users.authenticate({ email: 'seller@example.test', password: 'placeholder' }))
-      .rejects.toThrow('authenticate() — required session and 2FA persistence is not implemented yet');
+describe('FR-02: buyer authentication requires the email-code factor after a valid password', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    db.withTransaction.mockReset();
+    emailCode.reserveAddressSend.mockResolvedValue(undefined);
+    verifyPassword.mockResolvedValue(true);
+  });
+
+  test('FR-02, FR-83h: valid buyer password returns an internal email-factor challenge and does not issue a session', async () => {
+    db.query.mockResolvedValue({ rows: [{
+      id: 'user-1', email: 'buyer@example.test', password_hash: '$argon2id$stored',
+      role: 'buyer', is_suspended: false,
+    }] });
+    const result = await users.authenticate({ email: 'buyer@example.test', password: 'valid-password' });
+    expect(result).toMatchObject({ challengeRequired: true, factor: 'email', loginAttemptId: expect.any(String), userId: 'user-1', email: 'buyer@example.test' });
+    expect(db.withTransaction).not.toHaveBeenCalled();
+    expect(emailCode.queueCodeEmail).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('accessToken');
   });
 });
 

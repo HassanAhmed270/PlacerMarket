@@ -29,7 +29,7 @@ describe('SEC-22: CORS accepts only configured exact origins', () => {
 });
 
 describe('SEC-28: unexpected server errors are generic and traceable', () => {
-  test('SEC-28 returns a generic 500 with request id and does not return internal error text', () => {
+  test('SEC-27/28 logs only redacted metadata and returns a generic 500 with request id', () => {
     const log = jest.spyOn(console, 'error').mockImplementation(() => {});
     const res = mockResponse();
     errorHandler(new Error('database password must not leak'), { requestId: 'req-123' }, res, jest.fn());

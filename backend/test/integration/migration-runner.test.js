@@ -26,6 +26,10 @@ fs.copyFileSync(
   path.join(__dirname, '..', '..', 'db', 'migrations', '004_email_code_purpose.sql'),
   path.join(authMigrationDir, '004_email_code_purpose.sql')
 );
+fs.copyFileSync(
+  path.join(__dirname, '..', '..', 'db', 'migrations', '005_staff_totp_replay_guard.sql'),
+  path.join(authMigrationDir, '005_staff_totp_replay_guard.sql')
+);
 
 function newSchemaName() {
   const name = `migration_probe_${Date.now()}_${Math.floor(Math.random() * 1000000)}`;
@@ -55,7 +59,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
   test('FR-84: the auth foundation migration creates sessions, factor, reset, and code tables', async () => {
     const schema = newSchemaName();
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: authMigrationDir });
-    expect(applied).toHaveLength(3);
+    expect(applied).toHaveLength(4);
     const { rows } = await db.query(
       `SELECT table_name FROM information_schema.tables
        WHERE table_schema = $1 AND table_name = ANY($2::text[]) ORDER BY table_name`,
@@ -76,6 +80,11 @@ describe('FR-79b PostgreSQL migration runner', () => {
       [schema, 'email_login_codes']
     );
     expect(codeColumns.rows.map((row) => row.column_name)).toContain('purpose');
+    const totpColumns = await db.query(
+      'SELECT column_name FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2',
+      [schema, 'staff_totp_credentials']
+    );
+    expect(totpColumns.rows.map((row) => row.column_name)).toContain('last_used_step');
   });
 
   test('fresh schema applies its ordered migration once and is idempotent', async () => {

@@ -995,3 +995,8 @@ ALTER TABLE email_login_codes
 CREATE UNIQUE INDEX email_login_codes_one_active_verification_idx
   ON email_login_codes (user_id, purpose)
   WHERE purpose = 'verify_email' AND consumed_at IS NULL;
+
+-- Migration: 005_staff_totp_replay_guard.sql
+-- Expand-only TOTP replay protection; one accepted counter value per credential.
+ALTER TABLE staff_totp_credentials
+  ADD COLUMN last_used_step BIGINT;
