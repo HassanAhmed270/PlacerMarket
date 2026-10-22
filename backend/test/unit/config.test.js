@@ -71,6 +71,14 @@ describe('FR-84c: production configuration validation', () => {
     expect(getRuntimeConfig({ ...env, ALLOW_FAKE_ADAPTERS: 'true' }).allowFakeAdapters).toBe(true);
   });
 
+  test('Stage 8 DEV_FAKES opt-in enables development adapters but production rejects it', () => {
+    const env = { JWT_ACCESS_SECRET: 'j'.repeat(32), CORS_ORIGINS: 'http://localhost:5173',
+      EMAIL_SENDER_ADAPTER: 'fake', DEV_FAKES: '1' };
+    expect(getRuntimeConfig(env).allowFakeAdapters).toBe(true);
+    expect(() => getRuntimeConfig(validProductionEnv({ DEV_FAKES: '1' })))
+      .toThrow('fake credential adapters are forbidden in production');
+  });
+
   test('loads approved FR-83d values and configurable FR-84b settings', () => {
     const config = getRuntimeConfig({
       JWT_ACCESS_SECRET: 'j'.repeat(32),

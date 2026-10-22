@@ -22,6 +22,8 @@
     "db:check-schema": "node db/generate-schema-snapshot.js --check",
     "db:seed": "node --env-file-if-exists=.env db/seed.js",
     "keys:rotate": "node --env-file-if-exists=.env scripts/rotate-payout-keys.js",
+    "demo:seed": "node --env-file-if-exists=.env scripts/demo-seed.js",
+    "demo:smoke": "node --env-file-if-exists=.demo.env scripts/demo-smoke.js",
     "db:setup": "npm run db:migrate && npm run db:seed"
   },
   "dependencies": {

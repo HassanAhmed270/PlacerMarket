@@ -27,16 +27,22 @@ durable rotating refresh sessions, self-service password reset, and one-time
 TOTP-enrolled admin bootstrap. Email verification, strict high-value approval
 gating and signup/login/reset/message/offer limits are implemented. Live
 provider delivery, real-Redis verification and deployment checks remain pending.
- Seller TOTP enrollment, backup codes and step-up are implemented; payout gating,
- account recovery and passkey fallback remain later work.
+Seller TOTP enrollment, backup codes, action-bound step-up, payout encryption,
+payout change notice/hold gates, first-payout identity guard, and the Stage 7
+seller/Admin workspace are implemented. PostgreSQL payout regression is pending
+an available `TEST_DATABASE_URL`; account recovery and passkey fallback remain
+parked.
 The COD-era harness
 described below remains the baseline for the rest of the system.
 
 Runtime configuration is centralized in `src/config.js`; credential-dependent
 interfaces live under `src/lib/adapters/`. Production requires configured
 provider credentials and rejects placeholders/fakes. Non-production fakes
-require explicit adapter selection and `ALLOW_FAKE_ADAPTERS=true`. Live checks
-are tracked in `LIVE_CHECKS.md`.
+require explicit adapter selection and `ALLOW_FAKE_ADAPTERS=true` or the
+development-only `DEV_FAKES=1`; the latter adds a temporary-file email outbox
+and `/api/dev/outbox` only in non-production. Demo database seeding requires a
+localhost database name containing `demo`, `dev`, or `local`. Live checks are
+tracked in `LIVE_CHECKS.md`.
 
 Payout encryption uses `src/lib/keyProvider.js` and
 `src/lib/payoutEncryption.js`. The environment key map is JSON from stable key
@@ -63,8 +69,9 @@ existing encrypted email queue. See `PHASE1_PROGRESS.md` for route contracts.
 `STAFF_TOTP_ENCRYPTION_SECRET` from the deployment secret store and asks the
 operator to confirm TOTP enrollment. Never put that key in `.env.example` or
 source control. Frontend auth routes are under `/login`, `/register`,
-`/forgot-password`, and `/reset-password`; `VITE_AUTH_MOCK=true` is a labeled
-development-only demo flag and production builds reject it.
+`/forgot-password`, and `/reset-password`; the authenticated seller/Admin
+workspace is at `/account`. Access tokens stay in module memory. The frontend
+uses the real API; `VITE_DEV_FAKES=1` shows the development-fakes banner.
 
 **SEO-GATE:** work touching titles, meta descriptions, headings, alt text,
 keywords, structured data, URLs/slugs, canonical/robots rules, the sitemap or
@@ -135,6 +142,13 @@ because it has no guard either — `delivery_partners.city_id` is nullable on
 purpose so the schema works whichever way this eventually gets decided.
 
 ## Cross-module dependency map (the parts that aren't obvious from one file)
+
+- **FR-48 / FR-66 / FR-83l payout gate:** `settlement.routes.js` injects
+  `users.service.assertPayoutAllowed` into `settlement.service.initiateSellerPayout`;
+  the settlement module does not require the users module, avoiding a cycle.
+- **DEV_FAKES email:** `worker.js` uses `lib/adapters/devEmailOutbox.js` only
+  when explicitly opted in outside production. `app.js` conditionally mounts
+  `GET/DELETE /api/dev/outbox`; the message file is kept under the OS temp dir.
 
 - **FR-45f (force-release gate)**: `payout.service.forceReleasePayoutEarly()`
   calls `disputes.service.hasOpenDispute()` **synchronously, directly** —
@@ -231,12 +245,13 @@ purpose so the schema works whichever way this eventually gets decided.
   rules in `rules.md` Section 8; `hooks/lib/fr.js` holds the pure logic,
   shared with `test/unit/specs-checkboxes.test.js` so the hook and the test
   can't drift apart.
-- `.env.example` — copy to `.env`; nothing loads it automatically yet (no
-  `dotenv` wired in — see the gap below).
+- `.env.example` — copy to `.env`; package scripts load it using Node's
+  `--env-file-if-exists`. Direct `node` invocations must pass an env-file flag
+  or use exported environment variables.
 
 ## Known gaps to close before this is production-ready (not hallucinated as "done")
 
-- **Authentication implementation is complete for confirmed Phase 0 buyer/staff flows.** Login verifies Argon2id and the required email/TOTP factor; durable rotating sessions, reset, current suspension checks and one-time TOTP admin bootstrap have tests. Live provider, Redis and deployment checks remain pending. Seller factors, recovery, passkey fallback and step-up remain parked in `open-questions.md`. Argon2id, bounded hashing, Redis limiters,
+- **Authentication implementation is complete for confirmed Phase 0 buyer/staff flows.** Login verifies Argon2id and the required email/TOTP factor; durable rotating sessions, reset, current suspension checks and one-time TOTP admin bootstrap have tests. Live provider, Redis and deployment checks remain pending. Seller factors and step-up are implemented; recovery and passkey fallback remain parked in `open-questions.md`. Argon2id, bounded hashing, Redis limiters,
   and Phase 6 WAF deferral are owner-approved for Phase 0.
 - **No `dotenv` wired in.** `.env.example` documents the required vars but
   nothing in `src/server.js` actually loads a `.env` file — either add

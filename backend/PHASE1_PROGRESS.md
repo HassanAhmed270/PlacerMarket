@@ -247,3 +247,30 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Rows:** no additional specs checkbox ticked; UI/API behavior is not yet
   covered by browser-level tests.
 - **Next:** Stage 8 development-only email outbox, seed and scripted smoke flow.
+
+## Stage 8 — development demo harness
+
+- **Implemented:** explicit non-production `DEV_FAKES=1` enables the durable
+  worker email sender to append decrypted demo messages to an OS-temp JSONL
+  outbox and mounts `GET/DELETE /api/dev/outbox`; neither is mounted/created
+  with the flag off. Production rejects the flag. `demo:seed` writes local
+  generated credentials to ignored `backend/.demo.env`, seeds a TOTP Admin,
+  seller-candidate buyer, Lahore demo city, category/subcategory and required
+  measurement field. Its target guard accepts only localhost database names
+  containing `demo`, `dev`, or `local`, and rejects test targets. `demo:smoke`
+  performs the API email-code/login/application/approval/authenticator/step-up/
+  payout/identity/admin-view flow and checks the payout guard before/after ID.
+- **Verification:** focused backend tests pass (5 suites / 25 tests), including
+  outbox opt-in/prod rejection/temp-path containment, seed target guard,
+  runtime fake configuration, and the outbox endpoint's absence without opt-in.
+  Demo seed/smoke have not run against services yet; Stage 9 will report exact
+  PostgreSQL/Redis availability and any blocked commands.
+- **Files:** `src/lib/adapters/devEmailOutbox.js`, `src/routes/dev.routes.js`,
+  `worker.js`, `app.js`, `config.js`, `scripts/demo-seed.js`,
+  `scripts/demo-smoke.js`, package scripts, tests, `.env.example`, `.gitignore`,
+  and `agent.md`.
+- **Parked/live:** fake email outbox is not real delivery; manual Admin ID
+  verification in the smoke flow is a development demonstration, not a real
+  verification provider. Live checks remain in `LIVE_CHECKS.md`.
+- **Next:** Stage 9 run the full suites, service-backed demo, HTTP checks, and
+  both package audits/builds where the local environment permits.

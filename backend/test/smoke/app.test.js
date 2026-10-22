@@ -105,4 +105,13 @@ describe('smoke: app boots and routes respond', () => {
     const res = await request(app).get('/api/does-not-exist');
     expect(res.status).toBe(404);
   });
+
+  test('Stage 8 dev outbox endpoint does not exist without DEV_FAKES opt-in', async () => {
+    const res = await request(app).get('/api/dev/outbox');
+    if (process.env.NODE_ENV !== 'production' && process.env.DEV_FAKES === '1') {
+      expect(res.status).toBe(200);
+    } else {
+      expect(res.status).toBe(404);
+    }
+  });
 });

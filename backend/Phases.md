@@ -239,6 +239,13 @@ Admin review/identity/hold controls. It calls the real API and keeps the
 short-lived access token in memory. Existing public catalog markup is unchanged.
 The build and frontend checks pass; browser-level behavior is not yet tested.
 
+**Stage 8 implementation checkpoint (2026-10-22):** `DEV_FAKES=1` enables a
+development-only encrypted-queue email sender whose decrypted messages are
+written to an OS-temporary outbox and exposed at `/api/dev/outbox`; production
+refuses the flag. Guarded `demo:seed` and `demo:smoke` scripts implement the
+local Phase 1 walkthrough. Service-backed execution is recorded in Stage 9;
+the fake does not represent provider delivery.
+
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Temporary email verification above implemented and tested before Phase 2

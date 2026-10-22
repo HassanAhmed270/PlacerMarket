@@ -78,7 +78,7 @@ router.post('/login', limiters.login, async (req, res) => {
       if (req.challengeSignal) {
         const verifier = req.app.locals.challengeVerifier || createChallengeVerifier({
           adapter: process.env.CHALLENGE_VERIFIER_ADAPTER,
-          allowFake: process.env.ALLOW_FAKE_ADAPTERS === 'true',
+          allowFake: process.env.ALLOW_FAKE_ADAPTERS === 'true' || process.env.DEV_FAKES === '1',
           production: process.env.NODE_ENV === 'production',
         });
         const verification = await verifier.verify(req.body.challengeToken);

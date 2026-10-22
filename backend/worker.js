@@ -5,15 +5,18 @@ const { createRedisClient } = require('./src/lib/redis');
 const notifications = require('./src/modules/notifications.service');
 const { createEmailSender } = require('./src/lib/adapters/emailSender');
 const { decryptEmailPayload } = require('./src/lib/emailQueuePayload');
+const { createDevEmailOutboxSender } = require('./src/lib/adapters/devEmailOutbox');
 
 async function startWorker({ emailSender } = {}) {
-  const selectedEmailSender = emailSender || (process.env.EMAIL_SENDER_ADAPTER
-    ? createEmailSender({
+  const selectedEmailSender = emailSender || (process.env.DEV_FAKES === '1' && process.env.NODE_ENV !== 'production'
+    ? createDevEmailOutboxSender()
+    : process.env.EMAIL_SENDER_ADAPTER
+      ? createEmailSender({
       adapter: process.env.EMAIL_SENDER_ADAPTER,
-      allowFake: process.env.ALLOW_FAKE_ADAPTERS === 'true',
+      allowFake: process.env.ALLOW_FAKE_ADAPTERS === 'true' || process.env.DEV_FAKES === '1',
       production: process.env.NODE_ENV === 'production',
     })
-    : null);
+      : null);
   const redis = createRedisClient();
   const databaseUrl = process.env.QUEUE_DATABASE_URL || process.env.DATABASE_URL;
   const queue = createQueueClient({ connectionString: databaseUrl, worker: true });

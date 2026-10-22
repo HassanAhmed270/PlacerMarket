@@ -114,8 +114,8 @@ function getRuntimeConfig(env = process.env) {
     }
   } else {
     const selectedFake = env.EMAIL_SENDER_ADAPTER === 'fake' || env.CHALLENGE_VERIFIER_ADAPTER === 'fake';
-    if (selectedFake && env.ALLOW_FAKE_ADAPTERS !== 'true') {
-      throw new Error('Configuration error: fake adapters require ALLOW_FAKE_ADAPTERS=true outside production.');
+    if (selectedFake && env.ALLOW_FAKE_ADAPTERS !== 'true' && env.DEV_FAKES !== '1') {
+      throw new Error('Configuration error: fake adapters require ALLOW_FAKE_ADAPTERS=true or DEV_FAKES=1 outside production.');
     }
   }
 
@@ -131,7 +131,7 @@ function getRuntimeConfig(env = process.env) {
     limits: Object.freeze(limits),
     emailAdapter: env.EMAIL_SENDER_ADAPTER || null,
     challengeAdapter: env.CHALLENGE_VERIFIER_ADAPTER || null,
-    allowFakeAdapters: !production && env.ALLOW_FAKE_ADAPTERS === 'true',
+    allowFakeAdapters: !production && (env.ALLOW_FAKE_ADAPTERS === 'true' || env.DEV_FAKES === '1'),
     payoutKeyProvider,
   });
 }

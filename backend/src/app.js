@@ -30,6 +30,9 @@ app.use((req, _res, next) => {
   next();
 });
 app.use('/api', routes);
+if (process.env.NODE_ENV !== 'production' && process.env.DEV_FAKES === '1') {
+  app.use('/api/dev', require('./routes/dev.routes'));
+}
 app.use('/api', (_req, _res, next) => next(new NotFoundError('route', 'unknown')));
 app.use(errorHandler); // must be mounted LAST
 
