@@ -45,7 +45,7 @@ suite('SEC-08: real Redis request-limit counters', () => {
     expect(responses.every((response) => [204, 429].includes(response.status))).toBe(true);
   });
 
-  test('SEC-08, FR-83d: concurrent email-code sends enforce the per-address cap atomically', async () => {
+  test('SEC-08, FR-83d: concurrent email-code sends with a cooldown allow exactly one burst send', async () => {
     const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
     process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';
     const email = `redis-${randomUUID()}@example.test`;
@@ -61,8 +61,33 @@ suite('SEC-08: real Redis request-limit counters', () => {
         try { await reserveAddressSend(email, client, limits); return true; }
         catch { return false; }
       }));
-      expect(results.filter(Boolean)).toHaveLength(3);
-      expect(results.filter((result) => !result)).toHaveLength(5);
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(results.filter((result) => !result)).toHaveLength(7);
+    } finally {
+      if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
+    }
+  });
+
+  test('SEC-08, FR-83d: sequential email-code sends enforce the per-address cap after cooldowns', async () => {
+    const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
+    process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';
+    const email = `redis-${randomUUID()}@example.test`;
+    const limits = {
+      EMAIL_CODE_ADDRESS_HOURLY_MAX: 3,
+      EMAIL_CODE_ADDRESS_DAILY_MAX: 10,
+      EMAIL_CODE_RESEND_SECONDS: 1,
+      EMAIL_CODE_HOURLY_WINDOW_SECONDS: 3600,
+      EMAIL_CODE_DAILY_WINDOW_SECONDS: 86400,
+    };
+    try {
+      const results = [];
+      for (let index = 0; index < 4; index += 1) {
+        try { await reserveAddressSend(email, client, limits); results.push('ok'); }
+        catch { results.push('refused'); }
+        if (index < 3) await new Promise((resolve) => setTimeout(resolve, 1100));
+      }
+      expect(results).toEqual(['ok', 'ok', 'ok', 'refused']);
     } finally {
       if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
       else process.env.JWT_ACCESS_SECRET = previousJwtSecret;

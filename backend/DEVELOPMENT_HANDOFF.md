@@ -107,3 +107,12 @@ folder (keep the hooks executable); present the ZIP. Update `MASTER_PROJECT_CONT
 > `rules.md` strictly, including stop-and-ask and SEO-GATE. Tell me the current phase
 > and the decisions still needed before Phase 0, then wait for my answers. Don't change
 > files until we've agreed the next step.
+
+## 8. Phase 1 authorization amendment (2026-10-21)
+
+The owner authorized the Phase 1 implementation program on 2026-10-21, including
+the stage order recorded in `PHASE1_PROGRESS.md`. Phase 0 residuals remain open:
+hosted CI, the real-Redis run, and all production/live checks in `LIVE_CHECKS.md`.
+Nothing is exposed to real users before those residuals and the applicable Phase 1
+gate checks are closed. This amendment records authorization; it does not claim
+those checks have passed.
