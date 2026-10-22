@@ -709,10 +709,10 @@ describe('known schema and service mismatches', () => {
     })).rejects.toThrow('Unknown measurement field');
   });
 
-  test('known mismatch pin: payout method fails with PostgreSQL error 42703', async () => {
+  test('FR-09a: obsolete payout method values are rejected before payout SQL', async () => {
     await expect(users.updateSellerPayoutMethod(fixture.userId, {
       method: 'bank_transfer', details: 'fixture details',
-    })).rejects.toMatchObject({ code: '42703' });
+    })).rejects.toThrow(ValidationError);
   });
 
   test('FR-08a: listing status enum does not contain the retired identity hold value', async () => {

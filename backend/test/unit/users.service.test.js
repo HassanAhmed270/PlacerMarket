@@ -64,6 +64,9 @@ describe('FR-09a / SEC-35: payout input validation and encrypted update response
       method: 'bank', bankName: 'Bank', accountTitle: 'Name', iban: 'invalid', stepUpGrant: 'g'.repeat(43), sessionId: 'session-1',
     })).rejects.toThrow('valid Pakistani IBAN');
     await expect(users.updateSellerPayoutMethod('seller-1', {
+      method: 'bank', bankName: 'Bank', accountTitle: 'Name', iban: 'PK00SCBL0000001123456702', stepUpGrant: 'g'.repeat(43), sessionId: 'session-1',
+    })).rejects.toThrow('valid Pakistani IBAN');
+    await expect(users.updateSellerPayoutMethod('seller-1', {
       method: 'jazzcash', walletNumber: '123', accountHolderName: 'Name', stepUpGrant: 'g'.repeat(43), sessionId: 'session-1',
     })).rejects.toThrow('valid Pakistan mobile number');
     expect(db.withTransaction).not.toHaveBeenCalled();
@@ -86,6 +89,23 @@ describe('FR-09a / SEC-35: payout input validation and encrypted update response
     expect(JSON.stringify(result)).not.toMatch(/Test Bank|Test Seller|PK36SCBL|ciphertext|nonce|authTag/i);
     expect(emailCode.queueEmail).toHaveBeenCalledWith('seller@example.test', 'Your Poshaak payout details changed',
       expect.not.stringContaining('PK36SCBL0000001123456702'), expect.objectContaining({ transaction: client }));
+  });
+
+  test.each(['easypaisa', 'jazzcash'])('FR-09a: %s wallet payout is accepted and returns masked metadata', async (method) => {
+    const client = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{ user_id: 'seller-1', is_approved: true, role: 'seller', email: 'seller@example.test' }] })
+      .mockResolvedValueOnce({ rows: [{ enabled_at: new Date() }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'grant-1' }] })
+      .mockResolvedValueOnce({ rows: [{ user_id: 'seller-1', payout_method: method, payout_last4: '1234', payout_changed_at: new Date() }] }) };
+    db.withTransaction.mockImplementation((work) => work(client));
+    const result = await users.updateSellerPayoutMethod('seller-1', {
+      method, walletNumber: '03000001234', accountHolderName: 'Demo Seller',
+      stepUpGrant: 'g'.repeat(43), sessionId: 'session-1',
+    });
+    const encryptedPayload = JSON.parse(client.query.mock.calls[3][1][2]);
+    expect(encryptedPayload.ciphertext).not.toContain('03000001234');
+    expect(result).toMatchObject({ method, last4: '1234' });
+    expect(JSON.stringify(result)).not.toMatch(/03000001234|Demo Seller|ciphertext|nonce|authTag/i);
   });
 });
 

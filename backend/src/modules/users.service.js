@@ -864,7 +864,7 @@ function normalizePayoutInput(input) {
     const accountTitle = trimText(input.accountTitle, 'Account title');
     const field = input.iban ? 'iban' : 'accountNumber';
     const raw = trimText(input[field], field === 'iban' ? 'IBAN' : 'Account number', 34).toUpperCase().replace(/[\s-]/g, '');
-    if (field === 'iban' ? !/^PK\d{2}[A-Z]{4}\d{16}$/.test(raw) : !/^[A-Z0-9]{8,34}$/.test(raw)) {
+    if (field === 'iban' ? !isValidPakistaniIban(raw) : !/^[A-Z0-9]{8,34}$/.test(raw)) {
       throw new ValidationError(field === 'iban' ? 'IBAN must be a valid Pakistani IBAN.' : 'Account number must contain 8 to 34 letters or digits.');
     }
     return { method, details: { bankName, accountTitle, [field]: raw }, last4: raw.slice(-4) };
@@ -878,6 +878,17 @@ function normalizePayoutInput(input) {
     return { method, details: { walletNumber, accountHolderName }, last4: walletNumber.slice(-4) };
   }
   throw new ValidationError('Payout method must be bank, easypaisa, or jazzcash.');
+}
+
+function isValidPakistaniIban(value) {
+  if (!/^PK\d{2}[A-Z]{4}\d{16}$/.test(value)) return false;
+  let remainder = 0;
+  const rearranged = value.slice(4) + value.slice(0, 4);
+  for (const character of rearranged) {
+    const digits = character >= 'A' && character <= 'Z' ? String(character.charCodeAt(0) - 55) : character;
+    for (const digit of digits) remainder = (remainder * 10 + Number(digit)) % 97;
+  }
+  return remainder === 1;
 }
 
 /** FR-09a / SEC-35: require seller TOTP and an action-bound grant; encrypt and queue a generic notice atomically. */

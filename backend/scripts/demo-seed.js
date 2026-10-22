@@ -56,7 +56,7 @@ async function main() {
     DEV_FAKES: '1',
     CHALLENGE_VERIFIER_ADAPTER: 'fake',
     EMAIL_CODE_RESEND_SECONDS: '1',
-    CORS_ORIGINS: process.env.CORS_ORIGINS || 'http://127.0.0.1:5173,http://localhost:5173',
+    CORS_ORIGINS: 'http://127.0.0.1:5173,http://localhost:5173',
     PORT: process.env.PORT || '3000',
     REDIS_URL: process.env.REDIS_URL && !/CHANGE_ME|EXAMPLE/i.test(process.env.REDIS_URL) ? process.env.REDIS_URL : 'redis://127.0.0.1:6379',
     JWT_ACCESS_SECRET: secret('JWT_ACCESS_SECRET', 48),

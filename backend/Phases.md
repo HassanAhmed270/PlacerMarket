@@ -246,6 +246,14 @@ refuses the flag. Guarded `demo:seed` and `demo:smoke` scripts implement the
 local Phase 1 walkthrough. Service-backed execution is recorded in Stage 9;
 the fake does not represent provider delivery.
 
+**Stage 9 verification checkpoint (2026-10-22):** backend unit (38 suites /
+439 tests), PostgreSQL integration (77 passed / 4 Redis-only skips), schema
+check, both audits, and frontend lint/test/build pass. Local PostgreSQL is up,
+but Redis, a development DATABASE_URL and a valid JWT secret are unavailable;
+backend startup, demo seed/smoke, and live CORS were therefore not claimed.
+Vite returned HTTP 200 at `http://127.0.0.1:5173/`. Exact commands and limits
+are in `DEMO_RUN.md`.
+
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Temporary email verification above implemented and tested before Phase 2

@@ -218,18 +218,20 @@ Resume at the first incomplete stage. Completed stages are not repeated.
   set/clear; payout initiation checks identity verification, authenticator,
   hold state and current encrypted details. `keys:rotate` also encrypts and
   scrubs legacy plaintext payout columns, marking those profiles for update.
-- **Verification:** full backend unit suite passes (36 suites / 422 tests);
-  payout-focused unit suite passes (56 tests); `npm.cmd run db:check-schema`
-  passes; targeted `users.service` + `settlement.service` payout units pass
-  (2 suites / 21 tests). The PostgreSQL payout/API/leak regression is added but could not start:
-  `TEST_DATABASE_URL` is unset. Do not mark FR-09a, FR-66, FR-83c/f, SEC-30/35
-  complete until this regression runs against PostgreSQL. Redis concurrency
+- **Verification:** at the Stage 6 checkpoint, full backend unit suite passed
+  (36 suites / 422 tests), focused payout units passed, and schema snapshot
+  matched. Stage 9 then ran the complete PostgreSQL suite: 4 suites passed,
+  77 tests passed, 4 Redis-only tests skipped; the FR-09a/SEC-30/35 leak/API
+  regression passed. Extra IBAN-checksum and wallet-method tests are covered by
+  the current full backend unit suite (38 suites / 439 tests). Redis concurrency
   and live email delivery remain separate live checks.
 - **Schema audit:** the earlier `42703` mismatch in `updateSellerPayoutMethod`
-  is repaired; regression evidence is pending that same PostgreSQL run.
-- **Next:** supply the approved integration-test database environment and run
-  `npm.cmd run test:integration -- --runInBand known-mismatches.test.js`, then
-  continue to Stage 7 frontend work.
+  is repaired and the PostgreSQL payout regression passes. The stale pre-repair
+  error pin was updated to assert that obsolete method values fail validation.
+- **Rows:** FR-09a, FR-66, FR-83c/f and SEC-30/35 are checked with named tests;
+  SEC-30's offline master-key backup remains an owner live check.
+- **Live checks:** real Redis concurrency, email provider delivery, and offline
+  key backup/rotation exercise remain open.
 
 ## Stage 7 — seller and Admin frontend workspace
 
@@ -274,3 +276,33 @@ Resume at the first incomplete stage. Completed stages are not repeated.
   verification provider. Live checks remain in `LIVE_CHECKS.md`.
 - **Next:** Stage 9 run the full suites, service-backed demo, HTTP checks, and
   both package audits/builds where the local environment permits.
+
+## Stage 9 — run everything and show it (verification complete; live demo blocked)
+
+- **Checks run:** backend `npm.cmd test -- --runInBand` — 38 suites / 439
+  tests passed; PostgreSQL integration — 4 suites passed, 77 passed / 4 Redis
+  tests skipped; `npm.cmd run db:check-schema` passed; backend production audit
+  and frontend full audit each report 0 vulnerabilities. Frontend lint is clean,
+  tests pass (4), and production build succeeds (19 modules; JS 74.71 kB gzip).
+- **Machine:** PostgreSQL 18.6 service is running and local port 5432 responds.
+  Redis is absent at 127.0.0.1:6379, and no Redis/psql/docker executable was
+  found on PATH. `DEMO_DATABASE_URL`, `DATABASE_URL`, and `REDIS_URL` are not
+  configured in the backend environment. Backend startup was attempted and
+  stopped safely with `JWT_ACCESS_SECRET must contain at least 32 bytes of
+  externally configured key material.` No development database migration or
+  seed was attempted. The guarded integration suite used its `testing_only`
+  database and passed.
+- **What ran live:** Vite served `http://127.0.0.1:5173/` with HTTP 200 and the
+  existing HTML title `frontend`. Backend HTTP/CORS and demo walkthrough could
+  not run because startup configuration and Redis were unavailable. No demo
+  transcript or demo account exists on this machine; exact setup commands,
+  expected fake/real boundaries and observed output are in `DEMO_RUN.md`.
+- **Earlier command correction:** one initial integration invocation omitted
+  Jest's `--experimental-vm-modules` flag and failed while loading pg-boss; the
+  correctly flagged full integration rerun passed. The known-mismatch suite's
+  stale payout `42703` pin was updated to assert obsolete method validation;
+  the valid payout API/leak test passes against PostgreSQL.
+- **Rows:** FR-09a, FR-66, FR-83c/f, SEC-30/35 now have named passing unit and
+  PostgreSQL tests. SEC-30 offline backup remains a live check. Redis-only
+  concurrency checks remain skipped.
+- **Next:** Stage 10 — document-only listing revision plan.
