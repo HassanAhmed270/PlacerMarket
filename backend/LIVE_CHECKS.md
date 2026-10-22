@@ -12,6 +12,9 @@ put live credentials in this file, source control, test output, or logs.
 - [ ] Verify Redis limit counters under concurrent traffic, eviction/failover,
   and deployed proxy IP forwarding; the limiter currently fails closed when
   Redis is unavailable.
+- [ ] Run the seller authenticator/step-up endpoint limit under real Redis
+  concurrency (`FR-83f`); the local integration test is skipped without
+  `TEST_REDIS_URL`.
 - [ ] Production secrets and required credential variables provisioned through
   the hosting secret store; startup rejects missing values and placeholders.
 - [ ] Provision and document rotation for `EMAIL_QUEUE_ENCRYPTION_SECRET`; queued

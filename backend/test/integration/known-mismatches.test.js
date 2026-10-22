@@ -297,6 +297,125 @@ describe('known schema and service mismatches', () => {
     }
   });
 
+  test('FR-83c/f: seller enrollment issues ten hashed recovery codes and step-up grants are session-bound and single-use', async () => {
+    const previousTotpKey = process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+    const previousJwtKey = process.env.JWT_ACCESS_SECRET;
+    process.env.STAFF_TOTP_ENCRYPTION_SECRET = 'integration-seller-totp-encryption-key-material';
+    process.env.JWT_ACCESS_SECRET = 'integration-jwt-signing-key-material-at-least-thirty-two-bytes';
+    try {
+      const { rows: sessionRows } = await db.query(
+        `INSERT INTO auth_sessions (family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at, enrollment_only)
+         VALUES (gen_random_uuid(), $1, $2, now() + interval '1 hour', now() + interval '1 day', true) RETURNING id`,
+        [fixture.userId, `enrollment-${fixture.suffix}`]
+      );
+      const sessionId = sessionRows[0].id;
+      const setup = await users.beginSellerAuthenticatorEnrollment(fixture.userId);
+      const enrolled = await users.confirmSellerAuthenticatorEnrollment(
+        fixture.userId, sessionId, generateTotpCode(setup.secret)
+      );
+      expect(enrolled.enabled).toBe(true);
+      expect(enrolled.backupCodes).toHaveLength(10);
+      expect(new Set(enrolled.backupCodes).size).toBe(10);
+      const { rows: upgradedSession } = await db.query('SELECT enrollment_only FROM auth_sessions WHERE id = $1', [sessionId]);
+      expect(upgradedSession[0].enrollment_only).toBe(false);
+      const { rows: credentialRows } = await db.query(
+        'SELECT encrypted_secret, enabled_at, last_used_step FROM seller_totp_credentials WHERE user_id = $1', [fixture.userId]
+      );
+      expect(credentialRows[0].encrypted_secret.equals(Buffer.from(setup.secret))).toBe(false);
+      expect(credentialRows[0].enabled_at).toBeTruthy();
+      const { rows: codeRows } = await db.query('SELECT code_hash, consumed_at FROM seller_totp_backup_codes WHERE user_id = $1', [fixture.userId]);
+      expect(codeRows).toHaveLength(10);
+      expect(codeRows.every((row) => !enrolled.backupCodes.includes(row.code_hash))).toBe(true);
+      expect(codeRows.every((row) => row.consumed_at === null)).toBe(true);
+
+      const email = `seller-factor-${fixture.suffix}@example.test`;
+      const password = 'seller-factor-login-password';
+      await db.query('UPDATE users SET email = $2, password_hash = $3 WHERE id = $1', [fixture.userId, email, await hashPassword(password)]);
+      expect(await users.authenticate({ email, password })).toMatchObject({ challengeRequired: true, factor: 'totp' });
+      const authenticated = await users.authenticateStaffWithTotp({
+        email, password, code: generateTotpCode(setup.secret, Date.now() + 30000),
+      });
+      expect(authenticated.sessionId).toBeTruthy();
+
+      const grant = await users.createStepUpGrant(fixture.userId, authenticated.sessionId, 'payout.update', enrolled.backupCodes[0]);
+      await expect(users.consumeStepUpGrant(fixture.userId, fixture.otherUserId, 'payout.update', grant.grant))
+        .rejects.toMatchObject({ name: 'ForbiddenError' });
+      await expect(users.consumeStepUpGrant(fixture.userId, authenticated.sessionId, 'security.change', grant.grant))
+        .rejects.toMatchObject({ name: 'ForbiddenError' });
+      const consumption = await Promise.allSettled([
+        users.consumeStepUpGrant(fixture.userId, authenticated.sessionId, 'payout.update', grant.grant),
+        users.consumeStepUpGrant(fixture.userId, authenticated.sessionId, 'payout.update', grant.grant),
+      ]);
+      expect(consumption.filter((item) => item.status === 'fulfilled')).toHaveLength(1);
+      expect(consumption.filter((item) => item.status === 'rejected')).toHaveLength(1);
+
+      const recoveryConsumption = await Promise.allSettled([
+        users.createStepUpGrant(fixture.userId, authenticated.sessionId, 'security.change', enrolled.backupCodes[3]),
+        users.createStepUpGrant(fixture.userId, authenticated.sessionId, 'security.change', enrolled.backupCodes[3]),
+      ]);
+      expect(recoveryConsumption.filter((item) => item.status === 'fulfilled')).toHaveLength(1);
+      expect(recoveryConsumption.filter((item) => item.status === 'rejected')).toHaveLength(1);
+
+      const oldPassword = 'old-seller-password-for-stepup';
+      const newPassword = 'new-seller-password-after-stepup';
+      await db.query('UPDATE users SET password_hash = $2 WHERE id = $1', [fixture.userId, await hashPassword(oldPassword)]);
+      const passwordGrant = await users.createStepUpGrant(
+        fixture.userId, authenticated.sessionId, 'password.change', enrolled.backupCodes[1]
+      );
+      await users.changePasswordWithStepUp(fixture.userId, authenticated.sessionId, {
+        currentPassword: oldPassword, newPassword, stepUpGrant: passwordGrant.grant,
+      });
+      const { rows: changedPassword } = await db.query('SELECT password_hash, password_changed_at FROM users WHERE id = $1', [fixture.userId]);
+      expect(changedPassword[0].password_hash).not.toBe('fixture-hash');
+      expect(changedPassword[0].password_changed_at).toBeTruthy();
+
+      const securityGrant = await users.createStepUpGrant(
+        fixture.userId, authenticated.sessionId, 'security.change', enrolled.backupCodes[2]
+      );
+      await users.disableSellerAuthenticator(fixture.userId, authenticated.sessionId, securityGrant.grant);
+      const { rows: disabledFactor } = await db.query('SELECT user_id FROM seller_totp_credentials WHERE user_id = $1', [fixture.userId]);
+      expect(disabledFactor).toHaveLength(0);
+    } finally {
+      if (previousTotpKey === undefined) delete process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+      else process.env.STAFF_TOTP_ENCRYPTION_SECRET = previousTotpKey;
+      if (previousJwtKey === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtKey;
+    }
+  });
+
+  test('FR-83f: a new device is remembered once and queues one notice email', async () => {
+    const previousTotpKey = process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+    const previousEmailKey = process.env.EMAIL_QUEUE_ENCRYPTION_SECRET;
+    const previousJwtKey = process.env.JWT_ACCESS_SECRET;
+    process.env.STAFF_TOTP_ENCRYPTION_SECRET = 'integration-seller-totp-encryption-key-material';
+    process.env.EMAIL_QUEUE_ENCRYPTION_SECRET = 'integration-email-queue-key-material-32-bytes';
+    process.env.JWT_ACCESS_SECRET = 'integration-jwt-signing-key-material-at-least-thirty-two-bytes';
+    const email = `device-${fixture.suffix}@example.test`;
+    const passwordHash = await hashPassword('long-enough-device-test-password');
+    try {
+      await db.query('UPDATE users SET email = $2, password_hash = $3 WHERE id = $1', [fixture.userId, email, passwordHash]);
+      const { rows: before } = await db.query("SELECT count(*)::int AS count FROM pgboss.job WHERE name = 'email'");
+      const context = { deviceIdentity: `test-device:${fixture.suffix}` };
+      const first = await users.authenticate({ email, password: 'long-enough-device-test-password' }, context);
+      const second = await users.authenticate({ email, password: 'long-enough-device-test-password' }, context);
+      expect(first.session.sessionId).toBeTruthy();
+      expect(second.session.sessionId).toBeTruthy();
+      const { rows: devices } = await db.query('SELECT device_hash FROM known_auth_devices WHERE user_id = $1', [fixture.userId]);
+      expect(devices).toHaveLength(1);
+      const { rows: limitedSessions } = await db.query('SELECT enrollment_only FROM auth_sessions WHERE user_id = $1', [fixture.userId]);
+      expect(limitedSessions.every((row) => row.enrollment_only)).toBe(true);
+      const { rows: after } = await db.query("SELECT count(*)::int AS count FROM pgboss.job WHERE name = 'email'");
+      expect(after[0].count - before[0].count).toBe(1);
+    } finally {
+      if (previousTotpKey === undefined) delete process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+      else process.env.STAFF_TOTP_ENCRYPTION_SECRET = previousTotpKey;
+      if (previousEmailKey === undefined) delete process.env.EMAIL_QUEUE_ENCRYPTION_SECRET;
+      else process.env.EMAIL_QUEUE_ENCRYPTION_SECRET = previousEmailKey;
+      if (previousJwtKey === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtKey;
+    }
+  });
+
   test('FR-83g: password reset token is single-use, changes the password, and revokes every session', async () => {
     const crypto = require('node:crypto');
     const email = `reset-${Date.now()}@example.test`;

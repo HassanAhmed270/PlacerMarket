@@ -1,7 +1,7 @@
 jest.mock('../../src/middleware/rateLimit', () => ({
   createConfiguredRateLimiters: () => {
     const pass = (_req, _res, next) => { next(); };
-    return { login: pass, signup: pass, reset: pass, offer: pass, message: pass, emailCodeIpSignal: pass };
+    return { login: pass, signup: pass, reset: pass, offer: pass, message: pass, security: pass, emailCodeIpSignal: pass };
   },
 }));
 

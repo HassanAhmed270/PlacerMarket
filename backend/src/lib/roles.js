@@ -36,6 +36,7 @@ const ADMIN_ONLY_ACTIONS = new Set([
   'fee.configure', // FR-58
   'user.suspend', // FR-10, FR-05a ("cannot suspend users")
   'user.reinstate',
+  'payout.force_release', // FR-45e / FR-83f
   'delivery_partner.configure', // FR-57
   'advertising.manage', // FR-59
   'operations.view', // FR-55

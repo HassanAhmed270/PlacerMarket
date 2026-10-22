@@ -97,6 +97,7 @@ function createConfiguredRateLimiters(env = process.env, clientProvider = getSha
     reset: make('reset', 'RESET'),
     offer: make('offer', 'OFFER'),
     message: make('message', 'MESSAGE'),
+    security: make('security', 'SECURITY'),
     emailCodeIpSignal: createSoftChallengeSignal({
       threshold: limits.EMAIL_CODE_IP_SOFT_HOURLY_SIGNAL,
       windowSeconds: limits.EMAIL_CODE_IP_SIGNAL_WINDOW_SECONDS,

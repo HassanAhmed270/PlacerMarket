@@ -36,6 +36,9 @@ const DEFAULTS = Object.freeze({
   RATE_LIMIT_OFFER_ACCOUNT_MAX: 30,
   RATE_LIMIT_MESSAGE_IP_MAX: 120,
   RATE_LIMIT_MESSAGE_ACCOUNT_MAX: 60,
+  RATE_LIMIT_SECURITY_IP_MAX: 10,
+  RATE_LIMIT_SECURITY_ACCOUNT_MAX: 5,
+  STEP_UP_GRANT_TTL_SECONDS: 300,
 });
 
 const PLACEHOLDER = /(?:CHANGE_ME|CHANGE-ME|YOUR[_ -]?|EXAMPLE|PASSWORD|REPLACE[_ -]?ME)/i;
@@ -72,6 +75,9 @@ function getSecurityLimits(env = process.env) {
   for (const key of Object.keys(DEFAULTS)) limits[key] = positiveInteger(env, key);
   if (limits.EMAIL_CODE_LENGTH > 12) {
     throw new Error('Configuration error: EMAIL_CODE_LENGTH must not exceed 12.');
+  }
+  if (limits.STEP_UP_GRANT_TTL_SECONDS > 900) {
+    throw new Error('Configuration error: STEP_UP_GRANT_TTL_SECONDS must not exceed 900.');
   }
   return Object.freeze(limits);
 }

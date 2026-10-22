@@ -44,6 +44,12 @@ Marketplace-chat entries with the register in the Poshaak handoff.
   the write key. This keeps reads possible across rotation. Provision keys only
   through the deployment secret store; the offline backup and rollout window
   remain live checks.
+- 2026-10-22 · FR-83f · **Provisional — owner to confirm:** step-up grants
+  expire after 5 minutes (configurable, hard maximum 15 minutes). Device
+  identity is a hash of `X-Device-ID` when supplied, otherwise a hash of the
+  user-agent string; this records a coarse known-device signal without storing
+  raw device metadata. Both choices keep grants short-lived and avoid retaining
+  device details; revisit before launch if the browser contract changes.
 - 2026-10-22 · FR-06 / FR-07a · **Provisional — owner to confirm:** one pending seller application per account; a rejected application is resubmitted as a new row linked through `resubmitted_from`; both application text fields must be non-empty. There is no cooldown. This keeps each review decision auditable while the owner clarifies whether pending applications may be edited in place.
 
 ### Needed by Phase 2

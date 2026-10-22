@@ -6,12 +6,21 @@ const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 const { createChallengeVerifier } = require('../lib/adapters/challengeVerifier');
 const { ValidationError } = require('../lib/errors');
 const { parseAllowedOrigins } = require('../middleware/cors');
+const { STEP_UP_ACTIONS } = require('../modules/users.service');
 
 const limiters = createConfiguredRateLimiters();
 
 const router = Router();
 const REFRESH_COOKIE = 'poshaak_refresh';
 const REFRESH_COOKIE_PATH = '/api/users/auth/refresh';
+
+function sessionContext(req) {
+  const suppliedDevice = req.get('x-device-id');
+  const userAgent = req.get('user-agent') || 'unknown-device';
+  const deviceIdentity = typeof suppliedDevice === 'string' && suppliedDevice.length >= 8 && suppliedDevice.length <= 128
+    ? `id:${suppliedDevice}` : `ua:${userAgent.slice(0, 512)}`;
+  return { deviceIdentity };
+}
 
 function setRefreshCookie(res, refreshToken, maxAgeSeconds) {
   res.cookie(REFRESH_COOKIE, refreshToken, {
@@ -60,8 +69,9 @@ router.post('/register', limiters.signup, async (req, res) => {
 });
 
 router.post('/login', limiters.login, async (req, res) => {
-  const result = await users.authenticate(validateLogin(req.body)); // FR-02 / SEC-16
+  const result = await users.authenticate(validateLogin(req.body), sessionContext(req)); // FR-02 / SEC-16
   if (!result) return res.status(401).json({ error: 'Email or password is incorrect.' });
+  if (result.session) return sendSession(res, result.session);
   if (result.challengeRequired) {
     if (result.factor === 'email') {
       req.challengeSignal = await limiters.emailCodeIpSignal.evaluate(req);
@@ -89,13 +99,13 @@ router.post('/login', limiters.login, async (req, res) => {
 
 router.post('/login/verify-email-code', limiters.login, async (req, res) => {
   const input = validateLoginCode(req.body);
-  const session = await users.completeBuyerLogin(input.loginAttemptId, input.code, input.email);
+  const session = await users.completeBuyerLogin(input.loginAttemptId, input.code, input.email, sessionContext(req));
   if (!session) return res.status(401).json({ error: 'Email or code is incorrect or expired.' });
   return sendSession(res, session);
 });
 
 router.post('/login/totp', limiters.login, async (req, res) => {
-  const session = await users.authenticateStaffWithTotp(validateStaffLogin(req.body));
+  const session = await users.authenticateStaffWithTotp(validateStaffLogin(req.body), sessionContext(req));
   if (!session) return res.status(401).json({ error: 'Email, password, or authenticator code is incorrect.' });
   return sendSession(res, session);
 });
@@ -175,5 +185,54 @@ router.get('/me/seller-profile', requireAuth, async (req, res) => {
 router.patch('/me/payout-method', requireAuth, async (req, res) => {
   res.json(await users.updateSellerPayoutMethod(req.user.id, req.body)); // FR-09a
 });
+
+router.post('/me/authenticator/enroll', requireAuth, limiters.security, async (req, res) => {
+  if (Object.keys(req.body).length) throw new ValidationError('Enrollment takes no request fields.');
+  res.set('Cache-Control', 'no-store').json(await users.beginSellerAuthenticatorEnrollment(req.user.id));
+});
+
+router.post('/me/authenticator/confirm', requireAuth, limiters.security, async (req, res) => {
+  if (Object.keys(req.body).some((key) => key !== 'code') || typeof req.body.code !== 'string' || !/^\d{6}$/.test(req.body.code)) {
+    throw new ValidationError('A six-digit authenticator code is required.');
+  }
+  res.set('Cache-Control', 'no-store').json(await users.confirmSellerAuthenticatorEnrollment(req.user.id, req.authSessionId, req.body.code));
+});
+
+router.post('/auth/step-up', requireAuth, limiters.security, async (req, res) => {
+  if (Object.keys(req.body).some((key) => !['action', 'code'].includes(key)) ||
+      !STEP_UP_ACTIONS.includes(req.body.action) || typeof req.body.code !== 'string') {
+    throw new ValidationError('A supported action and authenticator code are required.');
+  }
+  const result = await users.createStepUpGrant(req.user.id, req.authSessionId, req.body.action, req.body.code);
+  res.set('Cache-Control', 'no-store').json(result);
+});
+
+router.post('/me/authenticator/disable', requireAuth, limiters.security, async (req, res) => {
+  if (Object.keys(req.body).some((key) => key !== 'stepUpGrant') || typeof req.body.stepUpGrant !== 'string') {
+    throw new ValidationError('A step-up grant is required.');
+  }
+  await users.disableSellerAuthenticator(req.user.id, req.authSessionId, req.body.stepUpGrant);
+  res.status(204).end();
+});
+
+router.post('/auth/password/change', requireAuth, limiters.security, async (req, res) => {
+  const fields = new Set(['currentPassword', 'newPassword', 'stepUpGrant']);
+  if (Object.keys(req.body).some((key) => !fields.has(key)) || typeof req.body.stepUpGrant !== 'string') {
+    throw new ValidationError('Current password, new password, and a step-up grant are required.');
+  }
+  await users.changePasswordWithStepUp(req.user.id, req.authSessionId, {
+    currentPassword: passwordForChange(req.body.currentPassword),
+    newPassword: passwordForChange(req.body.newPassword),
+    stepUpGrant: req.body.stepUpGrant,
+  });
+  res.status(200).json({ message: 'Password updated.' });
+});
+
+function passwordForChange(value) {
+  if (typeof value !== 'string' || value.length < 12 || value.length > 128 || value.includes('\0')) {
+    throw new ValidationError('Password must be 12 to 128 characters');
+  }
+  return value;
+}
 
 module.exports = router;

@@ -36,6 +36,15 @@ async function authenticateRequest(req, res, next) {
     }
     req.user = { id: principal.id, role: principal.role };
     if (claims.sid) req.authSessionId = claims.sid;
+    if (principal.enrollment_only) {
+      const path = req.originalUrl.split('?')[0];
+      const allowed = (req.method === 'POST' && [
+        '/api/users/me/authenticator/enroll',
+        '/api/users/me/authenticator/confirm',
+        '/api/users/logout',
+      ].includes(path));
+      if (!allowed) return res.status(403).json({ error: 'Authenticator enrollment is required before using this session.' });
+    }
     return next();
   } catch (error) {
     return next(error);

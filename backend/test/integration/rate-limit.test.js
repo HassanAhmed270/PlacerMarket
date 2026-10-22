@@ -45,6 +45,23 @@ suite('SEC-08: real Redis request-limit counters', () => {
     expect(responses.every((response) => [204, 429].includes(response.status))).toBe(true);
   });
 
+  test('FR-83f: concurrent authenticator and step-up requests share the security action limit', async () => {
+    const securityApp = express();
+    securityApp.use(express.json());
+    securityApp.use((req, _res, next) => { req.user = { id: 'seller-security-test' }; next(); });
+    securityApp.post('/security', createRateLimiter({
+      category: `security-${randomUUID()}`,
+      ipMax: 8,
+      accountMax: 3,
+      windowSeconds: 60,
+      clientProvider: () => client,
+    }), (_req, res) => res.status(204).end());
+    const responses = await Promise.all(Array.from({ length: 7 }, () =>
+      request(securityApp).post('/security').set('x-forwarded-for', '198.51.100.82').send({ action: 'step-up' })));
+    expect(responses.filter((response) => response.status === 204)).toHaveLength(3);
+    expect(responses.filter((response) => response.status === 429)).toHaveLength(4);
+  });
+
   test('SEC-08, FR-83d: concurrent email-code sends with a cooldown allow exactly one burst send', async () => {
     const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
     process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';

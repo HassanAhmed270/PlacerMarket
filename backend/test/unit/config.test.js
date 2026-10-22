@@ -113,5 +113,7 @@ describe('FR-84c: production configuration validation', () => {
       JWT_ACCESS_SECRET: 'j'.repeat(32), CORS_ORIGINS: 'http://localhost:5173',
       EMAIL_CODE_MAX_ATTEMPTS: '0',
     })).toThrow('EMAIL_CODE_MAX_ATTEMPTS must be a positive integer');
+    expect(() => getRuntimeConfig({ JWT_ACCESS_SECRET: 'j'.repeat(32), STEP_UP_GRANT_TTL_SECONDS: '901' }))
+      .toThrow('STEP_UP_GRANT_TTL_SECONDS must not exceed 900');
   });
 });

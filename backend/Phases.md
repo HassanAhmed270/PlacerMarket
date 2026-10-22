@@ -213,6 +213,18 @@ separate. Migration `008_manual_identity_verification.sql` adds audit columns.
 The first-payout identity gate remains for Stage 6. Stage evidence is in
 `PHASE1_PROGRESS.md`.
 
+**Stage 5 contract (implemented 2026-10-22):** sellers can start and confirm
+encrypted TOTP enrollment; confirmation returns ten random backup codes once,
+with only hashes stored. A seller without a factor receives an enrollment-only
+session restricted to authenticator setup, confirmation, logout and refresh.
+Step-up grants are one-use, expire within 15 minutes (5-minute default), and bind to user, session
+and action. Password change, authenticator disable and Admin force-release use
+action-specific grants. New-device fingerprints are HMAC-hashed and cause one
+encrypted queued email notice. Each new endpoint uses the Redis-backed security
+limiter. Migration `009_seller_authenticator_step_up.sql` adds the records and
+session markers. Stage 6 still must enforce the payout enrollment/step-up gate
+and notification. Stage evidence is in `PHASE1_PROGRESS.md`.
+
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Temporary email verification above implemented and tested before Phase 2

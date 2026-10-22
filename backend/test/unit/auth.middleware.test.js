@@ -54,6 +54,28 @@ describe('FR-10, FR-84, SEC-07: bearer authentication uses current user state', 
     expect(next).toHaveBeenCalledTimes(1);
   });
 
+  test('FR-83c: a seller enrollment-only session can reach setup but no other protected route', async () => {
+    users.getAuthenticationPrincipal.mockResolvedValue({
+      id: userId, role: 'seller', is_suspended: false, enrollment_only: true,
+    });
+    const token = signAccessToken(userId, { secret, sessionId: '2147b9fc-9971-46ce-9f29-c55471c48345' });
+    const blocked = response();
+    const blockedNext = jest.fn();
+    await requireAuth({
+      get: (name) => name === 'authorization' ? `Bearer ${token}` : undefined,
+      originalUrl: '/api/users/me/seller-profile', method: 'GET',
+    }, blocked, blockedNext);
+    expect(blocked.statusCode).toBe(403);
+    expect(blockedNext).not.toHaveBeenCalled();
+
+    const allowedNext = jest.fn();
+    await requireAuth({
+      get: (name) => name === 'authorization' ? `Bearer ${token}` : undefined,
+      originalUrl: '/api/users/me/authenticator/enroll', method: 'POST',
+    }, response(), allowedNext);
+    expect(allowedNext).toHaveBeenCalledTimes(1);
+  });
+
   test('FR-84: ignores cookie tokens and rejects invalid bearer tokens', async () => {
     const res = response();
     await requireAuth({ get: (name) => name === 'cookie' ? `access=${signAccessToken(userId, { secret })}` : undefined }, res, jest.fn());

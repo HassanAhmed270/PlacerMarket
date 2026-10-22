@@ -27,7 +27,8 @@ durable rotating refresh sessions, self-service password reset, and one-time
 TOTP-enrolled admin bootstrap. Email verification, strict high-value approval
 gating and signup/login/reset/message/offer limits are implemented. Live
 provider delivery, real-Redis verification and deployment checks remain pending.
- Seller factor requirements, passkey fallback, recovery and step-up remain parked.
+ Seller TOTP enrollment, backup codes and step-up are implemented; payout gating,
+ account recovery and passkey fallback remain later work.
 The COD-era harness
 described below remains the baseline for the rest of the system.
 
@@ -50,6 +51,13 @@ delegates there and route permission `seller_identity.verify` is Admin-only.
 `src/lib/adapters/identityVerifier.js` provides the manual-admin adapter and a
 test fake that requires `DEV_FAKES=1`; verification accepts only a short note
 and records audit metadata without retaining identity documents or numbers.
+
+Seller authenticator state and step-up grants are owned by `users.service.js`.
+Enrollment-only sessions can access only authenticator setup/confirmation,
+logout and refresh. Step-up grants are bound to an active session and action;
+consume them before performing the corresponding protected operation. New
+device identities are HMAC-hashed and new-device notices are queued through the
+existing encrypted email queue. See `PHASE1_PROGRESS.md` for route contracts.
 
 `npm run admin:create` is an interactive, one-time bootstrap. It requires
 `STAFF_TOTP_ENCRYPTION_SECRET` from the deployment secret store and asks the

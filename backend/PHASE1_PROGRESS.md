@@ -159,3 +159,51 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Live checks:** manual Admin procedure is tracked in `LIVE_CHECKS.md`.
 - **Next:** Stage 5 — SELLER AUTHENTICATOR, BACKUP CODES, STEP-UP, NEW-DEVICE
   NOTICE.
+
+## Stage 5 — SELLER AUTHENTICATOR, BACKUP CODES, STEP-UP, NEW-DEVICE NOTICE — implemented; gate pending (2026-10-22)
+
+- **Files:** migration `db/migrations/009_seller_authenticator_step_up.sql`,
+  generated `schema.sql`, `src/config.js`, `src/middleware/auth.js`,
+  `src/middleware/rateLimit.js`, `src/modules/users.service.js`,
+  `src/routes/users.routes.js`, `src/routes/payout.routes.js`,
+  `src/lib/roles.js`, `.env.example`, unit/integration tests,
+  `agent.md`, `open-questions.md`, `specs.md`, `security.md`, `Phases.md`, and
+  this checkpoint.
+- **Migrations:** 001 `initial_schema`, 002 `pgboss_schema`, 003
+  `auth_foundation`, 004 `email_code_purpose`, 005
+  `staff_totp_replay_guard`, 006 `measurement_field_lifecycle`, 007
+  `payout_encryption_envelope`, 008 `manual_identity_verification`, 009
+  `seller_authenticator_step_up`. Snapshot regenerated.
+- **Behavior:** seller TOTP setup returns an `otpauth://` URI and secret once;
+  confirmation stores encrypted secret and ten hashed 96-bit backup codes,
+  returned only once. Sellers without TOTP receive an enrollment-only session
+  restricted to enrollment, confirmation, logout and refresh; confirmation
+  upgrades that session. Enabled sellers use TOTP at login. Step-up grants are
+  single-use, action/user/session-bound and limited to 300 seconds by default,
+  hard maximum 900 seconds. TOTP replay checks and atomic backup-code
+  consumption are enforced in PostgreSQL. Password changes, authenticator
+  disable, and Admin force-release consume matching step-up grants. New device
+  fingerprints are HMAC-hashed and a first-seen device queues an encrypted
+  email notice. New security routes use a Redis-backed limiter.
+- **Verification so far:** 6 focused unit suites / 31 tests passed; focused
+  PostgreSQL FR-83c/f integration test passed, including single-use concurrent
+  grant/code use, password change, authenticator disable, seller TOTP login,
+  enrollment-session upgrade, and one new-device notification. Full
+  `npm.cmd test -- --runInBand` — 36 suites / 397 tests passed;
+  `npm.cmd run db:check-schema` passed. Full PostgreSQL 18.6 integration run —
+  4 suites passed / 1 suite skipped, 76 passed / 4 skipped. The first full
+  integration run found a stale 30-table snapshot assertion; it was updated to
+  assert the 34-table schema through migration 009 and its focused suite passed.
+  Redis-specific concurrency remains unverified because `TEST_REDIS_URL` is
+  unset and local Redis is unavailable.
+- **Rows:** FR-83c and FR-83f remain unchecked until Stage 6 also gates and
+  notifies payout changes. SEC-35 remains unchecked for the same reason. The
+  password and force-release paths are independently covered by named tests.
+- **Parked:** device list/revoke UI and admin-assisted recovery remain deferred;
+  no passkey or email-change endpoint added.
+- **Provisional assumptions:** 5-minute step-up TTL (max 15 minutes),
+  HMAC-hashed `X-Device-ID` with user-agent fallback, and note in
+  `open-questions.md`.
+- **Live checks:** real Redis concurrency; real email-provider delivery and
+  deployed TOTP key custody remain in `LIVE_CHECKS.md`.
+- **Next:** Stage 6 — PAYOUT DETAILS.

@@ -3,7 +3,8 @@
  *
  * Owns: FR-01 to FR-10 (specs.md section "1. Identity & Users")
  * Tables owned: cities, users, seller_applications, seller_profiles,
- * auth_sessions, email_login_codes, password_reset_tokens, staff_totp_credentials
+ * auth_sessions, email_login_codes, password_reset_tokens, staff_totp_credentials,
+ * seller_totp_credentials, seller_totp_backup_codes, step_up_grants, known_auth_devices
  *
  * Cross-module dependencies this file has OUT to other services:
  * - settlement.service.getSetting('high_value_threshold_pkr') for FR-08a
@@ -19,7 +20,7 @@
  *   here instead of re-implementing it.
  */
 
-const { randomUUID, randomBytes, createHash } = require('node:crypto');
+const { randomUUID, randomBytes, createHash, createHmac } = require('node:crypto');
 const db = require('../db.service');
 const settlement = require('./settlement.service');
 const eventBus = require('../lib/eventBus');
@@ -37,6 +38,7 @@ const {
 } = require('../lib/emailCodeDelivery');
 
 const STAFF_ROLES = new Set(['admin', 'moderator']);
+const STEP_UP_ACTIONS = Object.freeze(['payout.update', 'password.change', 'security.change', 'payout.force_release']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function refreshPolicy(role) {
@@ -52,25 +54,56 @@ function tokenDigest(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
+function authDeviceDigest(identity) {
+  const secret = process.env.JWT_ACCESS_SECRET;
+  if (typeof secret !== 'string' || Buffer.byteLength(secret, 'utf8') < 32) throw new ValidationError('Authentication configuration is unavailable.');
+  return createHmac('sha256', secret).update('poshaak-auth-device-v1\0').update(identity).digest('hex');
+}
+
+function normalizedBackupCode(value) {
+  return typeof value === 'string' ? value.replace(/-/g, '').toUpperCase() : '';
+}
+
 function issueAccessToken(userId, sessionId) {
   const jwt = getJwtConfig();
   return { token: signAccessToken(userId, { ...jwt, sessionId }), lifetimeSeconds: jwt.lifetimeSeconds };
 }
 
-async function insertSession(client, user, { familyId = randomUUID(), absoluteExpiresAt } = {}) {
+async function insertSession(client, user, {
+  familyId = randomUUID(), absoluteExpiresAt, deviceIdentity, deviceHash: existingDeviceHash,
+  notifyNewDevice = true, enrollmentOnly = false,
+} = {}) {
   const now = Date.now();
   const policy = refreshPolicy(user.role);
   const absolute = absoluteExpiresAt || new Date(now + policy.absoluteSeconds * 1000);
   const expiresAt = new Date(Math.min(now + policy.idleSeconds * 1000, absolute.getTime()));
   const refreshToken = randomBytes(32).toString('base64url');
   const sessionId = randomUUID();
+  const deviceHash = existingDeviceHash || (deviceIdentity ? authDeviceDigest(deviceIdentity) : null);
   const access = issueAccessToken(user.id, sessionId);
   const { rows } = await client.query(
     `INSERT INTO auth_sessions
-      (id, family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [sessionId, familyId, user.id, tokenDigest(refreshToken), expiresAt, absolute]
+      (id, family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at, device_hash, enrollment_only)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+    [sessionId, familyId, user.id, tokenDigest(refreshToken), expiresAt, absolute, deviceHash, enrollmentOnly]
   );
+  if (deviceHash) {
+    const { rows: known } = await client.query(
+      `INSERT INTO known_auth_devices (user_id, device_hash)
+       VALUES ($1, $2) ON CONFLICT (user_id, device_hash) DO NOTHING RETURNING user_id`,
+      [user.id, deviceHash]
+    );
+    if (known.length && notifyNewDevice && user.email) {
+      await queueEmail(user.email, 'New sign-in to Poshaak',
+        'A new device signed in to your Poshaak account. If this was not you, secure your account.',
+        { transaction: client, idempotencyKey: `new-device:${user.id}:${deviceHash}` });
+    } else if (!known.length) {
+      await client.query(
+        'UPDATE known_auth_devices SET last_seen_at = now() WHERE user_id = $1 AND device_hash = $2',
+        [user.id, deviceHash]
+      );
+    }
+  }
   return {
     accessToken: access.token,
     accessExpiresIn: access.lifetimeSeconds,
@@ -103,7 +136,7 @@ async function registerUser({ name, phone, email, password, cityId }) {
 async function getAuthenticationPrincipal(userId, sessionId) {
   const { rows } = sessionId
     ? await db.query(
-      `SELECT u.id, u.role, u.is_suspended FROM users u
+      `SELECT u.id, u.role, u.is_suspended, s.enrollment_only FROM users u
        JOIN auth_sessions s ON s.user_id = u.id
        WHERE u.id = $1 AND s.id = $2 AND s.revoked_at IS NULL AND s.consumed_at IS NULL
          AND s.expires_at > now() AND s.absolute_expires_at > now()`, [userId, sessionId]
@@ -247,7 +280,7 @@ async function confirmLoginEmailCode(loginAttemptId, code) {
 }
 
 /** FR-02, FR-83h: verify password and begin the required role-specific second factor. */
-async function authenticate({ email, password }) {
+async function authenticate({ email, password }, sessionContext = {}) {
   const { rows } = await db.query(
     `SELECT id, email, password_hash, role, is_suspended
      FROM users WHERE email = $1`, [email]
@@ -263,12 +296,18 @@ async function authenticate({ email, password }) {
     return { challengeRequired: true, factor: 'email', loginAttemptId: randomUUID(), userId: user.id, email: user.email };
   }
   if (STAFF_ROLES.has(user.role)) return { challengeRequired: true, factor: 'totp' };
-  // Seller factor requirements remain parked under FR-83c; do not issue a session.
+  if (user.role === 'seller') {
+    const { rows: factors } = await db.query(
+      'SELECT enabled_at FROM seller_totp_credentials WHERE user_id = $1', [user.id]
+    );
+    if (factors[0]?.enabled_at) return { challengeRequired: true, factor: 'totp' };
+    return { session: await db.withTransaction((client) => insertSession(client, user, { ...sessionContext, enrollmentOnly: true })) };
+  }
   return null;
 }
 
 /** FR-02, FR-83h: finish a buyer login only with its matching single-use email code. */
-async function completeBuyerLogin(loginAttemptId, code, email) {
+async function completeBuyerLogin(loginAttemptId, code, email, sessionContext = {}) {
   const userId = await confirmLoginEmailCode(loginAttemptId, code);
   if (!userId) return null;
   const { rows } = await db.query(
@@ -276,11 +315,11 @@ async function completeBuyerLogin(loginAttemptId, code, email) {
   );
   const principal = rows[0];
   if (!principal || principal.is_suspended || principal.role !== 'buyer' || principal.email !== email) return null;
-  return db.withTransaction((client) => insertSession(client, principal));
+  return db.withTransaction((client) => insertSession(client, principal, sessionContext));
 }
 
 /** FR-02, FR-83h: staff login requires a valid password plus the enrolled authenticator. */
-async function authenticateStaffWithTotp({ email, password, code }) {
+async function authenticateStaffWithTotp({ email, password, code }, sessionContext = {}) {
   const { rows } = await db.query(
     `SELECT id, email, password_hash, role, is_suspended
      FROM users WHERE email = $1`, [email]
@@ -291,8 +330,22 @@ async function authenticateStaffWithTotp({ email, password, code }) {
     return null;
   }
   const passwordMatches = await verifyPassword(user.password_hash, password);
-  if (!passwordMatches || user.is_suspended || !STAFF_ROLES.has(user.role)) return null;
+  if (!passwordMatches || user.is_suspended || (!STAFF_ROLES.has(user.role) && user.role !== 'seller')) return null;
   return db.withTransaction(async (client) => {
+    if (user.role === 'seller') {
+      const { rows: credentials } = await client.query(
+        `SELECT encrypted_secret, nonce, auth_tag, key_version, enabled_at, last_used_step
+         FROM seller_totp_credentials WHERE user_id = $1 FOR UPDATE`, [user.id]
+      );
+      const credential = credentials[0];
+      if (!credential?.enabled_at) return null;
+      let secret;
+      try { secret = decryptStaffTotpSecret(credential); } catch { return null; }
+      const matchedStep = matchingTotpStep(secret, code);
+      if (matchedStep === null || (credential.last_used_step !== null && matchedStep <= Number(credential.last_used_step))) return null;
+      await client.query('UPDATE seller_totp_credentials SET last_used_step = $1, updated_at = now() WHERE user_id = $2', [matchedStep, user.id]);
+      return insertSession(client, user, sessionContext);
+    }
     const { rows: credentials } = await client.query(
       `SELECT encrypted_secret, nonce, auth_tag, key_version, enabled_at, last_used_step
        FROM staff_totp_credentials WHERE user_id = $1 FOR UPDATE`, [user.id]
@@ -309,7 +362,7 @@ async function authenticateStaffWithTotp({ email, password, code }) {
     const matchedStep = matchingTotpStep(secret, code);
     if (matchedStep === null || (credential.last_used_step !== null && matchedStep <= Number(credential.last_used_step))) return null;
     await client.query('UPDATE staff_totp_credentials SET last_used_step = $1, updated_at = now() WHERE user_id = $2', [matchedStep, user.id]);
-    return insertSession(client, user);
+    return insertSession(client, user, sessionContext);
   });
 }
 
@@ -387,13 +440,158 @@ async function createInitialAdmin({ name, email, phone, password, totpSecret, to
   });
 }
 
+/** FR-83c: prepare encrypted TOTP enrollment; the secret is returned once for authenticator setup. */
+async function beginSellerAuthenticatorEnrollment(userId) {
+  const secret = require('../lib/totp').generateTotpSecret();
+  const encrypted = encryptStaffTotpSecret(secret);
+  return db.withTransaction(async (client) => {
+    const { rows: usersFound } = await client.query('SELECT email, role FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    if (!usersFound[0] || usersFound[0].role !== 'seller') throw new ForbiddenError('Seller account required.');
+    const { rows: current } = await client.query('SELECT enabled_at FROM seller_totp_credentials WHERE user_id = $1 FOR UPDATE', [userId]);
+    if (current[0]?.enabled_at) throw new ValidationError('An authenticator is already enabled.');
+    await client.query(
+      `INSERT INTO seller_totp_credentials
+        (user_id, encrypted_secret, nonce, auth_tag, key_version, enabled_at, last_used_step)
+       VALUES ($1, $2, $3, $4, $5, NULL, NULL)
+       ON CONFLICT (user_id) DO UPDATE SET encrypted_secret = EXCLUDED.encrypted_secret,
+         nonce = EXCLUDED.nonce, auth_tag = EXCLUDED.auth_tag, key_version = EXCLUDED.key_version,
+         enabled_at = NULL, last_used_step = NULL, updated_at = now()`,
+      [userId, encrypted.encryptedSecret, encrypted.nonce, encrypted.authTag, encrypted.keyVersion]
+    );
+    const label = encodeURIComponent(`Poshaak:${usersFound[0].email}`);
+    const issuer = encodeURIComponent('Poshaak');
+    return { secret, otpauthUri: `otpauth://totp/${label}?secret=${secret}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30` };
+  });
+}
+
+/** FR-83f: confirm setup and return ten hashed-at-rest, single-use recovery codes once. */
+async function confirmSellerAuthenticatorEnrollment(userId, sessionId, code) {
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT encrypted_secret, nonce, auth_tag, key_version, enabled_at, last_used_step
+       FROM seller_totp_credentials WHERE user_id = $1 FOR UPDATE`, [userId]
+    );
+    const credential = rows[0];
+    if (!credential || credential.enabled_at) throw new ValidationError('Authenticator enrollment is not pending.');
+    const secret = decryptStaffTotpSecret(credential);
+    const matchedStep = matchingTotpStep(secret, code);
+    if (matchedStep === null) throw new ValidationError('Authenticator code is invalid or expired.');
+    const backupCodes = Array.from({ length: 10 }, () => randomBytes(12).toString('hex').toUpperCase());
+    for (const backupCode of backupCodes) {
+      await client.query('INSERT INTO seller_totp_backup_codes (user_id, code_hash) VALUES ($1, $2)', [userId, tokenDigest(backupCode)]);
+    }
+    await client.query('UPDATE seller_totp_credentials SET enabled_at = now(), last_used_step = $1, updated_at = now() WHERE user_id = $2', [matchedStep, userId]);
+    const { rows: upgraded } = await client.query(
+      `UPDATE auth_sessions SET enrollment_only = false
+        WHERE id = $1 AND user_id = $2 AND enrollment_only = true AND revoked_at IS NULL
+          AND consumed_at IS NULL AND expires_at > now() AND absolute_expires_at > now()
+        RETURNING id`,
+      [sessionId, userId]
+    );
+    if (!upgraded[0]) throw new ForbiddenError('A seller enrollment session is required.');
+    return { enabled: true, backupCodes };
+  });
+}
+
+async function verifyStepUpFactor(client, userId, code) {
+  const { rows: usersFound } = await client.query('SELECT role FROM users WHERE id = $1', [userId]);
+  const user = usersFound[0];
+  if (!user) return false;
+  const table = user.role === 'seller' ? 'seller_totp_credentials' : (STAFF_ROLES.has(user.role) ? 'staff_totp_credentials' : null);
+  if (!table) return false;
+  const { rows } = await client.query(
+    `SELECT encrypted_secret, nonce, auth_tag, key_version, enabled_at, last_used_step
+       FROM ${table} WHERE user_id = $1 FOR UPDATE`, [userId]
+  );
+  const credential = rows[0];
+  if (!credential?.enabled_at) return false;
+  if (/^\d{6}$/.test(code)) {
+    const secret = decryptStaffTotpSecret(credential);
+    const matchedStep = matchingTotpStep(secret, code);
+    if (matchedStep === null || (credential.last_used_step !== null && matchedStep <= Number(credential.last_used_step))) return false;
+    await client.query(`UPDATE ${table} SET last_used_step = $1, updated_at = now() WHERE user_id = $2`, [matchedStep, userId]);
+    return true;
+  }
+  const normalized = normalizedBackupCode(code);
+  if (!/^[A-F0-9]{24}$/.test(normalized) || user.role !== 'seller') return false;
+  const { rows: used } = await client.query(
+    `UPDATE seller_totp_backup_codes SET consumed_at = now()
+      WHERE user_id = $1 AND code_hash = $2 AND consumed_at IS NULL RETURNING id`,
+    [userId, tokenDigest(normalized)]
+  );
+  return used.length === 1;
+}
+
+/** FR-83f: grants are short-lived, one-use and bound to the current session and action. */
+async function createStepUpGrant(userId, sessionId, action, code) {
+  if (!STEP_UP_ACTIONS.includes(action) || typeof sessionId !== 'string' || !sessionId) throw new ValidationError('A supported action and active session are required.');
+  const rawGrant = randomBytes(32).toString('base64url');
+  const ttl = getSecurityLimits().STEP_UP_GRANT_TTL_SECONDS;
+  const inserted = await db.withTransaction(async (client) => {
+    const { rows: sessions } = await client.query(
+      `SELECT id FROM auth_sessions WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+        AND consumed_at IS NULL AND expires_at > now() AND absolute_expires_at > now() FOR UPDATE`,
+      [sessionId, userId]
+    );
+    if (!sessions[0] || !(await verifyStepUpFactor(client, userId, code))) return false;
+    await client.query(
+      `INSERT INTO step_up_grants (token_hash, user_id, session_id, action, expires_at)
+       VALUES ($1, $2, $3, $4, now() + ($5 * interval '1 second'))`,
+      [tokenDigest(rawGrant), userId, sessionId, action, ttl]
+    );
+    return true;
+  });
+  if (!inserted) throw new ForbiddenError('Authenticator verification failed.');
+  return { grant: rawGrant, expiresIn: ttl };
+}
+
+async function consumeStepUpGrantWithClient(client, userId, sessionId, action, rawGrant) {
+  if (typeof rawGrant !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(rawGrant)) throw new ForbiddenError('A valid step-up grant is required.');
+  const { rows } = await client.query(
+    `UPDATE step_up_grants SET consumed_at = now()
+      WHERE token_hash = $1 AND user_id = $2 AND session_id = $3 AND action = $4
+        AND consumed_at IS NULL AND expires_at > now() RETURNING id`,
+    [tokenDigest(rawGrant), userId, sessionId, action]
+  );
+  if (rows.length !== 1) throw new ForbiddenError('A valid step-up grant is required.');
+}
+
+/** FR-83f: consume an action-bound grant atomically. */
+async function consumeStepUpGrant(userId, sessionId, action, rawGrant) {
+  return db.withTransaction((client) => consumeStepUpGrantWithClient(client, userId, sessionId, action, rawGrant));
+}
+
+/** FR-83f: remove a seller factor only after security-setting step-up. */
+async function disableSellerAuthenticator(userId, sessionId, rawGrant) {
+  return db.withTransaction(async (client) => {
+    await consumeStepUpGrantWithClient(client, userId, sessionId, 'security.change', rawGrant);
+    await client.query('DELETE FROM seller_totp_backup_codes WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM seller_totp_credentials WHERE user_id = $1', [userId]);
+  });
+}
+
+/** FR-83f: update the password after fresh-factor confirmation and grant consumption. */
+async function changePasswordWithStepUp(userId, sessionId, { currentPassword, newPassword, stepUpGrant }) {
+  const { rows } = await db.query('SELECT password_hash FROM users WHERE id = $1', [userId]);
+  if (!rows[0] || !(await verifyPassword(rows[0].password_hash, currentPassword))) throw new ForbiddenError('Current password is incorrect.');
+  const passwordHash = await hashPassword(newPassword);
+  return db.withTransaction(async (client) => {
+    await consumeStepUpGrantWithClient(client, userId, sessionId, 'password.change', stepUpGrant);
+    await client.query('UPDATE users SET password_hash = $1, password_changed_at = now() WHERE id = $2', [passwordHash, userId]);
+    await client.query(
+      `UPDATE auth_sessions SET revoked_at = now(), revoke_reason = 'password_change'
+        WHERE user_id = $1 AND id <> $2 AND revoked_at IS NULL`, [userId, sessionId]
+    );
+  });
+}
+
 /** FR-84: rotate a hashed refresh token, enforce both expiry limits, and revoke its family on reuse. */
 async function refreshSession(refreshToken) {
   if (typeof refreshToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(refreshToken)) return null;
   return db.withTransaction(async (client) => {
     const { rows } = await client.query(
       `SELECT s.id, s.family_id, s.user_id, s.expires_at, s.absolute_expires_at,
-              s.consumed_at, s.revoked_at, u.role, u.is_suspended
+              s.consumed_at, s.revoked_at, s.device_hash, s.enrollment_only, u.role, u.email, u.is_suspended
        FROM auth_sessions s JOIN users u ON u.id = s.user_id
        WHERE s.refresh_token_hash = $1 FOR UPDATE OF s`, [tokenDigest(refreshToken)]
     );
@@ -419,7 +617,9 @@ async function refreshSession(refreshToken) {
     const rotated = await insertSession(client, {
       id: session.user_id,
       role: session.role,
-    }, { familyId: session.family_id, absoluteExpiresAt: session.absolute_expires_at });
+      email: session.email,
+    }, { familyId: session.family_id, absoluteExpiresAt: session.absolute_expires_at,
+      deviceHash: session.device_hash, notifyNewDevice: false, enrollmentOnly: session.enrollment_only });
     await client.query(
       `UPDATE auth_sessions SET consumed_at = now(), last_used_at = now(),
         replaced_by_session_id = $1 WHERE id = $2`, [rotated.sessionId, session.id]
@@ -668,6 +868,13 @@ module.exports = {
   registerUser,
   authenticate,
   authenticateStaffWithTotp,
+  beginSellerAuthenticatorEnrollment,
+  confirmSellerAuthenticatorEnrollment,
+  createStepUpGrant,
+  consumeStepUpGrant,
+  disableSellerAuthenticator,
+  changePasswordWithStepUp,
+  STEP_UP_ACTIONS,
   requestPasswordReset,
   resetPassword,
   createInitialAdmin,

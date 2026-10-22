@@ -1,7 +1,7 @@
 jest.mock('../../src/middleware/rateLimit', () => ({
   createConfiguredRateLimiters: () => {
     const pass = (_req, _res, next) => { next(); };
-    return { login: pass, signup: pass, reset: pass, offer: pass, message: pass, emailCodeIpSignal: Object.assign(pass, { evaluate: jest.fn().mockResolvedValue(false) }) };
+    return { login: pass, signup: pass, reset: pass, offer: pass, message: pass, security: pass, emailCodeIpSignal: Object.assign(pass, { evaluate: jest.fn().mockResolvedValue(false) }) };
   },
 }));
 
@@ -37,6 +37,11 @@ describe('FR-84: login and refresh tokens use the approved transport boundaries'
     jest.spyOn(users, 'refreshSession').mockResolvedValue(session);
     jest.spyOn(users, 'revokeSessionFamily').mockResolvedValue(undefined);
     jest.spyOn(users, 'getAuthenticationPrincipal').mockResolvedValue({ id: userId, role: 'buyer', is_suspended: false });
+    jest.spyOn(users, 'beginSellerAuthenticatorEnrollment').mockResolvedValue({ secret: 'TESTSECRET', otpauthUri: 'otpauth://test' });
+    jest.spyOn(users, 'confirmSellerAuthenticatorEnrollment').mockResolvedValue({ enabled: true, backupCodes: ['A'.repeat(24)] });
+    jest.spyOn(users, 'createStepUpGrant').mockResolvedValue({ grant: 'g'.repeat(43), expiresIn: 300 });
+    jest.spyOn(users, 'disableSellerAuthenticator').mockResolvedValue(undefined);
+    jest.spyOn(users, 'changePasswordWithStepUp').mockResolvedValue(undefined);
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -48,6 +53,62 @@ describe('FR-84: login and refresh tokens use the approved transport boundaries'
     expect(response.body).toEqual({ challengeRequired: true, factor: 'email', loginAttemptId: sessionId });
     expect(response.body).not.toHaveProperty('accessToken');
     expect(users.requestLoginEmailCode).toHaveBeenCalledWith(sessionId, userId, 'buyer@example.test');
+    expect(users.authenticate).toHaveBeenCalledWith(
+      { email: 'buyer@example.test', password: 'long-enough-test-password' },
+      expect.objectContaining({ deviceIdentity: expect.stringContaining('ua:') })
+    );
+  });
+
+  test('FR-83c: seller login without an enrolled authenticator returns the limited account session', async () => {
+    jest.spyOn(users, 'authenticate').mockResolvedValueOnce({ session });
+    const response = await request(app).post('/api/users/login')
+      .set('X-Device-Id', 'device-identifier-123')
+      .send({ email: 'seller@example.test', password: 'long-enough-test-password' });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ accessToken: 'test-access-token', tokenType: 'Bearer', expiresIn: 900 });
+    expect(response.headers['set-cookie'][0]).toContain('HttpOnly; Secure; SameSite=Strict');
+  });
+
+  test('FR-83c/f: authenticator setup returns no-store enrollment and backup-code responses', async () => {
+    const token = signAccessToken(userId, { secret, sessionId });
+    const enrollment = await request(app).post('/api/users/me/authenticator/enroll')
+      .set('Authorization', `Bearer ${token}`).send({});
+    expect(enrollment.status).toBe(200);
+    expect(enrollment.headers['cache-control']).toBe('no-store');
+    expect(enrollment.body).toEqual({ secret: 'TESTSECRET', otpauthUri: 'otpauth://test' });
+
+    const confirmation = await request(app).post('/api/users/me/authenticator/confirm')
+      .set('Authorization', `Bearer ${token}`).send({ code: '123456', extra: 'rejected' });
+    expect(confirmation.status).toBe(400);
+    expect(users.confirmSellerAuthenticatorEnrollment).not.toHaveBeenCalled();
+  });
+
+  test('FR-83f: step-up only accepts a supported action and returns a no-store grant', async () => {
+    const token = signAccessToken(userId, { secret, sessionId });
+    const invalid = await request(app).post('/api/users/auth/step-up')
+      .set('Authorization', `Bearer ${token}`).send({ action: 'admin', code: '123456' });
+    expect(invalid.status).toBe(400);
+    const valid = await request(app).post('/api/users/auth/step-up')
+      .set('Authorization', `Bearer ${token}`).send({ action: 'payout.update', code: '123456' });
+    expect(valid.status).toBe(200);
+    expect(valid.headers['cache-control']).toBe('no-store');
+    expect(valid.body).toEqual({ grant: 'g'.repeat(43), expiresIn: 300 });
+    expect(users.createStepUpGrant).toHaveBeenCalledWith(userId, sessionId, 'payout.update', '123456');
+  });
+
+  test('FR-83f: password and authenticator changes require their bounded fields and step-up grant', async () => {
+    const token = signAccessToken(userId, { secret, sessionId });
+    const invalid = await request(app).post('/api/users/auth/password/change')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'long-enough-current', newPassword: 'long-enough-new', stepUpGrant: 'x'.repeat(43), email: 'blocked' });
+    expect(invalid.status).toBe(400);
+    const changed = await request(app).post('/api/users/auth/password/change')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ currentPassword: 'long-enough-current', newPassword: 'long-enough-new', stepUpGrant: 'x'.repeat(43) });
+    expect(changed.status).toBe(200);
+    expect(users.changePasswordWithStepUp).toHaveBeenCalledWith(userId, sessionId, expect.objectContaining({
+      currentPassword: 'long-enough-current', newPassword: 'long-enough-new',
+    }));
   });
 
   test('FR-84, SEC-04/05: refresh requires an allowlisted Origin and a scoped secure cookie', async () => {
