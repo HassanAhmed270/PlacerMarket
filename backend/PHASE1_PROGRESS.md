@@ -306,3 +306,16 @@ Resume at the first incomplete stage. Completed stages are not repeated.
   PostgreSQL tests. SEC-30 offline backup remains a live check. Redis-only
   concurrency checks remain skipped.
 - **Next:** Stage 10 — document-only listing revision plan.
+
+## Stage 10 — Phase 2 listing revision plan (document only)
+
+- **Delivered:** `LISTING_REVISIONS_PLAN.md` proposes the side-copy design,
+  illustrative table/status/index SQL, atomic approval guarded by
+  `content_version`, rejection behavior, permissions and notifications,
+  migration/rollback sequence, PostgreSQL concurrency tests, dependencies,
+  bounded tasks, and owner questions with recommendations.
+- **Scope:** no application code, schema, migration, specification checkbox,
+  or product decision changed in this stage. The plan is explicitly proposed;
+  FR-73b–d and field-scope questions remain subject to owner resolution.
+- **Next:** Stage 11 — consolidate Phase 1 handoff and gate evidence, then run
+  final checks and push the staged commits once.
