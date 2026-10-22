@@ -54,3 +54,22 @@ test('FR-84, SEC-04/05: login uses a bearer challenge flow and refresh sends onl
   assert.equal(calls[1].options.headers.Authorization, undefined)
   assert.equal(Object.hasOwn(globalThis, 'localStorage'), false)
 })
+
+test('FR-83c/f: protected seller API requests use only the in-memory access token', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({ status: 'pending' }) }
+    },
+  })
+  client.setAccessToken('short-lived-memory-token')
+  await client.getSellerApplication()
+  assert.equal(calls[0].url, 'https://api.example.test/api/users/me/seller-application')
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer short-lived-memory-token')
+  client.clearAccessToken()
+  await client.getSellerApplication()
+  assert.equal(calls[1].options.headers.Authorization, undefined)
+  assert.equal(Object.hasOwn(globalThis, 'localStorage'), false)
+})

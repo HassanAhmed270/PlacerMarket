@@ -220,7 +220,8 @@ Resume at the first incomplete stage. Completed stages are not repeated.
   scrubs legacy plaintext payout columns, marking those profiles for update.
 - **Verification:** full backend unit suite passes (36 suites / 422 tests);
   payout-focused unit suite passes (56 tests); `npm.cmd run db:check-schema`
-  passes. The PostgreSQL payout/API/leak regression is added but could not start:
+  passes; targeted `users.service` + `settlement.service` payout units pass
+  (2 suites / 21 tests). The PostgreSQL payout/API/leak regression is added but could not start:
   `TEST_DATABASE_URL` is unset. Do not mark FR-09a, FR-66, FR-83c/f, SEC-30/35
   complete until this regression runs against PostgreSQL. Redis concurrency
   and live email delivery remain separate live checks.
@@ -229,3 +230,20 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Next:** supply the approved integration-test database environment and run
   `npm.cmd run test:integration -- --runInBand known-mismatches.test.js`, then
   continue to Stage 7 frontend work.
+
+## Stage 7 — seller and Admin frontend workspace
+
+- **Implemented:** authenticated workspace at `/account`; seller application
+  status/form, authenticator enrollment with secret and `otpauth://` text,
+  one-time backup-code screen, authenticator step-up prompt and payout form;
+  Admin application review, manual ID verification, payout recent-change and
+  hold display/actions. Access tokens stay in module memory and protected API
+  calls attach bearer auth. API calls are real; an explicit development fake
+  banner is shown when `VITE_DEV_FAKES=1`. Existing public catalog markup is
+  unchanged; QR rendering remains later work.
+- **Verification:** frontend `npm.cmd run lint` clean; `npm.cmd test` passes
+  (4 tests), including the FR-83c/f in-memory-token API test; `npm.cmd run build`
+  succeeds (19 modules; 74.71 kB gzip JS). No frontend dependencies added.
+- **Rows:** no additional specs checkbox ticked; UI/API behavior is not yet
+  covered by browser-level tests.
+- **Next:** Stage 8 development-only email outbox, seed and scripted smoke flow.

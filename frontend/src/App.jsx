@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { api, AUTH_MOCK_ENABLED } from './lib/api.js'
+import { api } from './lib/api.js'
+import AccountWorkspace from './AccountWorkspace.jsx'
 import './App.css'
 
 function App() {
-  const isAuthRoute = ['/login', '/register', '/forgot-password', '/reset-password'].includes(window.location.pathname)
+  const isAuthRoute = ['/login', '/register', '/forgot-password', '/reset-password', '/account'].includes(window.location.pathname)
   const [categories, setCategories] = useState([])
   const [categoryState, setCategoryState] = useState('loading')
 
@@ -133,9 +134,22 @@ function AuthScreen() {
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    if (path !== '/login') return
-    api.refresh().then((result) => setAccessToken(result.accessToken)).catch(() => {})
+    if (path !== '/login' && path !== '/account') return
+    api.refresh().then((result) => {
+      api.setAccessToken(result.accessToken)
+      setAccessToken(result.accessToken)
+    }).catch(() => {})
   }, [path])
+
+  function acceptAccessToken(token) {
+    api.setAccessToken(token)
+    setAccessToken(token)
+    window.history.pushState({}, '', '/account')
+    setPath('/account')
+  }
+
+  if (accessToken) return <AccountWorkspace onSignOut={() => { api.clearAccessToken(); setAccessToken(''); navigate('/login') }} />
+  if (path === '/account') return <main className="auth-shell"><a className="wordmark" href="/">Poshaak</a><section className="auth-card"><h1>Account session</h1><p role="status">Checking your secure session…</p><p><a href="/login">Sign in</a></p></section></main>
 
   function navigate(next) {
     window.history.pushState({}, '', next)
@@ -163,11 +177,11 @@ function AuthScreen() {
         }
       } else if (path === '/login' && challenge) {
         const result = await api.verifyEmailCode({ email: form.get('email'), loginAttemptId: attemptId, code: form.get('code') })
-        setAccessToken(result.accessToken)
+        acceptAccessToken(result.accessToken)
         setNotice('You are signed in. Your access token is held in memory for this page.')
       } else if (path === '/login' && staffFactor) {
         const result = await api.staffLogin({ email: form.get('email'), password: form.get('password'), code: form.get('code') })
-        setAccessToken(result.accessToken)
+        acceptAccessToken(result.accessToken)
         setNotice('You are signed in. Your access token is held in memory for this page.')
       } else if (path === '/login') {
         const credentials = { email: form.get('email'), password: form.get('password') }
@@ -178,7 +192,9 @@ function AuthScreen() {
           setNotice('Complete the additional sign-in verification.')
           return
         }
-        if (result.factor === 'email') {
+        if (result.accessToken) {
+          acceptAccessToken(result.accessToken)
+        } else if (result.factor === 'email') {
           setAttemptId(result.loginAttemptId)
           setChallenge(true)
           setNotice('Enter the code sent to your email address.')
@@ -208,7 +224,6 @@ function AuthScreen() {
       <section className="auth-card" aria-labelledby="auth-title">
         <p className="eyebrow">Secure account access</p>
         <h1 id="auth-title">{labels[path]}</h1>
-        {AUTH_MOCK_ENABLED && <p className="auth-mock-banner">Development only: simulated authentication is enabled.</p>}
         <form onSubmit={submit}>
           {path === '/register' && <label>Name<input name="name" autoComplete="name" required maxLength="150" /></label>}
           {(path === '/register') && <label>Phone<input name="phone" autoComplete="tel" required /></label>}

@@ -233,6 +233,12 @@ the identity/authenticator/hold/current-details guard. Migration 010 adds the
 display and hold metadata. PostgreSQL integration cannot be claimed until
 `TEST_DATABASE_URL` is available; see `PHASE1_PROGRESS.md`.
 
+**Stage 7 implementation checkpoint (2026-10-22):** a separate `/account`
+workspace provides seller application, authenticator, backup-code, payout and
+Admin review/identity/hold controls. It calls the real API and keeps the
+short-lived access token in memory. Existing public catalog markup is unchanged.
+The build and frontend checks pass; browser-level behavior is not yet tested.
+
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Temporary email verification above implemented and tested before Phase 2

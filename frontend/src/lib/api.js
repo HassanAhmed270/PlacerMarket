@@ -1,5 +1,6 @@
 const DEFAULT_API_BASE_URL = 'http://localhost:3000/api'
-export const AUTH_MOCK_ENABLED = Boolean(import.meta.env?.DEV && import.meta.env?.VITE_AUTH_MOCK === 'true')
+export const DEV_FAKES_BANNER = Boolean(import.meta.env?.DEV && import.meta.env?.VITE_DEV_FAKES === '1')
+let accessTokenInMemory = null
 
 export class ApiError extends Error {
   constructor(status) {
@@ -15,10 +16,10 @@ export function createApiClient({
 } = {}) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
 
-  async function get(path, { signal } = {}) {
+  async function get(path, { signal, authenticated = false } = {}) {
     const response = await fetchImpl(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...(authenticated && accessTokenInMemory ? { Authorization: `Bearer ${accessTokenInMemory}` } : {}) },
       signal,
     })
 
@@ -32,15 +33,11 @@ export function createApiClient({
     }
   }
 
-  async function post(path, body, { accessToken, refresh = false } = {}) {
-    if (AUTH_MOCK_ENABLED && path === 'users/login') return { challengeRequired: true, factor: 'email', loginAttemptId: 'development-only-attempt' }
-    if (AUTH_MOCK_ENABLED && path === 'users/login/verify-email-code') return { accessToken: 'development-only-memory-token', tokenType: 'Bearer', expiresIn: 900 }
-    if (AUTH_MOCK_ENABLED && path === 'users/register') return { message: 'Development mock registration accepted.' }
-    if (AUTH_MOCK_ENABLED && path.startsWith('users/password/')) return { message: 'Development mock request accepted.' }
+  async function send(method, path, body, { authenticated = false, refresh = false } = {}) {
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json' }
-    if (accessToken) headers.Authorization = `Bearer ${accessToken}`
+    if (authenticated && accessTokenInMemory) headers.Authorization = `Bearer ${accessTokenInMemory}`
     const response = await fetchImpl(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
-      method: 'POST', headers, body: JSON.stringify(body),
+      method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       ...(refresh ? { credentials: 'include' } : {}),
     })
     let result = null
@@ -49,7 +46,11 @@ export function createApiClient({
     return result
   }
 
+  const post = (path, body, options) => send('POST', path, body, options)
+
   return {
+    setAccessToken(token) { accessTokenInMemory = token || null },
+    clearAccessToken() { accessTokenInMemory = null },
     getMainCategories: () => get('catalog/main-categories'),
     login: (input) => post('users/login', input),
     staffLogin: (input) => post('users/login/totp', input),
@@ -58,6 +59,20 @@ export function createApiClient({
     requestPasswordReset: (email) => post('users/password/forgot', { email }),
     resetPassword: (input) => post('users/password/reset', input),
     refresh: () => post('users/auth/refresh', {}, { refresh: true }),
+    getSellerApplication: () => get('users/me/seller-application', { authenticated: true }),
+    submitSellerApplication: (input) => post('users/seller-applications', input, { authenticated: true }),
+    getSellerProfile: () => get('users/me/seller-profile', { authenticated: true }),
+    beginAuthenticatorEnrollment: () => post('users/me/authenticator/enroll', {}, { authenticated: true }),
+    confirmAuthenticatorEnrollment: (code) => post('users/me/authenticator/confirm', { code }, { authenticated: true }),
+    createStepUpGrant: (action, code) => post('users/auth/step-up', { action, code }, { authenticated: true }),
+    getPayout: () => get('users/me/payout', { authenticated: true }),
+    updatePayout: (input) => send('PATCH', 'users/me/payout-method', input, { authenticated: true }),
+    getAdminApplications: () => get('admin/seller-applications', { authenticated: true }),
+    reviewSellerApplication: (id, decision, reason) => post(`admin/seller-applications/${encodeURIComponent(id)}/review`, { decision, reason }, { authenticated: true }),
+    verifySellerIdentity: (id, note) => post(`admin/sellers/${encodeURIComponent(id)}/identity-verification`, { note }, { authenticated: true }),
+    getAdminPayouts: () => get('admin/payouts', { authenticated: true }),
+    setPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold`, { reason }, { authenticated: true }),
+    clearPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold/clear`, { reason }, { authenticated: true }),
   }
 }
 
