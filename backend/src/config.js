@@ -1,5 +1,6 @@
 const { getJwtConfig } = require('./lib/jwt');
 const { parseAllowedOrigins } = require('./middleware/cors');
+const { keyProviderFromEnv } = require('./lib/keyProvider');
 
 const DEFAULTS = Object.freeze({
   EMAIL_CODE_LENGTH: 6,
@@ -85,6 +86,7 @@ function getRuntimeConfig(env = process.env) {
 
   let database = null;
   let redis = null;
+  let payoutKeyProvider = null;
   if (production) {
     database = assertUrl(env, 'DATABASE_URL', ['postgres:', 'postgresql:']);
     if (database.pathname.toLowerCase().includes('testing_only')) {
@@ -95,6 +97,7 @@ function getRuntimeConfig(env = process.env) {
     assertCredential(env, 'EMAIL_PROVIDER_API_KEY');
     assertCredential(env, 'EMAIL_QUEUE_ENCRYPTION_SECRET', { minimumBytes: 32 });
     assertCredential(env, 'STAFF_TOTP_ENCRYPTION_SECRET', { minimumBytes: 32 });
+    payoutKeyProvider = keyProviderFromEnv(env);
     assertCredential(env, 'CHALLENGE_PROVIDER_KEY');
     if (env.EMAIL_SENDER_ADAPTER === 'fake' || env.CHALLENGE_VERIFIER_ADAPTER === 'fake' || env.ALLOW_FAKE_ADAPTERS === 'true') {
       throw new Error('Configuration error: fake credential adapters are forbidden in production.');
@@ -122,6 +125,7 @@ function getRuntimeConfig(env = process.env) {
     emailAdapter: env.EMAIL_SENDER_ADAPTER || null,
     challengeAdapter: env.CHALLENGE_VERIFIER_ADAPTER || null,
     allowFakeAdapters: !production && env.ALLOW_FAKE_ADAPTERS === 'true',
+    payoutKeyProvider,
   });
 }
 

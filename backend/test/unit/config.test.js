@@ -12,6 +12,8 @@ function validProductionEnv(overrides = {}) {
     EMAIL_PROVIDER_API_KEY: 'email-provider-secret',
     EMAIL_QUEUE_ENCRYPTION_SECRET: 'email-queue-encryption-secret-material-32bytes',
     STAFF_TOTP_ENCRYPTION_SECRET: 'staff-totp-encryption-key-material-at-least-32bytes',
+    PAYOUT_ENCRYPTION_ACTIVE_KEY_ID: '2026-01',
+    PAYOUT_ENCRYPTION_KEYS_JSON: JSON.stringify({ '2026-01': Buffer.alloc(32, 7).toString('base64') }),
     CHALLENGE_VERIFIER_ADAPTER: 'provider',
     CHALLENGE_PROVIDER_KEY: 'challenge-provider-secret',
     ...overrides,
@@ -32,6 +34,16 @@ describe('FR-84c: production configuration validation', () => {
       .toThrow('EMAIL_QUEUE_ENCRYPTION_SECRET is missing');
     expect(() => getRuntimeConfig(validProductionEnv({ DATABASE_URL: 'postgres://user:pass@db.test/testing_only' })))
       .toThrow('cannot target testing_only');
+  });
+
+  test('FR-79f: production requires a valid active payout encryption key', () => {
+    expect(getRuntimeConfig(validProductionEnv()).payoutKeyProvider.activeKeyId).toBe('2026-01');
+    expect(() => getRuntimeConfig(validProductionEnv({ PAYOUT_ENCRYPTION_ACTIVE_KEY_ID: 'missing' })))
+      .toThrow('PAYOUT_ENCRYPTION_ACTIVE_KEY_ID');
+    expect(() => getRuntimeConfig(validProductionEnv({ PAYOUT_ENCRYPTION_KEYS_JSON: 'CHANGE_ME' })))
+      .toThrow('PAYOUT_ENCRYPTION_KEYS_JSON');
+    expect(() => getRuntimeConfig(validProductionEnv({ PAYOUT_ENCRYPTION_KEYS_JSON: JSON.stringify({ k: 'c2hvcnQ=' }) })))
+      .toThrow('exactly 32 bytes');
   });
 
   test('refuses wildcard or empty production CORS origins', () => {

@@ -192,6 +192,17 @@ fields are removed; omitted fields with stored listing values are retired.
 Migration `006_measurement_field_lifecycle.sql` adds `required` and `is_active`.
 Stage evidence is in `PHASE1_PROGRESS.md`.
 
+**Stage 3 contract (implemented 2026-10-22):** payout payloads use a versioned
+AES-256-GCM envelope with a fresh 12-byte nonce, 16-byte authentication tag,
+seller-bound AAD and the key ID stored in the envelope. `KeyProvider` reads the
+active ID and base64 key map from environment settings; production startup
+rejects absent or malformed key configuration. Migration
+`007_payout_encryption_envelope.sql` adds expandable JSONB storage, and
+`npm run keys:rotate` rewrites mixed key versions. Keep legacy keys present
+until the migration/rollback window is closed; offline backup and a deployment
+rotation exercise remain live checks. Stage evidence is in
+`PHASE1_PROGRESS.md`.
+
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Temporary email verification above implemented and tested before Phase 2

@@ -37,6 +37,13 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-17 · FR-83i, FR-83j · Confirm or drop the remaining email proposals: code tied to the login attempt, invisible bot check, per-IP limits, disposable-email blocking, email ownership at signup (FR-83i); sending subdomain with SPF/DKIM/DMARC, separate login stream, ~10 s p95, code in the subject (FR-83j).
 
 ### Needed by Phase 1
+
+- 2026-10-22 · FR-79f / SEC-30 · **Provisional — owner to confirm:** payout
+  keys use `PAYOUT_ENCRYPTION_KEYS_JSON` as a JSON map of stable key IDs to
+  base64-encoded 32-byte keys, with `PAYOUT_ENCRYPTION_ACTIVE_KEY_ID` selecting
+  the write key. This keeps reads possible across rotation. Provision keys only
+  through the deployment secret store; the offline backup and rollout window
+  remain live checks.
 - 2026-10-22 · FR-06 / FR-07a · **Provisional — owner to confirm:** one pending seller application per account; a rejected application is resubmitted as a new row linked through `resubmitted_from`; both application text fields must be non-empty. There is no cooldown. This keeps each review decision auditable while the owner clarifies whether pending applications may be edited in place.
 
 ### Needed by Phase 2

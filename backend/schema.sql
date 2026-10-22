@@ -1006,3 +1006,9 @@ ALTER TABLE staff_totp_credentials
 ALTER TABLE measurement_field_defs
   ADD COLUMN required BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT true;
+
+-- Migration: 007_payout_encryption_envelope.sql
+-- FR-79f: expandable encrypted payout payload storage; the legacy plaintext
+-- columns remain untouched until the payout UI migration is ready.
+ALTER TABLE seller_profiles
+  ADD COLUMN payout_details_encrypted JSONB;

@@ -23,7 +23,7 @@ describe('FR-79b migration support', () => {
       '001_initial_schema.sql', '002_pgboss_schema.sql', '003_auth_foundation.sql',
       '004_email_code_purpose.sql',
       '005_staff_totp_replay_guard.sql',
-      '006_measurement_field_lifecycle.sql',
+        '006_measurement_field_lifecycle.sql', '007_payout_encryption_envelope.sql',
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');

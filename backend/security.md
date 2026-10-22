@@ -123,7 +123,7 @@ money integrity; expect a payments section here once Phase 4 starts.
   *Enforced by:* test · *Today:* n/a-yet (no webhooks; courier updates are manual).
 - [ ] **SEC-34 Money integrity** *(added; matters most under escrow)*. Amounts are `NUMERIC`/integer minor units, never floats; every money-state change runs inside `db.withTransaction`; operations are idempotent; the client never supplies an amount — price comes from the accepted offer. Decided (FR-79f): ledger and audit tables are append-only — the application role cannot update or delete, and corrections are reversing entries; payment creation uses idempotency keys (FR-63a, DISCUSS).
   *Enforced by:* review + test · *Today:* needs an audit once Phase 4 starts.
-- [ ] **SEC-35 Payout-detail changes are protected.** Sellers must enroll an authenticator before first saving payout details. Every payout-detail change requires authenticator step-up and sends an email notification; Admins see a “changed recently” flag when processing a payout. Payout-detail writes remain disabled until FR-79f key custody is implemented. There is no automatic 72-hour payout-detail change lock; recovered sellers' payouts follow FR-83l.
+- [ ] **SEC-35 Payout-detail changes are protected.** Sellers must enroll an authenticator before first saving payout details. Every payout-detail change requires authenticator step-up and sends an email notification; Admins see a “changed recently” flag when processing a payout. There is no automatic 72-hour payout-detail change lock; recovered sellers' payouts follow FR-83l.
   *Enforced by:* test · *Today:* **FAILS** — `updateSellerPayoutMethod` changes details with no re-authentication and no notification.
 
 - [ ] **SEC-36 Private, money and auth routes are never cached** *(added)*. They send `Cache-Control: private, no-store`; public routes never set cookies; money values are never read from a cache (specs.md FR-73b–FR-73d, DISCUSS).
@@ -133,6 +133,9 @@ money integrity; expect a payments section here once Phase 4 starts.
 
 - [x] **SEC-38 Refresh tokens rotate and are revocable** *(added)*. Every refresh issues a new single-use token; reuse of an old one revokes its whole family and forces sign-in; absolute and inactivity expiry are enforced server-side; tokens are stored hashed (specs.md FR-84, FR-84a, approved 2026-10-17).
   *Enforced by:* `test/integration/known-mismatches.test.js` — FR-84/FR-84a/SEC-38 tests concurrent refresh reuse and family revocation.
+
+- [x] **SEC-30 Sensitive payout fields are encrypted at application level** *(FR-79f)*. AES-256-GCM uses a random nonce, seller-bound AAD, a versioned key ID and an environment-backed `KeyProvider`; mixed versions can be re-encrypted with `npm run keys:rotate`. `test/unit/payout-encryption.test.js` covers authenticated encryption and rotation. Production configuration rejects missing or invalid active keys. Offline backup and deployment rotation remain live checks.
+  *Enforced by:* `test/unit/payout-encryption.test.js` and `test/unit/config.test.js`.
 
 ---
 

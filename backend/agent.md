@@ -27,7 +27,7 @@ durable rotating refresh sessions, self-service password reset, and one-time
 TOTP-enrolled admin bootstrap. Email verification, strict high-value approval
 gating and signup/login/reset/message/offer limits are implemented. Live
 provider delivery, real-Redis verification and deployment checks remain pending.
-Seller factor requirements, passkey fallback, recovery and step-up remain parked.
+ Seller factor requirements, passkey fallback, recovery and step-up remain parked.
 The COD-era harness
 described below remains the baseline for the rest of the system.
 
@@ -36,6 +36,14 @@ interfaces live under `src/lib/adapters/`. Production requires configured
 provider credentials and rejects placeholders/fakes. Non-production fakes
 require explicit adapter selection and `ALLOW_FAKE_ADAPTERS=true`. Live checks
 are tracked in `LIVE_CHECKS.md`.
+
+Payout encryption uses `src/lib/keyProvider.js` and
+`src/lib/payoutEncryption.js`. The environment key map is JSON from stable key
+IDs to base64-encoded 32-byte keys; `PAYOUT_ENCRYPTION_ACTIVE_KEY_ID` selects
+the write key. `npm run keys:rotate` re-encrypts stored seller envelopes with
+the active key while keeping old keys available for reads. Never log envelopes
+or key material; operators retain old keys through the documented rollback
+window and maintain an offline master-key backup.
 
 `npm run admin:create` is an interactive, one-time bootstrap. It requires
 `STAFF_TOTP_ENCRYPTION_SECRET` from the deployment secret store and asks the

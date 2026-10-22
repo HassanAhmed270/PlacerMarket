@@ -84,3 +84,39 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Live checks:** none required for this backend stage; deployment checks remain
   open in `LIVE_CHECKS.md`.
 - **Next:** Stage 3 — KEY PROVIDER + ENCRYPTION.
+
+## Stage 3 — KEY PROVIDER + ENCRYPTION — complete (2026-10-22)
+
+- **Files:** migration `db/migrations/007_payout_encryption_envelope.sql`,
+  generated `schema.sql`, `src/lib/keyProvider.js`,
+  `src/lib/payoutEncryption.js`, `src/config.js`,
+  `scripts/rotate-payout-keys.js`, `package.json`, `.env.example`,
+  `test/unit/payout-encryption.test.js`, `test/unit/config.test.js`, migration
+  snapshot test, `agent.md`, `open-questions.md`, `specs.md`, `security.md`,
+  `LIVE_CHECKS.md`, `Phases.md`, and this checkpoint.
+- **Migrations:** 001 `initial_schema`, 002 `pgboss_schema`, 003
+  `auth_foundation`, 004 `email_code_purpose`, 005
+  `staff_totp_replay_guard`, 006 `measurement_field_lifecycle`, 007
+  `payout_encryption_envelope`. Snapshot regenerated; legacy plaintext columns
+  remain untouched pending the payout stage.
+- **Behavior:** AES-256-GCM uses random 12-byte nonces, seller-ID AAD, versioned
+  key IDs and base64url envelope fields. Production config requires a valid
+  active key and every key is exactly 32 bytes. `npm run keys:rotate` scans
+  bounded batches, decrypts with the recorded key and conditionally replaces
+  envelopes with the active key. No provider or dependency was added.
+- **Verification:** focused key-provider/config/snapshot tests — 3 suites / 13
+  tests passed. Full `npm.cmd test -- --runInBand` — 34 suites / 374 tests
+  passed; `npm.cmd run db:check-schema` passed. Full PostgreSQL 18.6 integration
+  run — 4 suites passed / 1 suite skipped, 73 tests passed / 3 skipped. Redis
+  integration tests remain skipped because `TEST_REDIS_URL` is unset and no
+  local Redis service was available. The initial integration command omitted
+  loading `.env` and correctly stopped at the test-database guard; rerun with
+  Node `--env-file-if-exists=.env` passed.
+- **Rows ticked:** FR-79f and SEC-30; tests named in `specs.md` and `security.md`.
+- **Parked:** offline master-key backup and deployment rotation exercise are
+  live checks. No security-critical ambiguity remains for this adapter.
+- **Provisional assumptions:** key env format is JSON key-ID-to-base64 mapping,
+  recorded in `open-questions.md` for owner confirmation.
+- **Live checks:** `LIVE_CHECKS.md` tracks offline key backup, staged rotation,
+  rollback window, and old-key removal.
+- **Next:** Stage 4 — ID VERIFICATION.

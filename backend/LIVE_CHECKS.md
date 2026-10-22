@@ -33,6 +33,10 @@ put live credentials in this file, source control, test output, or logs.
 - [ ] Owner creates and verifies an offline master-key backup for payout-field
   encryption; confirm access, secure storage and recovery without placing the
   backup in source control, the database or logs.
+- [ ] Exercise payout-key rotation with a current backup: deploy new key ID and
+  key alongside old keys, switch `PAYOUT_ENCRYPTION_ACTIVE_KEY_ID`, run
+  `npm run keys:rotate`, verify no ciphertext references the old key, then
+  remove the old key only after the rollback window closes.
 - [ ] Document and exercise the manual Admin identity-verification procedure:
   verify identity without retaining a CNIC number or document, set the audit
   fields, and confirm first-payout gating checks id_verified rather than email.
