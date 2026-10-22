@@ -41,6 +41,11 @@ async function reviewSellerApplication(applicationId, { decision, reason, review
   return users.reviewSellerApplication(applicationId, { decision, reason, reviewerId });
 }
 
+/** FR-07b: admin/moderator reads the seller-application review queue. */
+async function getSellerApplicationQueue(options) {
+  return users.getSellerApplicationQueue(options);
+}
+
 // ---- FR-54: listings ----
 
 /** FR-54, FR-19a: approve a listing to go live (delegates to listings.service). */
@@ -105,6 +110,7 @@ async function getAdvertisingOverview() {
 module.exports = {
   suspendUser,
   reviewSellerApplication,
+  getSellerApplicationQueue,
   approveListing,
   rejectListing,
   grantVerifiedBadge,

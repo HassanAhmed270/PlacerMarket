@@ -37,7 +37,7 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-17 · FR-83i, FR-83j · Confirm or drop the remaining email proposals: code tied to the login attempt, invisible bot check, per-IP limits, disposable-email blocking, email ownership at signup (FR-83i); sending subdomain with SPF/DKIM/DMARC, separate login stream, ~10 s p95, code in the subject (FR-83j).
 
 ### Needed by Phase 1
-No unresolved owner decisions are registered for Phase 1 as of 2026-10-21. The dated Phase 1 implementation backlog and safe ordering are in `Phases.md`.
+- 2026-10-22 · FR-06 / FR-07a · **Provisional — owner to confirm:** one pending seller application per account; a rejected application is resubmitted as a new row linked through `resubmitted_from`; both application text fields must be non-empty. There is no cooldown. This keeps each review decision auditable while the owner clarifies whether pending applications may be edited in place.
 
 ### Needed by Phase 2
 - CNIC/document retention and legal review are required only if a future provider or workflow stores identity documents. Deferred decisions and external review are listed in `END_OF_PHASES_REVIEW.md`; current manual verification stores no CNIC number or document.

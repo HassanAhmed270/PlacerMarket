@@ -14,6 +14,10 @@ router.post('/users/:id/suspend', requirePermission('user.suspend'), async (req,
   res.json(await admin.suspendUser(req.params.id, { adminId: req.user.id, reason: req.body.reason })); // FR-52
 });
 
+router.get('/seller-applications', requirePermission('seller_application.approve'), async (req, res) => {
+  res.json(await admin.getSellerApplicationQueue({ status: req.query.status || 'pending' })); // FR-07b
+});
+
 router.post(
   '/seller-applications/:id/review',
   requirePermission((req) => (req.body.decision === 'approved' ? 'seller_application.approve' : 'seller_application.reject')),

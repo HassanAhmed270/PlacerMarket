@@ -164,6 +164,10 @@ router.post('/seller-applications', requireAuth, async (req, res) => {
   res.status(201).json(await users.submitSellerApplication(req.user.id, req.body)); // FR-06
 });
 
+router.get('/me/seller-application', requireAuth, async (req, res) => {
+  res.json(await users.getSellerApplicationStatus(req.user.id)); // FR-06, FR-07a
+});
+
 router.get('/me/seller-profile', requireAuth, async (req, res) => {
   res.json(await users.getSellerProfile(req.user.id)); // FR-09
 });

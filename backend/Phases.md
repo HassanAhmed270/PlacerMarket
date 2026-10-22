@@ -173,6 +173,15 @@ fields · `KeyProvider` and payout-field encryption/key custody · FR-83k/83l
 recovery and payout pause. Preserve the strictly-above email threshold for
 high-value listing approval; verify existing implementation before relying on it.
 
+**Stage 1 contract (implemented 2026-10-22):** `POST /api/users/seller-applications`
+accepts only `reasonForSelling` and `whatWillSell`; `GET
+/api/users/me/seller-application` returns the caller's latest status;
+`GET /api/admin/seller-applications?status=pending` returns the review queue with
+name, phone and city joined from the user profile; the existing
+`POST /api/admin/seller-applications/:id/review` decides the application. The
+backend stage evidence is in `PHASE1_PROGRESS.md`; the admin queue's navigation
+placement remains a frontend item.
+
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Temporary email verification above implemented and tested before Phase 2

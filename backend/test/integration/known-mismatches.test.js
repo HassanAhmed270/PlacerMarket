@@ -49,6 +49,98 @@ afterAll(async () => {
 });
 
 describe('known schema and service mismatches', () => {
+  test('FR-06: seller applications require a set city and store only reasonForSelling and whatWillSell', async () => {
+    await db.query('DELETE FROM seller_applications WHERE user_id = $1', [fixture.userId]);
+    await db.query("UPDATE users SET role = 'buyer' WHERE id = $1", [fixture.userId]);
+    const application = await users.submitSellerApplication(fixture.userId, {
+      reasonForSelling: 'I want to sell my formalwear', whatWillSell: 'Bridal outfits',
+    });
+    expect(application).toMatchObject({
+      user_id: fixture.userId,
+      status: 'pending',
+      reason_for_selling: 'I want to sell my formalwear',
+      what_will_sell: 'Bridal outfits',
+      is_resubmission: false,
+    });
+    expect(application).not.toHaveProperty('name');
+    expect(application).not.toHaveProperty('phone');
+    expect(application).not.toHaveProperty('city_id');
+    await expect(users.submitSellerApplication(fixture.userId, {
+      reasonForSelling: 'Selling', whatWillSell: 'Formalwear', cityId: fixture.cityId,
+    })).rejects.toThrow('reasonForSelling and whatWillSell are required');
+    await db.query('UPDATE users SET city_id = NULL WHERE id = $1', [fixture.userId]);
+    await expect(users.submitSellerApplication(fixture.userId, {
+      reasonForSelling: 'Selling', whatWillSell: 'Formalwear',
+    })).rejects.toThrow('City verification required');
+  });
+
+  test('FR-07: approval atomically sets seller role, approval flag and approval timestamp', async () => {
+    await db.query("UPDATE users SET role = 'buyer' WHERE id = $1", [fixture.userId]);
+    await db.query('UPDATE seller_profiles SET is_approved = false, approved_at = NULL WHERE user_id = $1', [fixture.userId]);
+    const result = await users.reviewSellerApplication(fixture.applicationId, {
+      decision: 'approved', reviewerId: fixture.otherUserId,
+    });
+    const { rows } = await db.query(
+      `SELECT u.role, sp.is_approved, sp.approved_at, sa.status
+       FROM users u JOIN seller_profiles sp ON sp.user_id = u.id
+       JOIN seller_applications sa ON sa.user_id = u.id WHERE u.id = $1 AND sa.id = $2`,
+      [fixture.userId, fixture.applicationId]
+    );
+    expect(result.status).toBe('approved');
+    expect(rows[0]).toMatchObject({ role: 'seller', is_approved: true, status: 'approved' });
+    expect(rows[0].approved_at).toBeTruthy();
+  });
+
+  test('FR-07: failed seller approval rolls back the application and profile changes', async () => {
+    await db.query("UPDATE users SET role = 'buyer' WHERE id = $1", [fixture.userId]);
+    await db.query('UPDATE seller_profiles SET is_approved = false, approved_at = NULL WHERE user_id = $1', [fixture.userId]);
+    await db.query(`
+      CREATE FUNCTION reject_fixture_seller_role() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.id = '${fixture.userId}'::uuid AND NEW.role = 'seller' THEN
+          RAISE EXCEPTION 'injected seller-role failure';
+        END IF;
+        RETURN NEW;
+      END; $$;
+      CREATE TRIGGER reject_fixture_seller_role BEFORE UPDATE OF role ON users
+      FOR EACH ROW EXECUTE FUNCTION reject_fixture_seller_role();
+    `);
+    try {
+      await expect(users.reviewSellerApplication(fixture.applicationId, {
+        decision: 'approved', reviewerId: fixture.otherUserId,
+      })).rejects.toThrow('injected seller-role failure');
+    } finally {
+      await db.query('DROP TRIGGER reject_fixture_seller_role ON users; DROP FUNCTION reject_fixture_seller_role();');
+    }
+    const { rows } = await db.query(
+      `SELECT u.role, sp.is_approved, sp.approved_at, sa.status
+       FROM users u JOIN seller_profiles sp ON sp.user_id = u.id
+       JOIN seller_applications sa ON sa.user_id = u.id WHERE u.id = $1 AND sa.id = $2`,
+      [fixture.userId, fixture.applicationId]
+    );
+    expect(rows[0]).toMatchObject({ role: 'buyer', is_approved: false, approved_at: null, status: 'pending' });
+  });
+
+  test('FR-07a: rejected applications can be resubmitted with a link to the rejected application', async () => {
+    await db.query("UPDATE seller_applications SET status = 'rejected', rejection_reason = 'More detail needed' WHERE id = $1", [fixture.applicationId]);
+    await db.query("UPDATE users SET role = 'buyer' WHERE id = $1", [fixture.userId]);
+    const resubmission = await users.submitSellerApplication(fixture.userId, {
+      reasonForSelling: 'I have more detail', whatWillSell: 'Wedding outfits',
+    });
+    expect(resubmission).toMatchObject({
+      status: 'pending', is_resubmission: true, resubmitted_from: fixture.applicationId,
+    });
+  });
+
+  test('FR-10: suspending a seller clears approval and approved_at', async () => {
+    await users.suspendSeller(fixture.userId, { adminId: fixture.otherUserId, reason: 'review' });
+    const { rows } = await db.query(
+      'SELECT is_approved, approved_at FROM seller_profiles WHERE user_id = $1', [fixture.userId]
+    );
+    expect(rows[0]).toEqual({ is_approved: false, approved_at: null });
+    await expect(users.isApprovedSeller(fixture.userId)).resolves.toBe(false);
+  });
+
   test('FR-01, SEC-01: registration stores a server-generated Argon2id password hash', async () => {
     registrationPhone = `+1999${Date.now().toString().slice(-9)}`;
     const created = await users.registerUser({
@@ -265,18 +357,17 @@ describe('known schema and service mismatches', () => {
     }
   });
 
-  test.failing('seller application submission creates a pending application for the existing user', async () => {
-    await users.submitSellerApplication(fixture.userId, {
-      name: 'Fixture seller', phone: '+15550000000', cityId: fixture.cityId,
+  test('FR-07b: seller-application review queue resolves applicant identity from the user profile', async () => {
+    const queue = await users.getSellerApplicationQueue();
+    const item = queue.find((application) => application.id === fixture.applicationId);
+    expect(item).toMatchObject({
+      user_id: fixture.userId, full_name: expect.any(String), phone: expect.any(String),
+      city_id: fixture.cityId, city_name: expect.any(String),
     });
-    const stored = await db.query(
-      'SELECT user_id, status FROM seller_applications WHERE user_id = $1 AND id <> $2 ORDER BY created_at DESC LIMIT 1',
-      [fixture.userId, fixture.applicationId]
-    );
-    expect(stored.rows[0]).toEqual({ user_id: fixture.userId, status: 'pending' });
+    expect(item).not.toHaveProperty('password_hash');
   });
 
-  test('seller application rejection stores its rejection reason', async () => {
+  test('FR-07: rejected seller applications record the required reason', async () => {
     const result = await users.reviewSellerApplication(fixture.applicationId, {
       decision: 'rejected', reason: 'Does not meet criteria', reviewerId: fixture.userId,
     });

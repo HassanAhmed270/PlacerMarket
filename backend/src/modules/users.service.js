@@ -479,14 +479,34 @@ async function getUserRole(userId) {
 
 // ---- FR-06, FR-07, FR-07a, FR-07b: seller applications ----
 
-/** FR-06: buyer submits a "Become a Seller" application (name/phone/city only, no CNIC here). */
-async function submitSellerApplication(userId, { name, phone, cityId }) {
-  const { rows } = await db.query(
-    `INSERT INTO seller_applications (user_id, name, phone, city_id, status)
-     VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
-    [userId, name, phone, cityId]
-  );
-  return rows[0];
+/** FR-06: verified-city buyers apply with only their reason and the items they will sell. */
+async function submitSellerApplication(userId, input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) ||
+      Object.keys(input).some((key) => !['reasonForSelling', 'whatWillSell'].includes(key)) ||
+      typeof input.reasonForSelling !== 'string' || !input.reasonForSelling.trim() ||
+      typeof input.whatWillSell !== 'string' || !input.whatWillSell.trim()) {
+    throw new ValidationError('reasonForSelling and whatWillSell are required');
+  }
+  await assertCityVerified(userId);
+  return db.withTransaction(async (client) => {
+    const { rows: userRows } = await client.query('SELECT role FROM users WHERE id = $1 FOR UPDATE', [userId]);
+    if (!userRows[0]) throw new NotFoundError('user', userId);
+    if (userRows[0].role !== 'buyer') throw new ValidationError('Only buyers can apply to become sellers');
+    const { rows: previousRows } = await client.query(
+      'SELECT id, status FROM seller_applications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE',
+      [userId]
+    );
+    const previous = previousRows[0];
+    if (previous?.status === 'pending') throw new ValidationError('A seller application is already pending');
+    if (previous?.status === 'approved') throw new ValidationError('This account already has an approved seller application');
+    const { rows } = await client.query(
+      `INSERT INTO seller_applications
+         (user_id, reason_for_selling, what_will_sell, is_resubmission, resubmitted_from, status)
+       VALUES ($1, $2, $3, $4, $5, 'pending') RETURNING *`,
+      [userId, input.reasonForSelling.trim(), input.whatWillSell.trim(), Boolean(previous), previous?.id || null]
+    );
+    return rows[0];
+  });
 }
 
 /**
@@ -497,14 +517,21 @@ async function reviewSellerApplication(applicationId, { decision, reason, review
   if (!['approved', 'rejected'].includes(decision)) {
     throw new ValidationError('decision must be "approved" or "rejected"');
   }
+  if (decision === 'rejected' && (typeof reason !== 'string' || !reason.trim())) {
+    throw new ValidationError('A rejection reason is required');
+  }
   return db.withTransaction(async (client) => {
     const { rows } = await client.query(
       `UPDATE seller_applications
        SET status = $1, rejection_reason = $2, reviewed_by = $3, reviewed_at = now()
-       WHERE id = $4 RETURNING *`,
+       WHERE id = $4 AND status = 'pending' RETURNING *`,
       [decision, reason || null, reviewerId, applicationId]
     );
-    if (!rows[0]) throw new NotFoundError('seller_application', applicationId);
+    if (!rows[0]) {
+      const { rows: existing } = await client.query('SELECT id FROM seller_applications WHERE id = $1', [applicationId]);
+      if (!existing[0]) throw new NotFoundError('seller_application', applicationId);
+      throw new ValidationError('Only pending seller applications can be reviewed');
+    }
 
     if (decision === 'approved') {
       await client.query(
@@ -513,7 +540,7 @@ async function reviewSellerApplication(applicationId, { decision, reason, review
          ON CONFLICT (user_id) DO UPDATE SET is_approved = true, approved_at = now()`,
         [rows[0].user_id]
       );
-      await client.query(`UPDATE users SET role = 'seller' WHERE id = $1`, [rows[0].user_id]);
+      await client.query(`UPDATE users SET role = 'seller', updated_at = now() WHERE id = $1`, [rows[0].user_id]);
     }
     await eventBus.emitAsync(events.SELLER_APPLICATION_STATUS_CHANGED, { applicationId, decision, reason }, { transaction: client });
     return rows[0];
@@ -522,11 +549,30 @@ async function reviewSellerApplication(applicationId, { decision, reason, review
 
 /** FR-07b: the review queue itself — UI places this under Admin -> Users, this is just the data. */
 async function getSellerApplicationQueue({ status = 'pending' } = {}) {
+  if (!['pending', 'approved', 'rejected'].includes(status)) {
+    throw new ValidationError('status must be pending, approved, or rejected');
+  }
   const { rows } = await db.query(
-    'SELECT * FROM seller_applications WHERE status = $1 ORDER BY created_at ASC',
+    `SELECT sa.*, u.full_name, u.phone, u.city_id, c.name AS city_name
+     FROM seller_applications sa
+     JOIN users u ON u.id = sa.user_id
+     LEFT JOIN cities c ON c.id = u.city_id
+     WHERE sa.status = $1
+     ORDER BY sa.created_at ASC`,
     [status]
   );
   return rows;
+}
+
+/** FR-06, FR-07a: return the current user's latest application status. */
+async function getSellerApplicationStatus(userId) {
+  const { rows } = await db.query(
+    `SELECT id, status, reason_for_selling, what_will_sell, rejection_reason,
+            is_resubmission, created_at, reviewed_at
+     FROM seller_applications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
 }
 
 // ---- FR-08, FR-08a, FR-08b, FR-09, FR-09a, FR-10: seller profile / gating ----
@@ -589,10 +635,17 @@ async function updateSellerPayoutMethod(userId, { method, details }) {
 
 /** FR-10: admin can suspend/revoke seller approval. Moderator CANNOT (FR-05a) — enforced at route level via lib/roles.js. */
 async function suspendSeller(userId, { adminId, reason }) {
-  const { rows } = await db.query(
-    `UPDATE users SET is_suspended = true WHERE id = $1 RETURNING id, role, is_suspended`, [userId]
-  );
-  if (!rows[0]) throw new NotFoundError('user', userId);
+  const rows = await db.withTransaction(async (client) => {
+    const { rows: updatedUsers } = await client.query(
+      `UPDATE users SET is_suspended = true, updated_at = now() WHERE id = $1
+       RETURNING id, role, is_suspended`, [userId]
+    );
+    if (!updatedUsers[0]) throw new NotFoundError('user', userId);
+    await client.query(
+      'UPDATE seller_profiles SET is_approved = false, approved_at = NULL WHERE user_id = $1', [userId]
+    );
+    return updatedUsers;
+  });
   eventBus.emit(events.SELLER_SUSPENDED, { userId, adminId, reason });
   return rows[0];
 }
@@ -620,6 +673,7 @@ module.exports = {
   submitSellerApplication,
   reviewSellerApplication,
   getSellerApplicationQueue,
+  getSellerApplicationStatus,
   isApprovedSeller,
   isIdVerificationRequired,
   isIdVerified,
