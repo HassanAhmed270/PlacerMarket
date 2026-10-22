@@ -3,8 +3,10 @@ const admin = require('../modules/admin.service');
 const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ValidationError } = require('../lib/errors');
+const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
 const router = Router();
+const limiters = createConfiguredRateLimiters();
 router.use(requireAuth);
 // Permission checks live HERE, per route (rules.md Section 5) — admin.service.js
 // does not check roles. Every route below must carry its own requirePermission();
@@ -16,6 +18,26 @@ router.post('/users/:id/suspend', requirePermission('user.suspend'), async (req,
 
 router.get('/seller-applications', requirePermission('seller_application.approve'), async (req, res) => {
   res.json(await admin.getSellerApplicationQueue({ status: req.query.status || 'pending' })); // FR-07b
+});
+
+router.get('/payouts', requirePermission('payout.review'), limiters.security, async (_req, res) => {
+  res.set('Cache-Control', 'no-store').json(await admin.getSellerPayoutQueue()); // FR-09a / SEC-35
+});
+
+router.post('/payouts/:sellerId/hold', requirePermission('payout.hold'), limiters.security, async (req, res) => {
+  if (Object.keys(req.body).some((key) => key !== 'reason') || typeof req.body.reason !== 'string' ||
+      !req.body.reason.trim() || req.body.reason.trim().length > 500) {
+    throw new ValidationError('A short payout-hold reason is required.');
+  }
+  res.set('Cache-Control', 'no-store').json(await admin.setSellerPayoutHold(req.params.sellerId, { adminId: req.user.id, reason: req.body.reason.trim() })); // FR-83l
+});
+
+router.post('/payouts/:sellerId/hold/clear', requirePermission('payout.hold'), limiters.security, async (req, res) => {
+  if (Object.keys(req.body).some((key) => key !== 'reason') || typeof req.body.reason !== 'string' ||
+      !req.body.reason.trim() || req.body.reason.trim().length > 500) {
+    throw new ValidationError('A short payout-hold release reason is required.');
+  }
+  res.set('Cache-Control', 'no-store').json(await admin.clearSellerPayoutHold(req.params.sellerId, { adminId: req.user.id, reason: req.body.reason.trim() })); // FR-83l
 });
 
 router.post('/sellers/:id/identity-verification', requirePermission('seller_identity.verify'), async (req, res) => {

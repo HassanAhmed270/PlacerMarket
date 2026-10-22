@@ -416,6 +416,99 @@ describe('known schema and service mismatches', () => {
     }
   });
 
+  test('FR-09a, SEC-30/35, FR-66/83l: payout API stores encrypted details, leaks no raw values, and enforces holds', async () => {
+    const envKeys = ['STAFF_TOTP_ENCRYPTION_SECRET', 'EMAIL_QUEUE_ENCRYPTION_SECRET', 'JWT_ACCESS_SECRET',
+      'PAYOUT_ENCRYPTION_ACTIVE_KEY_ID', 'PAYOUT_ENCRYPTION_KEYS_JSON'];
+    const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+    const previousRedis = getSharedRedisClient();
+    const observedLogs = [];
+    const logSpy = jest.spyOn(console, 'log').mockImplementation((...args) => observedLogs.push(args.join(' ')));
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation((...args) => observedLogs.push(args.join(' ')));
+    const jwtSecret = 'integration-payout-jwt-signing-secret-at-least-thirty-two-bytes';
+    process.env.STAFF_TOTP_ENCRYPTION_SECRET = 'integration-payout-seller-totp-encryption-key';
+    process.env.EMAIL_QUEUE_ENCRYPTION_SECRET = 'integration-payout-email-queue-encryption-key-32bytes';
+    process.env.JWT_ACCESS_SECRET = jwtSecret;
+    process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID = 'integration-payout-v1';
+    process.env.PAYOUT_ENCRYPTION_KEYS_JSON = JSON.stringify({ 'integration-payout-v1': Buffer.alloc(32, 42).toString('base64') });
+    setSharedRedisClient({ isOpen: true, eval: async () => [1, 1] });
+    const email = `payout-${fixture.suffix}@example.test`;
+    const iban = 'PK36SCBL0000001123456702';
+    try {
+      await db.query('UPDATE users SET email = $2, role = \'seller\' WHERE id = $1', [fixture.userId, email]);
+      await db.query("UPDATE users SET role = 'admin' WHERE id = $1", [fixture.otherUserId]);
+      const { rows: enrollmentSessionRows } = await db.query(
+        `INSERT INTO auth_sessions (family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at, enrollment_only)
+         VALUES (gen_random_uuid(), $1, $2, now() + interval '1 hour', now() + interval '1 day', true) RETURNING id`,
+        [fixture.userId, `payout-enrollment-${fixture.suffix}`]
+      );
+      const enrollmentSessionId = enrollmentSessionRows[0].id;
+      const setup = await users.beginSellerAuthenticatorEnrollment(fixture.userId);
+      const enrollment = await users.confirmSellerAuthenticatorEnrollment(fixture.userId, enrollmentSessionId, generateTotpCode(setup.secret));
+      const { rows: adminSessionRows } = await db.query(
+        `INSERT INTO auth_sessions (family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at)
+         VALUES (gen_random_uuid(), $1, $2, now() + interval '1 hour', now() + interval '1 day') RETURNING id`,
+        [fixture.otherUserId, `payout-admin-${fixture.suffix}`]
+      );
+      const sellerToken = signAccessToken(fixture.userId, { secret: jwtSecret, sessionId: enrollmentSessionId });
+      const adminToken = signAccessToken(fixture.otherUserId, { secret: jwtSecret, sessionId: adminSessionRows[0].id });
+      const grant = await users.createStepUpGrant(
+        fixture.userId, enrollmentSessionId, 'payout.update', enrollment.backupCodes[0]
+      );
+
+      const { rows: beforeJobs } = await db.query("SELECT count(*)::int AS count FROM pgboss.job WHERE name = 'email'");
+      const saved = await request(app).patch('/api/users/me/payout-method')
+        .set('Authorization', `Bearer ${sellerToken}`)
+        .send({ method: 'bank', bankName: 'Test Bank', accountTitle: 'Test Seller', iban, stepUpGrant: grant.grant });
+      expect(saved.status).toBe(200);
+      expect(saved.body).toMatchObject({ method: 'bank', last4: '6702' });
+      const sellerSummary = await request(app).get('/api/users/me/payout').set('Authorization', `Bearer ${sellerToken}`);
+      expect(sellerSummary.status).toBe(200);
+      expect(sellerSummary.body).toMatchObject({ method: 'bank', last4: '6702', configured: true, needsUpdate: false });
+      const profile = await request(app).get('/api/users/me/seller-profile').set('Authorization', `Bearer ${sellerToken}`);
+      expect(profile.status).toBe(200);
+      expect(profile.body).not.toHaveProperty('payout_bank_account');
+      expect(profile.body).not.toHaveProperty('payout_details_encrypted');
+
+      const { rows: storedRows } = await db.query(
+        `SELECT payout_method, payout_last4, payout_details_encrypted, payout_bank_account, payout_wallet_number
+           FROM seller_profiles WHERE user_id = $1`, [fixture.userId]
+      );
+      const storedJson = JSON.stringify(storedRows[0].payout_details_encrypted);
+      expect(storedRows[0]).toMatchObject({ payout_method: 'bank', payout_last4: '6702', payout_bank_account: null, payout_wallet_number: null });
+      expect(storedJson).not.toContain(iban);
+      expect(JSON.stringify([saved.body, sellerSummary.body, profile.body])).not.toMatch(/Test Bank|Test Seller|PK36SCBL|ciphertext|nonce|authTag/i);
+
+      await expect(users.assertPayoutAllowed(fixture.userId)).rejects.toMatchObject({ name: 'ForbiddenError' });
+      await users.verifySellerIdentity(fixture.userId, { adminId: fixture.otherUserId, note: 'Manual identity check complete' });
+      await expect(users.assertPayoutAllowed(fixture.userId)).resolves.toBe(true);
+      const adminView = await request(app).get('/api/admin/payouts').set('Authorization', `Bearer ${adminToken}`);
+      expect(adminView.status).toBe(200);
+      const item = adminView.body.find((entry) => entry.sellerId === fixture.userId);
+      expect(item).toMatchObject({ method: 'bank', last4: '6702', changedRecently: true, idVerified: true, authenticatorEnabled: true, payoutHoldActive: false });
+      expect(JSON.stringify(adminView.body)).not.toMatch(/Test Bank|Test Seller|PK36SCBL|ciphertext|nonce|authTag/i);
+
+      const held = await request(app).post(`/api/admin/payouts/${fixture.userId}/hold`)
+        .set('Authorization', `Bearer ${adminToken}`).send({ reason: 'Payout review requested' });
+      expect(held.status).toBe(200);
+      await expect(users.assertPayoutAllowed(fixture.userId)).rejects.toMatchObject({ name: 'ForbiddenError' });
+      const cleared = await request(app).post(`/api/admin/payouts/${fixture.userId}/hold/clear`)
+        .set('Authorization', `Bearer ${adminToken}`).send({ reason: 'Review complete' });
+      expect(cleared.status).toBe(200);
+      await expect(users.assertPayoutAllowed(fixture.userId)).resolves.toBe(true);
+      const { rows: afterJobs } = await db.query("SELECT count(*)::int AS count FROM pgboss.job WHERE name = 'email'");
+      expect(afterJobs[0].count - beforeJobs[0].count).toBe(1);
+      expect(observedLogs.join('\n')).not.toMatch(/Test Bank|Test Seller|PK36SCBL|ciphertext|nonce|authTag/i);
+    } finally {
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+      setSharedRedisClient(previousRedis);
+      for (const key of envKeys) {
+        if (previousEnv[key] === undefined) delete process.env[key];
+        else process.env[key] = previousEnv[key];
+      }
+    }
+  });
+
   test('FR-83g: password reset token is single-use, changes the password, and revokes every session', async () => {
     const crypto = require('node:crypto');
     const email = `reset-${Date.now()}@example.test`;

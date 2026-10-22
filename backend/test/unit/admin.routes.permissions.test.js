@@ -37,6 +37,9 @@ const routes = adminRouter.stack
 const ADMIN_ONLY_PATHS = [
   '/api/admin/users/x/suspend',
   '/api/admin/sellers/x/identity-verification',
+  '/api/admin/payouts',
+  '/api/admin/payouts/x/hold',
+  '/api/admin/payouts/x/hold/clear',
   '/api/admin/operations-overview',
   '/api/admin/delivery-partners',
   '/api/admin/fees/commission',

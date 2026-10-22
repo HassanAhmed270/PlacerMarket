@@ -179,11 +179,15 @@ router.get('/me/seller-application', requireAuth, async (req, res) => {
 });
 
 router.get('/me/seller-profile', requireAuth, async (req, res) => {
-  res.json(await users.getSellerProfile(req.user.id)); // FR-09
+  res.set('Cache-Control', 'no-store').json(await users.getSellerProfile(req.user.id)); // FR-09
 });
 
-router.patch('/me/payout-method', requireAuth, async (req, res) => {
-  res.json(await users.updateSellerPayoutMethod(req.user.id, req.body)); // FR-09a
+router.patch('/me/payout-method', requireAuth, limiters.security, async (req, res) => {
+  res.set('Cache-Control', 'no-store').json(await users.updateSellerPayoutMethod(req.user.id, { ...req.body, sessionId: req.authSessionId })); // FR-09a / SEC-35
+});
+
+router.get('/me/payout', requireAuth, limiters.security, async (req, res) => {
+  res.set('Cache-Control', 'no-store').json(await users.getSellerPayoutSummary(req.user.id)); // FR-09a
 });
 
 router.post('/me/authenticator/enroll', requireAuth, limiters.security, async (req, res) => {

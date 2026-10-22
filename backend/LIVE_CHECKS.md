@@ -40,6 +40,10 @@ put live credentials in this file, source control, test output, or logs.
   key alongside old keys, switch `PAYOUT_ENCRYPTION_ACTIVE_KEY_ID`, run
   `npm run keys:rotate`, verify no ciphertext references the old key, then
   remove the old key only after the rollback window closes.
+- [ ] On a copy of the pre-Phase-1 database, exercise `npm run keys:rotate`
+  against legacy plaintext payout columns; confirm those columns are nulled,
+  legacy values are encrypted, affected sellers are marked `payout_needs_update`,
+  and the old key is retained until the rollback window closes.
 - [ ] Document and exercise the manual Admin identity-verification procedure:
   verify identity without retaining a CNIC number or document, submit only a
   short note through the Admin route, confirm verified_by/verified_at are set,

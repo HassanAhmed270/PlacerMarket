@@ -46,6 +46,21 @@ async function getSellerApplicationQueue(options) {
   return users.getSellerApplicationQueue(options);
 }
 
+/** FR-09a / SEC-35: Admin view contains masked payout metadata and safety flags only. */
+async function getSellerPayoutQueue() {
+  return users.getSellerPayoutAdminQueue();
+}
+
+/** FR-83l: Admin sets a seller-level disbursement pause. */
+async function setSellerPayoutHold(sellerId, { adminId, reason }) {
+  return users.setSellerPayoutHold(sellerId, { adminId, reason });
+}
+
+/** FR-83l: Admin clears a payout pause with a separate reason. */
+async function clearSellerPayoutHold(sellerId, { adminId, reason }) {
+  return users.clearSellerPayoutHold(sellerId, { adminId, reason });
+}
+
 /** FR-66: Admin-only manual identity check delegates storage to users.service. */
 async function verifySellerIdentity(sellerId, { adminId, note }) {
   return users.verifySellerIdentity(sellerId, { adminId, note });
@@ -116,6 +131,9 @@ module.exports = {
   suspendUser,
   reviewSellerApplication,
   getSellerApplicationQueue,
+  getSellerPayoutQueue,
+  setSellerPayoutHold,
+  clearSellerPayoutHold,
   verifySellerIdentity,
   approveListing,
   rejectListing,

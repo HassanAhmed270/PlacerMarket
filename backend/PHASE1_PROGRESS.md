@@ -207,3 +207,25 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Live checks:** real Redis concurrency; real email-provider delivery and
   deployed TOTP key custody remain in `LIVE_CHECKS.md`.
 - **Next:** Stage 6 — PAYOUT DETAILS.
+
+## Stage 6 — payout details (implementation checkpoint; PostgreSQL verification pending)
+
+- **Implemented:** migration `010_payout_controls.sql`; method-specific bank,
+  Easypaisa and JazzCash validation; session-bound `payout.update` grants and
+  enrolled seller TOTP requirement; encrypted-at-rest details and last-four
+  projection; generic encrypted email queue notice on every change; Admin-only
+  masked payout queue, configurable seven-day changed flag, and audited hold
+  set/clear; payout initiation checks identity verification, authenticator,
+  hold state and current encrypted details. `keys:rotate` also encrypts and
+  scrubs legacy plaintext payout columns, marking those profiles for update.
+- **Verification:** full backend unit suite passes (36 suites / 422 tests);
+  payout-focused unit suite passes (56 tests); `npm.cmd run db:check-schema`
+  passes. The PostgreSQL payout/API/leak regression is added but could not start:
+  `TEST_DATABASE_URL` is unset. Do not mark FR-09a, FR-66, FR-83c/f, SEC-30/35
+  complete until this regression runs against PostgreSQL. Redis concurrency
+  and live email delivery remain separate live checks.
+- **Schema audit:** the earlier `42703` mismatch in `updateSellerPayoutMethod`
+  is repaired; regression evidence is pending that same PostgreSQL run.
+- **Next:** supply the approved integration-test database environment and run
+  `npm.cmd run test:integration -- --runInBand known-mismatches.test.js`, then
+  continue to Stage 7 frontend work.

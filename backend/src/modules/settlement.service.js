@@ -96,8 +96,12 @@ async function calculateSettlement(orderId, { agreedItemPrice, resolutionAmountT
   return rows[0];
 }
 
-/** FR-48: manual/admin-triggered payout — no payment-gateway automation in MVP. */
-async function initiateSellerPayout(orderId, adminId) {
+/** FR-48 / FR-66 / FR-83l: enforce seller payout eligibility at disbursement initiation. */
+async function initiateSellerPayout(orderId, adminId, assertPayoutAllowed) {
+  if (typeof assertPayoutAllowed !== 'function') throw new TypeError('Payout eligibility guard is required.');
+  const { rows: orders } = await db.query('SELECT seller_id FROM orders WHERE id = $1', [orderId]);
+  if (!orders[0]) throw new NotFoundError('order', orderId);
+  await assertPayoutAllowed(orders[0].seller_id);
   const { rows } = await db.query(
     `UPDATE settlements SET payout_initiated_by = $1, payout_initiated_at = now() WHERE order_id = $2 RETURNING *`,
     [adminId, orderId]

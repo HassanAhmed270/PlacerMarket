@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const settlement = require('../modules/settlement.service');
-const { requirePermission } = require('../middleware/auth');
+const users = require('../modules/users.service');
+const { requireAuth, requirePermission } = require('../middleware/auth');
 
 const router = Router();
 
@@ -13,8 +14,8 @@ router.get('/orders/:id', requirePermission('user.suspend'), async (req, res) =>
   res.json(record);
 });
 
-router.post('/orders/:id/initiate-payout', requirePermission('user.suspend'), async (req, res) => {
-  res.json(await settlement.initiateSellerPayout(req.params.id, req.user.id)); // FR-48
+router.post('/orders/:id/initiate-payout', requireAuth, requirePermission('user.suspend'), async (req, res) => {
+  res.json(await settlement.initiateSellerPayout(req.params.id, req.user.id, users.assertPayoutAllowed)); // FR-48 / FR-66 / FR-83l
 });
 
 router.patch('/commission', requirePermission('fee.configure'), async (req, res) => {

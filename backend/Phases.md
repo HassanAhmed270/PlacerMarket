@@ -222,8 +222,16 @@ and action. Password change, authenticator disable and Admin force-release use
 action-specific grants. New-device fingerprints are HMAC-hashed and cause one
 encrypted queued email notice. Each new endpoint uses the Redis-backed security
 limiter. Migration `009_seller_authenticator_step_up.sql` adds the records and
-session markers. Stage 6 still must enforce the payout enrollment/step-up gate
-and notification. Stage evidence is in `PHASE1_PROGRESS.md`.
+session markers. Stage 6 completes the payout enrollment/step-up gate and
+notification in code, with PostgreSQL leak/access regression still pending.
+Stage evidence and unchecked gate rows are in `PHASE1_PROGRESS.md`.
+
+**Stage 6 implementation checkpoint (2026-10-22):** seller payout updates use
+AES-GCM envelopes and one-use `payout.update` grants; Admin review sees masked
+metadata and recent-change/hold/identity flags; settlement initiation invokes
+the identity/authenticator/hold/current-details guard. Migration 010 adds the
+display and hold metadata. PostgreSQL integration cannot be claimed until
+`TEST_DATABASE_URL` is available; see `PHASE1_PROGRESS.md`.
 
 **Gate**
 - [ ] Backend FRs above ticked

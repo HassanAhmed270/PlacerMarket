@@ -31,6 +31,8 @@ const { decryptStaffTotpSecret, matchingTotpStep } = require('../lib/totp');
 const { encryptStaffTotpSecret, verifyTotpCode } = require('../lib/totp');
 const { NotFoundError, ForbiddenError, ValidationError } = require('../lib/errors');
 const { createIdentityVerifier } = require('../lib/adapters/identityVerifier');
+const { keyProviderFromEnv } = require('../lib/keyProvider');
+const { encryptPayoutDetails } = require('../lib/payoutEncryption');
 const { getSecurityLimits } = require('../config');
 const {
   makeCode, addressDigest, queueCodeEmail, queueEmail, reserveAddressSend, emailVerificationLocked,
@@ -565,6 +567,12 @@ async function consumeStepUpGrant(userId, sessionId, action, rawGrant) {
 async function disableSellerAuthenticator(userId, sessionId, rawGrant) {
   return db.withTransaction(async (client) => {
     await consumeStepUpGrantWithClient(client, userId, sessionId, 'security.change', rawGrant);
+    const { rows: profiles } = await client.query(
+      'SELECT payout_details_encrypted, payout_bank_account, payout_wallet_number FROM seller_profiles WHERE user_id = $1 FOR UPDATE', [userId]
+    );
+    if (profiles[0]?.payout_details_encrypted || profiles[0]?.payout_bank_account || profiles[0]?.payout_wallet_number) {
+      throw new ForbiddenError('Authenticator cannot be disabled while payout details are configured.');
+    }
     await client.query('DELETE FROM seller_totp_backup_codes WHERE user_id = $1', [userId]);
     await client.query('DELETE FROM seller_totp_credentials WHERE user_id = $1', [userId]);
   });
@@ -830,21 +838,175 @@ async function verifySellerIdentity(userId, { adminId, note }) {
 
 /** FR-09: individual seller profile (must read as an individual, not a storefront). */
 async function getSellerProfile(userId) {
-  const { rows } = await db.query('SELECT * FROM seller_profiles WHERE user_id = $1', [userId]);
+  const { rows } = await db.query(
+    `SELECT user_id, display_alias, is_approved, approved_at, id_verified,
+            rating_avg, rating_count, created_at
+       FROM seller_profiles WHERE user_id = $1`, [userId]
+  );
   if (!rows[0]) throw new NotFoundError('seller_profile', userId);
   return rows[0];
 }
 
-/** FR-09a: payout method is bank transfer or mobile wallet, seller's choice, switchable. */
-async function updateSellerPayoutMethod(userId, { method, details }) {
-  if (!['bank_transfer', 'mobile_wallet'].includes(method)) {
-    throw new ValidationError('payout method must be "bank_transfer" or "mobile_wallet"');
+function normalizePayoutInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ValidationError('Payout details are required.');
+  const method = input.method;
+  const common = ['method', 'stepUpGrant'];
+  const trimText = (value, label, max = 120) => {
+    if (typeof value !== 'string' || !value.trim() || value.trim().length > max) throw new ValidationError(`${label} is required and must be at most ${max} characters.`);
+    return value.trim();
+  };
+  if (method === 'bank') {
+    const allowed = new Set([...common, 'bankName', 'accountTitle', 'iban', 'accountNumber']);
+    if (Object.keys(input).some((key) => !allowed.has(key)) || Boolean(input.iban) === Boolean(input.accountNumber)) {
+      throw new ValidationError('Bank payouts require bankName, accountTitle, and exactly one of iban or accountNumber.');
+    }
+    const bankName = trimText(input.bankName, 'Bank name');
+    const accountTitle = trimText(input.accountTitle, 'Account title');
+    const field = input.iban ? 'iban' : 'accountNumber';
+    const raw = trimText(input[field], field === 'iban' ? 'IBAN' : 'Account number', 34).toUpperCase().replace(/[\s-]/g, '');
+    if (field === 'iban' ? !/^PK\d{2}[A-Z]{4}\d{16}$/.test(raw) : !/^[A-Z0-9]{8,34}$/.test(raw)) {
+      throw new ValidationError(field === 'iban' ? 'IBAN must be a valid Pakistani IBAN.' : 'Account number must contain 8 to 34 letters or digits.');
+    }
+    return { method, details: { bankName, accountTitle, [field]: raw }, last4: raw.slice(-4) };
   }
+  if (method === 'easypaisa' || method === 'jazzcash') {
+    const allowed = new Set([...common, 'walletNumber', 'accountHolderName']);
+    if (Object.keys(input).some((key) => !allowed.has(key))) throw new ValidationError('Unsupported payout fields.');
+    const walletNumber = trimText(input.walletNumber, 'Wallet number', 16).replace(/[\s-]/g, '');
+    if (!/^(?:03\d{9}|923\d{9})$/.test(walletNumber)) throw new ValidationError('Wallet number must be a valid Pakistan mobile number.');
+    const accountHolderName = trimText(input.accountHolderName, 'Account-holder name');
+    return { method, details: { walletNumber, accountHolderName }, last4: walletNumber.slice(-4) };
+  }
+  throw new ValidationError('Payout method must be bank, easypaisa, or jazzcash.');
+}
+
+/** FR-09a / SEC-35: require seller TOTP and an action-bound grant; encrypt and queue a generic notice atomically. */
+async function updateSellerPayoutMethod(userId, input) {
+  const { sessionId, ...payoutInput } = input || {};
+  const normalized = normalizePayoutInput(payoutInput);
+  if (typeof payoutInput.stepUpGrant !== 'string' || typeof sessionId !== 'string') throw new ForbiddenError('A payout.update step-up grant is required.');
+  const keyProvider = keyProviderFromEnv();
+  return db.withTransaction(async (client) => {
+    const { rows: profileRows } = await client.query(
+      `SELECT sp.user_id, sp.is_approved, u.role, u.email
+         FROM seller_profiles sp JOIN users u ON u.id = sp.user_id
+        WHERE sp.user_id = $1 FOR UPDATE OF sp, u`, [userId]
+    );
+    const profile = profileRows[0];
+    if (!profile) throw new NotFoundError('seller_profile', userId);
+    if (profile.role !== 'seller' || !profile.is_approved) throw new ForbiddenError('An approved seller account is required.');
+    if (!profile.email) throw new ValidationError('A verified account email is required for payout-change notices.');
+    const { rows: factors } = await client.query(
+      'SELECT enabled_at FROM seller_totp_credentials WHERE user_id = $1 FOR UPDATE', [userId]
+    );
+    if (!factors[0]?.enabled_at) throw new ForbiddenError('Enroll an authenticator before saving payout details.');
+    await consumeStepUpGrantWithClient(client, userId, sessionId, 'payout.update', payoutInput.stepUpGrant);
+    const encrypted = encryptPayoutDetails(normalized.details, userId, keyProvider);
+    const { rows } = await client.query(
+      `UPDATE seller_profiles SET payout_method = $2, payout_details_encrypted = $3::jsonb,
+          payout_last4 = $4, payout_changed_at = now(), payout_needs_update = false,
+          payout_bank_account = NULL, payout_wallet_number = NULL
+        WHERE user_id = $1
+        RETURNING user_id, payout_method, payout_last4, payout_changed_at`,
+      [userId, normalized.method, JSON.stringify(encrypted), normalized.last4]
+    );
+    await queueEmail(profile.email, 'Your Poshaak payout details changed',
+      'Payout details were changed for your Poshaak account. If this was not you, contact support.',
+      { transaction: client, idempotencyKey: `payout-change:${userId}:${randomUUID()}` });
+    return { sellerId: rows[0].user_id, method: rows[0].payout_method, last4: rows[0].payout_last4, changedAt: rows[0].payout_changed_at };
+  });
+}
+
+/** FR-09a: return only masked payout metadata to the seller. */
+async function getSellerPayoutSummary(userId) {
   const { rows } = await db.query(
-    `UPDATE seller_profiles SET payout_method = $1, payout_details = $2 WHERE user_id = $3 RETURNING *`,
-    [method, details, userId]
+    `SELECT payout_method, payout_last4, payout_changed_at, payout_needs_update,
+            payout_details_encrypted IS NOT NULL AS has_encrypted_details,
+            payout_bank_account IS NOT NULL OR payout_wallet_number IS NOT NULL AS has_legacy_details
+       FROM seller_profiles WHERE user_id = $1`, [userId]
   );
+  if (!rows[0]) throw new NotFoundError('seller_profile', userId);
+  return {
+    method: rows[0].payout_method,
+    last4: rows[0].payout_last4,
+    changedAt: rows[0].payout_changed_at,
+    configured: Boolean(rows[0].has_encrypted_details),
+    needsUpdate: Boolean(rows[0].payout_needs_update || (rows[0].has_legacy_details && !rows[0].has_encrypted_details)),
+  };
+}
+
+/** FR-09a / SEC-35: Admin sees only masked details and recent-change/hold flags. */
+async function getSellerPayoutAdminQueue() {
+  const recentDays = getSecurityLimits().PAYOUT_CHANGED_RECENT_DAYS;
+  const { rows } = await db.query(
+    `SELECT sp.user_id AS seller_id, sp.display_alias, sp.payout_method, sp.payout_last4,
+            sp.payout_changed_at,
+            (sp.payout_changed_at >= now() - ($1 * interval '1 day')) AS changed_recently,
+            sp.id_verified, sp.payout_hold_active, sp.payout_hold_reason, sp.payout_hold_set_at,
+            (sp.payout_details_encrypted IS NOT NULL) AS payout_configured,
+            sp.payout_needs_update,
+            EXISTS (SELECT 1 FROM seller_totp_credentials st WHERE st.user_id = sp.user_id AND st.enabled_at IS NOT NULL) AS authenticator_enabled
+       FROM seller_profiles sp
+      WHERE sp.payout_details_encrypted IS NOT NULL OR sp.payout_hold_active = true
+         OR sp.payout_bank_account IS NOT NULL OR sp.payout_wallet_number IS NOT NULL
+      ORDER BY sp.payout_changed_at DESC NULLS LAST, sp.user_id`, [recentDays]
+  );
+  return rows.map((row) => ({
+    sellerId: row.seller_id, displayAlias: row.display_alias, method: row.payout_method,
+    last4: row.payout_last4, changedAt: row.payout_changed_at,
+    changedRecently: Boolean(row.changed_recently), idVerified: Boolean(row.id_verified),
+    payoutHoldActive: Boolean(row.payout_hold_active), payoutHoldReason: row.payout_hold_reason,
+    payoutHoldSetAt: row.payout_hold_set_at, payoutConfigured: Boolean(row.payout_configured),
+    needsUpdate: Boolean(row.payout_needs_update),
+    authenticatorEnabled: Boolean(row.authenticator_enabled),
+  }));
+}
+
+/** FR-83l: Admin places an audited pause on seller disbursements. */
+async function setSellerPayoutHold(sellerId, { adminId, reason }) {
+  const normalizedReason = typeof reason === 'string' ? reason.trim() : '';
+  if (!normalizedReason || normalizedReason.length > 500) throw new ValidationError('A short payout-hold reason is required.');
+  const { rows } = await db.query(
+    `UPDATE seller_profiles SET payout_hold_active = true, payout_hold_reason = $2,
+        payout_hold_set_by = $3, payout_hold_set_at = now(),
+        payout_hold_cleared_by = NULL, payout_hold_cleared_at = NULL, payout_hold_clear_reason = NULL
+      WHERE user_id = $1
+      RETURNING user_id, payout_hold_active, payout_hold_reason, payout_hold_set_by, payout_hold_set_at`,
+    [sellerId, normalizedReason, adminId]
+  );
+  if (!rows[0]) throw new NotFoundError('seller_profile', sellerId);
   return rows[0];
+}
+
+/** FR-83l: clear an active payout pause while retaining the set/clear audit fields. */
+async function clearSellerPayoutHold(sellerId, { adminId, reason }) {
+  const normalizedReason = typeof reason === 'string' ? reason.trim() : '';
+  if (!normalizedReason || normalizedReason.length > 500) throw new ValidationError('A short payout-hold release reason is required.');
+  const { rows } = await db.query(
+    `UPDATE seller_profiles SET payout_hold_active = false, payout_hold_cleared_by = $2,
+        payout_hold_cleared_at = now(), payout_hold_clear_reason = $3
+      WHERE user_id = $1 AND payout_hold_active = true
+      RETURNING user_id, payout_hold_active, payout_hold_reason, payout_hold_cleared_by, payout_hold_cleared_at, payout_hold_clear_reason`,
+    [sellerId, adminId, normalizedReason]
+  );
+  if (!rows[0]) throw new NotFoundError('active seller payout hold', sellerId);
+  return rows[0];
+}
+
+/** FR-66 / FR-83l: block disbursement unless ID, authenticator and payout-hold checks all pass. */
+async function assertPayoutAllowed(sellerId) {
+  const { rows } = await db.query(
+    `SELECT sp.id_verified, sp.payout_hold_active, sp.payout_details_encrypted, sp.payout_needs_update,
+            EXISTS (SELECT 1 FROM seller_totp_credentials st WHERE st.user_id = sp.user_id AND st.enabled_at IS NOT NULL) AS authenticator_enabled
+       FROM seller_profiles sp WHERE sp.user_id = $1`, [sellerId]
+  );
+  const profile = rows[0];
+  if (!profile) throw new NotFoundError('seller_profile', sellerId);
+  if (!profile.id_verified) throw new ForbiddenError('Seller identity verification is required before payout.');
+  if (!profile.authenticator_enabled) throw new ForbiddenError('An enrolled authenticator is required before payout.');
+  if (profile.payout_hold_active) throw new ForbiddenError('Seller payouts are paused by an Admin.');
+  if (!profile.payout_details_encrypted || profile.payout_needs_update) throw new ForbiddenError('Current encrypted payout details are required before payout.');
+  return true;
 }
 
 /** FR-10: admin can suspend/revoke seller approval. Moderator CANNOT (FR-05a) — enforced at route level via lib/roles.js. */
@@ -902,5 +1064,10 @@ module.exports = {
   verifySellerIdentity,
   getSellerProfile,
   updateSellerPayoutMethod,
+  getSellerPayoutSummary,
+  getSellerPayoutAdminQueue,
+  setSellerPayoutHold,
+  clearSellerPayoutHold,
+  assertPayoutAllowed,
   suspendSeller,
 };

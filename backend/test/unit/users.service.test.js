@@ -4,6 +4,7 @@ jest.mock('../../src/lib/emailCodeDelivery', () => ({
   makeCode: jest.fn(() => '123456'),
   addressDigest: jest.fn(() => 'a'.repeat(64)),
   queueCodeEmail: jest.fn().mockResolvedValue('job'),
+  queueEmail: jest.fn().mockResolvedValue('job'),
   reserveAddressSend: jest.fn().mockResolvedValue(undefined),
   emailVerificationLocked: jest.fn().mockResolvedValue(false),
   emailCodeLockedForDigest: jest.fn().mockResolvedValue(false),
@@ -35,6 +36,77 @@ describe('FR-02: buyer authentication requires the email-code factor after a val
     expect(db.withTransaction).not.toHaveBeenCalled();
     expect(emailCode.queueCodeEmail).not.toHaveBeenCalled();
     expect(result).not.toHaveProperty('accessToken');
+  });
+});
+
+describe('FR-09a / SEC-35: payout input validation and encrypted update response', () => {
+  const previous = {
+    id: process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID,
+    keys: process.env.PAYOUT_ENCRYPTION_KEYS_JSON,
+  };
+  beforeEach(() => {
+    jest.clearAllMocks();
+    process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID = 'unit-payout-key';
+    process.env.PAYOUT_ENCRYPTION_KEYS_JSON = JSON.stringify({ 'unit-payout-key': Buffer.alloc(32, 19).toString('base64') });
+  });
+  afterAll(() => {
+    if (previous.id === undefined) delete process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID;
+    else process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID = previous.id;
+    if (previous.keys === undefined) delete process.env.PAYOUT_ENCRYPTION_KEYS_JSON;
+    else process.env.PAYOUT_ENCRYPTION_KEYS_JSON = previous.keys;
+  });
+
+  test('rejects unsupported fields and malformed method-specific values before database access', async () => {
+    await expect(users.updateSellerPayoutMethod('seller-1', {
+      method: 'bank_transfer', accountNumber: '12345678', stepUpGrant: 'g'.repeat(43), sessionId: 'session-1',
+    })).rejects.toThrow('Payout method must be bank');
+    await expect(users.updateSellerPayoutMethod('seller-1', {
+      method: 'bank', bankName: 'Bank', accountTitle: 'Name', iban: 'invalid', stepUpGrant: 'g'.repeat(43), sessionId: 'session-1',
+    })).rejects.toThrow('valid Pakistani IBAN');
+    await expect(users.updateSellerPayoutMethod('seller-1', {
+      method: 'jazzcash', walletNumber: '123', accountHolderName: 'Name', stepUpGrant: 'g'.repeat(43), sessionId: 'session-1',
+    })).rejects.toThrow('valid Pakistan mobile number');
+    expect(db.withTransaction).not.toHaveBeenCalled();
+  });
+
+  test('encrypts bank detail payload, consumes the grant and returns masked metadata only', async () => {
+    const client = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{ user_id: 'seller-1', is_approved: true, role: 'seller', email: 'seller@example.test' }] })
+      .mockResolvedValueOnce({ rows: [{ enabled_at: new Date() }] })
+      .mockResolvedValueOnce({ rows: [{ id: 'grant-1' }] })
+      .mockResolvedValueOnce({ rows: [{ user_id: 'seller-1', payout_method: 'bank', payout_last4: '6702', payout_changed_at: new Date() }] }) };
+    db.withTransaction.mockImplementation((work) => work(client));
+    const result = await users.updateSellerPayoutMethod('seller-1', {
+      method: 'bank', bankName: 'Test Bank', accountTitle: 'Test Seller',
+      iban: 'PK36SCBL0000001123456702', stepUpGrant: 'g'.repeat(43), sessionId: 'session-1',
+    });
+    const storedEnvelope = client.query.mock.calls[3][1][2];
+    expect(storedEnvelope).not.toContain('PK36SCBL0000001123456702');
+    expect(result).toMatchObject({ sellerId: 'seller-1', method: 'bank', last4: '6702' });
+    expect(JSON.stringify(result)).not.toMatch(/Test Bank|Test Seller|PK36SCBL|ciphertext|nonce|authTag/i);
+    expect(emailCode.queueEmail).toHaveBeenCalledWith('seller@example.test', 'Your Poshaak payout details changed',
+      expect.not.stringContaining('PK36SCBL0000001123456702'), expect.objectContaining({ transaction: client }));
+  });
+});
+
+describe('FR-66 / FR-83l: seller payout disbursement eligibility', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  test.each([
+    [{ id_verified: false, authenticator_enabled: true, payout_hold_active: false, payout_details_encrypted: {}, payout_needs_update: false }, 'identity verification'],
+    [{ id_verified: true, authenticator_enabled: false, payout_hold_active: false, payout_details_encrypted: {}, payout_needs_update: false }, 'authenticator'],
+    [{ id_verified: true, authenticator_enabled: true, payout_hold_active: true, payout_details_encrypted: {}, payout_needs_update: false }, 'paused'],
+    [{ id_verified: true, authenticator_enabled: true, payout_hold_active: false, payout_details_encrypted: null, payout_needs_update: false }, 'encrypted payout details'],
+    [{ id_verified: true, authenticator_enabled: true, payout_hold_active: false, payout_details_encrypted: {}, payout_needs_update: true }, 'encrypted payout details'],
+  ])('blocks disbursement when a required control is missing', async (profile, reason) => {
+    db.query.mockResolvedValue({ rows: [profile] });
+    await expect(users.assertPayoutAllowed('seller-1')).rejects.toThrow(reason);
+  });
+
+  test('allows a verified seller with an enrolled authenticator, current encrypted details, and no hold', async () => {
+    db.query.mockResolvedValue({ rows: [{ id_verified: true, authenticator_enabled: true,
+      payout_hold_active: false, payout_details_encrypted: { keyId: 'test' }, payout_needs_update: false }] });
+    await expect(users.assertPayoutAllowed('seller-1')).resolves.toBe(true);
   });
 });
 
