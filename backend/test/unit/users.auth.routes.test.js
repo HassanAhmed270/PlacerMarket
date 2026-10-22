@@ -59,17 +59,33 @@ describe('FR-84: login and refresh tokens use the approved transport boundaries'
     );
   });
 
-  test('FR-83c: seller login without an enrolled authenticator returns the limited account session', async () => {
-    jest.spyOn(users, 'authenticate').mockResolvedValueOnce({ session });
+  test('FR-83h: seller password login requires email code before an enrollment-only session', async () => {
+    jest.spyOn(users, 'authenticate').mockResolvedValueOnce({ challengeRequired: true, factor: 'email', loginAttemptId: sessionId, userId, email: 'seller@example.test' });
     const response = await request(app).post('/api/users/login')
       .set('X-Device-Id', 'device-identifier-123')
       .send({ email: 'seller@example.test', password: 'long-enough-test-password' });
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({ accessToken: 'test-access-token', tokenType: 'Bearer', expiresIn: 900 });
-    expect(response.headers['set-cookie'][0]).toContain('HttpOnly; Secure; SameSite=Strict');
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ challengeRequired: true, factor: 'email', loginAttemptId: sessionId });
+    expect(response.body).not.toHaveProperty('accessToken');
+    expect(users.requestLoginEmailCode).toHaveBeenCalledWith(sessionId, userId, 'seller@example.test');
+    const verified = await request(app).post('/api/users/login/verify-email-code')
+      .send({ email: 'seller@example.test', loginAttemptId: sessionId, code: '123456' });
+    expect(verified.status).toBe(200);
+    expect(verified.headers['set-cookie'][0]).toContain('HttpOnly; Secure; SameSite=Strict');
+    expect(users.completeBuyerLogin).toHaveBeenCalledWith(sessionId, '123456', 'seller@example.test', expect.any(Object));
+  });
+
+  test('FR-83c: non-enrollment session gets a sign-in-again prompt before authenticator setup', async () => {
+    const token = signAccessToken(userId, { secret, sessionId });
+    const response = await request(app).post('/api/users/me/authenticator/enroll')
+      .set('Authorization', `Bearer ${token}`).send({});
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/sign in again to set up your authenticator/i);
+    expect(users.beginSellerAuthenticatorEnrollment).not.toHaveBeenCalled();
   });
 
   test('FR-83c/f: authenticator setup returns no-store enrollment and backup-code responses', async () => {
+    users.getAuthenticationPrincipal.mockResolvedValueOnce({ id: userId, role: 'seller', is_suspended: false, enrollment_only: true });
     const token = signAccessToken(userId, { secret, sessionId });
     const enrollment = await request(app).post('/api/users/me/authenticator/enroll')
       .set('Authorization', `Bearer ${token}`).send({});

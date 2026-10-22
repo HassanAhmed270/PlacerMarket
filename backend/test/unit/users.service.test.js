@@ -37,6 +37,17 @@ describe('FR-02: buyer authentication requires the email-code factor after a val
     expect(emailCode.queueCodeEmail).not.toHaveBeenCalled();
     expect(result).not.toHaveProperty('accessToken');
   });
+
+  test('FR-83h, SEC-09: seller without an authenticator gets an email factor before enrollment-only session', async () => {
+    db.query.mockResolvedValueOnce({ rows: [{
+      id: 'seller-1', email: 'seller@example.test', password_hash: '$argon2id$stored',
+      role: 'seller', is_suspended: false,
+    }] }).mockResolvedValueOnce({ rows: [] });
+    const result = await users.authenticate({ email: 'seller@example.test', password: 'valid-password' });
+    expect(result).toMatchObject({ challengeRequired: true, factor: 'email', loginAttemptId: expect.any(String), userId: 'seller-1', email: 'seller@example.test' });
+    expect(result).not.toHaveProperty('session');
+    expect(db.withTransaction).not.toHaveBeenCalled();
+  });
 });
 
 describe('FR-09a / SEC-35: payout input validation and encrypted update response', () => {

@@ -32,7 +32,7 @@ the `listing_search` table and
 suggestions, worker-generated HTML snapshots, JWT auth with two-factor login,
 escrow payments through a gateway, versioned listing content, encrypted
 CNIC/payout fields and append-only ledger tables. Phase 0 authentication now
-includes validated Argon2id registration, buyer email-code login, staff TOTP,
+includes validated Argon2id registration, buyer and pre-enrollment seller email-code login, staff TOTP,
 durable rotating refresh sessions, self-service password reset, and one-time
 TOTP-enrolled admin bootstrap. Email verification, strict high-value approval
 gating and signup/login/reset/message/offer limits are implemented. Live
@@ -69,7 +69,8 @@ test fake that requires `DEV_FAKES=1`; verification accepts only a short note
 and records audit metadata without retaining identity documents or numbers.
 
 Seller authenticator state and step-up grants are owned by `users.service.js`.
-Enrollment-only sessions can access only authenticator setup/confirmation,
+Sellers without TOTP must complete password plus email-code login before an
+enrollment-only session can access authenticator setup/confirmation,
 logout and refresh. Step-up grants are bound to an active session and action;
 consume them before performing the corresponding protected operation. New
 device identities are HMAC-hashed and new-device notices are queued through the

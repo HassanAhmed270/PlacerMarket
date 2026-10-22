@@ -85,6 +85,7 @@ function AccountWorkspace({ onSignOut }) {
       {DEV_FAKES_BANNER && <p className="auth-mock-banner" role="status">Development only: DEV_FAKES is enabled. Provider actions may be simulated.</p>}
       {message && <p className="auth-notice" role="status">{message}</p>}
       {error && <p className="auth-error" role="alert">{error}</p>}
+      {error.toLowerCase().includes('sign in again to set up your authenticator') && <button className="button button-secondary" type="button" onClick={onSignOut}>Sign in again</button>}
 
       <section className="workspace-card" aria-labelledby="application-title">
         <p className="eyebrow">Seller onboarding</p><h2 id="application-title">Seller application</h2>

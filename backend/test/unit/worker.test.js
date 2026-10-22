@@ -20,6 +20,29 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
     jest.clearAllMocks();
   });
 
+  test('FR-79f: production worker refuses invalid payout keys before opening Redis', async () => {
+    const previous = {
+      nodeEnv: process.env.NODE_ENV,
+      active: process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID,
+      keys: process.env.PAYOUT_ENCRYPTION_KEYS_JSON,
+    };
+    process.env.NODE_ENV = 'production';
+    process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID = 'missing';
+    process.env.PAYOUT_ENCRYPTION_KEYS_JSON = JSON.stringify({ key: Buffer.alloc(32).toString('base64') });
+    try {
+      await expect(startWorker()).rejects.toThrow('PAYOUT_ENCRYPTION_ACTIVE_KEY_ID');
+      expect(mockRedis.createRedisClient).not.toHaveBeenCalled();
+      expect(mockQueue.createQueueClient).not.toHaveBeenCalled();
+    } finally {
+      if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous.nodeEnv;
+      if (previous.active === undefined) delete process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID;
+      else process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID = previous.active;
+      if (previous.keys === undefined) delete process.env.PAYOUT_ENCRYPTION_KEYS_JSON;
+      else process.env.PAYOUT_ENCRYPTION_KEYS_JSON = previous.keys;
+    }
+  });
+
   test('FR-77d: starts Redis and the durable notification consumer with configured transactional concurrency', async () => {
     const boss = new EventEmitter();
     boss.work = jest.fn().mockResolvedValue(undefined);

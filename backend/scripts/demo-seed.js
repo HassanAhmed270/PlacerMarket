@@ -36,6 +36,15 @@ function payoutKeyConfiguration() {
   return { activeKeyId: 'demo-v1', keysJson: JSON.stringify({ 'demo-v1': randomBytes(32).toString('base64') }) };
 }
 
+function serializeDemoEnv(values) {
+  return `${Object.entries(values).map(([key, value]) => {
+    const serialized = String(value);
+    // Node's --env-file preserves JSON backslashes inside quoted strings; single quotes
+    // retain JSON's own double quotes without escaping the JSON text.
+    return `${key}=${key === 'PAYOUT_ENCRYPTION_KEYS_JSON' ? `'${serialized}'` : serialized}`;
+  }).join('\n')}\n`;
+}
+
 async function main() {
   const databaseUrl = requireDevelopmentTarget();
   const adminEmail = process.env.DEMO_ADMIN_EMAIL || 'demo-admin@poshaak.local';
@@ -65,7 +74,7 @@ async function main() {
     PAYOUT_ENCRYPTION_ACTIVE_KEY_ID: payoutKeys.activeKeyId,
     PAYOUT_ENCRYPTION_KEYS_JSON: payoutKeys.keysJson,
   };
-  fs.writeFileSync(demoEnvPath, `${Object.entries(generated).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join('\n')}\n`, { mode: 0o600 });
+  fs.writeFileSync(demoEnvPath, serializeDemoEnv(generated), { mode: 0o600 });
   Object.assign(process.env, generated);
 
   const db = require('../src/db.service');
@@ -123,4 +132,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { requireDevelopmentTarget };
+module.exports = { requireDevelopmentTarget, serializeDemoEnv };

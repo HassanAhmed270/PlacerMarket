@@ -98,27 +98,37 @@ async function main() {
   await call(`admin/seller-applications/${application.id}/review`, { method: 'POST', token: adminToken, body: { decision: 'approved' } });
   console.log('5. Demo Admin signed in with TOTP and approved the seller application.');
 
-  const setup = await call('users/me/authenticator/enroll', { method: 'POST', token: sellerSession.accessToken, body: {} });
-  const enrollment = await call('users/me/authenticator/confirm', { method: 'POST', token: sellerSession.accessToken, body: { code: totpCode(setup.secret) } });
+  const sellerLoginStartedAt = Date.now();
+  const sellerLogin = await call('users/login', { method: 'POST', body: { email: sellerEmail, password: sellerPassword } });
+  if (!sellerLogin?.loginAttemptId || sellerLogin.factor !== 'email') throw new Error('Approved seller login did not return the expected email-factor challenge.');
+  const sellerLoginCode = await waitForCode(sellerEmail, sellerLoginStartedAt);
+  const approvedSellerSession = await call('users/login/verify-email-code', { method: 'POST', body: {
+    email: sellerEmail, loginAttemptId: sellerLogin.loginAttemptId, code: sellerLoginCode,
+  } });
+  if (!approvedSellerSession?.accessToken) throw new Error('Approved seller email-factor login did not issue an enrollment session.');
+  console.log('6. Approved seller signed in again with password and an email code from the development outbox.');
+
+  const setup = await call('users/me/authenticator/enroll', { method: 'POST', token: approvedSellerSession.accessToken, body: {} });
+  const enrollment = await call('users/me/authenticator/confirm', { method: 'POST', token: approvedSellerSession.accessToken, body: { code: totpCode(setup.secret) } });
   if (enrollment.backupCodes?.length !== 10) throw new Error('Seller enrollment did not issue ten backup codes.');
-  console.log('6. Seller enrolled an authenticator; ten single-use backup codes were returned (codes omitted from transcript).');
+  console.log('7. Seller enrolled an authenticator; ten single-use backup codes were returned (codes omitted from transcript).');
 
   await waitForNewTotpStep();
-  const grant = await call('users/auth/step-up', { method: 'POST', token: sellerSession.accessToken, body: {
+  const grant = await call('users/auth/step-up', { method: 'POST', token: approvedSellerSession.accessToken, body: {
     action: 'payout.update', code: totpCode(setup.secret),
   } });
-  const payout = await call('users/me/payout-method', { method: 'PATCH', token: sellerSession.accessToken, body: {
+  const payout = await call('users/me/payout-method', { method: 'PATCH', token: approvedSellerSession.accessToken, body: {
     method: 'bank', bankName: 'Demo Bank', accountTitle: 'Demo Seller', iban: 'PK36SCBL0000001123456702', stepUpGrant: grant.grant,
   } });
   if (payout.last4 !== '6702') throw new Error('Payout update did not return the expected masked last four digits.');
-  console.log('7. Seller completed authenticator step-up and saved encrypted bank details (API returned last four only).');
+  console.log('8. Seller completed authenticator step-up and saved encrypted bank details (API returned last four only).');
 
   const users = require('../src/modules/users.service');
   let blockedBeforeIdentity = false;
   try { await users.assertPayoutAllowed(application.user_id); }
   catch (error) { blockedBeforeIdentity = error.name === 'ForbiddenError'; }
   if (!blockedBeforeIdentity) throw new Error('Payout guard should refuse before manual identity verification.');
-  console.log('8. Payout guard refused disbursement before identity verification.');
+  console.log('9. Payout guard refused disbursement before identity verification.');
 
   await call(`admin/sellers/${application.user_id}/identity-verification`, { method: 'POST', token: adminToken, body: {
     note: 'Demo-only manual identity check completed.',
@@ -129,8 +139,8 @@ async function main() {
     throw new Error('Admin payout view did not expose expected masked identity/change flags.');
   }
   await users.assertPayoutAllowed(application.user_id);
-  console.log('9. Admin payout view shows changedRecently=true, idVerified=true, and masked last4=6702.');
-  console.log('10. Payout guard allows the verified seller; manual ID verification is a development demonstration only.');
+  console.log('10. Admin payout view shows changedRecently=true, idVerified=true, and masked last4=6702.');
+  console.log('11. Payout guard allows the verified seller; manual ID verification is a development demonstration only.');
   console.log(`Demo seller: ${sellerEmail}. Demo Admin credentials remain in backend/.demo.env; secrets and codes were omitted.`);
 }
 

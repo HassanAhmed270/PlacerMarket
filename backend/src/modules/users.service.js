@@ -303,12 +303,12 @@ async function authenticate({ email, password }, sessionContext = {}) {
       'SELECT enabled_at FROM seller_totp_credentials WHERE user_id = $1', [user.id]
     );
     if (factors[0]?.enabled_at) return { challengeRequired: true, factor: 'totp' };
-    return { session: await db.withTransaction((client) => insertSession(client, user, { ...sessionContext, enrollmentOnly: true })) };
+    return { challengeRequired: true, factor: 'email', loginAttemptId: randomUUID(), userId: user.id, email: user.email };
   }
   return null;
 }
 
-/** FR-02, FR-83h: finish a buyer login only with its matching single-use email code. */
+/** FR-02, FR-83h: finish buyer or seller email-factor login only with its matching single-use code. */
 async function completeBuyerLogin(loginAttemptId, code, email, sessionContext = {}) {
   const userId = await confirmLoginEmailCode(loginAttemptId, code);
   if (!userId) return null;
@@ -316,8 +316,16 @@ async function completeBuyerLogin(loginAttemptId, code, email, sessionContext = 
     'SELECT id, email, role, is_suspended FROM users WHERE id = $1', [userId]
   );
   const principal = rows[0];
-  if (!principal || principal.is_suspended || principal.role !== 'buyer' || principal.email !== email) return null;
-  return db.withTransaction((client) => insertSession(client, principal, sessionContext));
+  if (!principal || principal.is_suspended || !['buyer', 'seller'].includes(principal.role) || principal.email !== email) return null;
+  if (principal.role === 'seller') {
+    const { rows: factors } = await db.query(
+      'SELECT enabled_at FROM seller_totp_credentials WHERE user_id = $1', [principal.id]
+    );
+    if (factors[0]?.enabled_at) return null;
+  }
+  return db.withTransaction((client) => insertSession(client, principal, {
+    ...sessionContext, enrollmentOnly: principal.role === 'seller',
+  }));
 }
 
 /** FR-02, FR-83h: staff login requires a valid password plus the enrolled authenticator. */

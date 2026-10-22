@@ -38,6 +38,16 @@ secrets, a TOTP-enrolled Demo Admin, a seller-candidate buyer, a demo city,
 category/subcategory, and a required measurement field. It prints no passwords,
 TOTP seed, payout key, or email code.
 
+The registration endpoint is limited to **5 requests per hour per IP** (and
+3 per account by default). For local development only, if an isolated Redis
+database has stale rate-limit counters, delete the application's rate-limit
+keys with:
+
+    redis-cli --scan --pattern 'pm:rl:*' | ForEach-Object { redis-cli DEL $_ }
+
+Run this only against the dedicated development Redis database; these counters
+are shared by all local app instances using that database.
+
 Start these in separate terminals:
 
     Set-Location D:\Havuor\marketplace\backend

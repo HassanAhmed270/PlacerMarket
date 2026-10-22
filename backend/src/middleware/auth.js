@@ -36,6 +36,7 @@ async function authenticateRequest(req, res, next) {
     }
     req.user = { id: principal.id, role: principal.role };
     if (claims.sid) req.authSessionId = claims.sid;
+    req.enrollmentOnly = Boolean(principal.enrollment_only);
     if (principal.enrollment_only) {
       const path = req.originalUrl.split('?')[0];
       const allowed = (req.method === 'POST' && [

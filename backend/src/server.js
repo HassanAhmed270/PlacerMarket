@@ -7,7 +7,7 @@ const { passwordHashPool } = require('./lib/passwordHashPool');
 
 function safeConfigurationMessage(error) {
   const message = error?.message;
-  if (typeof message === 'string' && /^(JWT_ACCESS_SECRET|JWT_ACCESS_TTL_SECONDS|REDIS_URL|CORS_ORIGINS|Configuration error: )/.test(message)) {
+  if (typeof message === 'string' && /^(JWT_ACCESS_SECRET|JWT_ACCESS_TTL_SECONDS|REDIS_URL|CORS_ORIGINS|PAYOUT_ENCRYPTION_(?:KEYS_JSON|ACTIVE_KEY_ID)|Configuration error: )/.test(message)) {
     return message;
   }
   return null;

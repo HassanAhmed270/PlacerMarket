@@ -191,6 +191,7 @@ router.get('/me/payout', requireAuth, limiters.security, async (req, res) => {
 });
 
 router.post('/me/authenticator/enroll', requireAuth, limiters.security, async (req, res) => {
+  if (!req.enrollmentOnly) throw new ValidationError('Please sign in again to set up your authenticator.');
   if (Object.keys(req.body).length) throw new ValidationError('Enrollment takes no request fields.');
   res.set('Cache-Control', 'no-store').json(await users.beginSellerAuthenticatorEnrollment(req.user.id));
 });

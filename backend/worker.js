@@ -6,8 +6,10 @@ const notifications = require('./src/modules/notifications.service');
 const { createEmailSender } = require('./src/lib/adapters/emailSender');
 const { decryptEmailPayload } = require('./src/lib/emailQueuePayload');
 const { createDevEmailOutboxSender } = require('./src/lib/adapters/devEmailOutbox');
+const { keyProviderFromEnv } = require('./src/lib/keyProvider');
 
-async function startWorker({ emailSender } = {}) {
+async function startWorker({ emailSender, logger = console } = {}) {
+  if (process.env.NODE_ENV === 'production') keyProviderFromEnv(process.env);
   const selectedEmailSender = emailSender || (process.env.DEV_FAKES === '1' && process.env.NODE_ENV !== 'production'
     ? createDevEmailOutboxSender()
     : process.env.EMAIL_SENDER_ADAPTER
@@ -69,7 +71,9 @@ async function startWorker({ emailSender } = {}) {
 
 if (require.main === module) {
   startWorker().catch((error) => {
-    console.error('Worker startup failed', { code: error?.code || 'unknown' });
+    if (process.env.NODE_ENV === 'production' && /^PAYOUT_ENCRYPTION_(?:KEYS_JSON|ACTIVE_KEY_ID)/.test(error?.message || '')) {
+      console.error(error.message);
+    } else console.error('Worker startup failed', { code: error?.code || 'unknown' });
     process.exitCode = 1;
   });
 }

@@ -1,4 +1,5 @@
-const { requireDevelopmentTarget } = require('../../scripts/demo-seed');
+const { parseEnv } = require('node:util');
+const { requireDevelopmentTarget, serializeDemoEnv } = require('../../scripts/demo-seed');
 
 describe('Stage 8 demo seed safety', () => {
   test('requires the explicit non-production fake opt-in', () => {
@@ -16,5 +17,13 @@ describe('Stage 8 demo seed safety', () => {
       .toThrow('localhost');
     expect(() => requireDevelopmentTarget({ ...env, DEMO_DATABASE_URL: 'postgres://localhost/testing_only' }))
       .toThrow('localhost database');
+  });
+
+  test('Stage 0b: writes payout JSON in an env-file form that Node parses without altering it', () => {
+    const expected = JSON.stringify({ 'demo-v1': Buffer.alloc(32, 7).toString('base64') });
+    const text = serializeDemoEnv({ PAYOUT_ENCRYPTION_KEYS_JSON: expected });
+    const parsed = parseEnv(text);
+    expect(parsed.PAYOUT_ENCRYPTION_KEYS_JSON).toBe(expected);
+    expect(JSON.parse(parsed.PAYOUT_ENCRYPTION_KEYS_JSON)).toEqual({ 'demo-v1': Buffer.alloc(32, 7).toString('base64') });
   });
 });
