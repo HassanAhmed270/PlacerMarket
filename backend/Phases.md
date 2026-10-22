@@ -203,6 +203,16 @@ until the migration/rollback window is closed; offline backup and a deployment
 rotation exercise remain live checks. Stage evidence is in
 `PHASE1_PROGRESS.md`.
 
+**Stage 4 contract (implemented 2026-10-22):** Admin-only
+`POST /api/admin/sellers/:id/identity-verification` accepts a short note only;
+it records `id_verified`, `verified_by`, `verified_at`, and
+`verification_note`. CNIC and document fields are rejected. The manual-admin
+`IdentityVerifier` is the production implementation; test fake requires
+`DEV_FAKES=1` and is forbidden in production. Email verification remains
+separate. Migration `008_manual_identity_verification.sql` adds audit columns.
+The first-payout identity gate remains for Stage 6. Stage evidence is in
+`PHASE1_PROGRESS.md`.
+
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Temporary email verification above implemented and tested before Phase 2

@@ -45,6 +45,12 @@ the active key while keeping old keys available for reads. Never log envelopes
 or key material; operators retain old keys through the documented rollback
 window and maintain an offline master-key backup.
 
+Manual identity verification is owned by `users.service.js`; the Admin facade
+delegates there and route permission `seller_identity.verify` is Admin-only.
+`src/lib/adapters/identityVerifier.js` provides the manual-admin adapter and a
+test fake that requires `DEV_FAKES=1`; verification accepts only a short note
+and records audit metadata without retaining identity documents or numbers.
+
 `npm run admin:create` is an interactive, one-time bootstrap. It requires
 `STAFF_TOTP_ENCRYPTION_SECRET` from the deployment secret store and asks the
 operator to confirm TOTP enrollment. Never put that key in `.env.example` or

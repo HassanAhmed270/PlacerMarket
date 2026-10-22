@@ -18,6 +18,14 @@ router.get('/seller-applications', requirePermission('seller_application.approve
   res.json(await admin.getSellerApplicationQueue({ status: req.query.status || 'pending' })); // FR-07b
 });
 
+router.post('/sellers/:id/identity-verification', requirePermission('seller_identity.verify'), async (req, res) => {
+  const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+  if (Object.keys(body).some((key) => key !== 'note') || typeof body.note !== 'string' || !body.note.trim() || body.note.trim().length > 500) {
+    throw new ValidationError('A short verification note is required. Identity documents and numbers are not accepted.');
+  }
+  res.json(await admin.verifySellerIdentity(req.params.id, { adminId: req.user.id, note: body.note.trim() })); // FR-66
+});
+
 router.post(
   '/seller-applications/:id/review',
   requirePermission((req) => (req.body.decision === 'approved' ? 'seller_application.approve' : 'seller_application.reject')),

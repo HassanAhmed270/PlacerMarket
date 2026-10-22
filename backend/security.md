@@ -109,8 +109,8 @@ money integrity; expect a payments section here once Phase 4 starts.
   *Enforced by:* `test/unit/http-hardening.test.js` — SEC-27/28 asserts generic 500 response, request ID and no internal error text.
 - [ ] **SEC-29 Responses never include internal columns** *(added)*. No `RETURNING *` / `SELECT *` passed straight to a client on `users`; payout fields only to the owner or a permitted admin role; explicit column lists.
   *Enforced by:* review/test pending. **Partial:** registration returns named safe fields and password-hash tests pass; audit all user and payout responses before ticking.
-- [ ] **SEC-30 Payout and ID data protection.** Payout details are visible only to the owner and permitted roles and encrypted at the application layer under FR-79f. Keep keys in secret environment settings, store a versioned key ID with each ciphertext, use the KeyProvider adapter (KMS later), document rotation and maintain an offline master-key backup held by the owner. The current manual identity-verification flow stores no CNIC number or document; any future document storage requires the legal review in END_OF_PHASES_REVIEW.md.
-  *Enforced by:* review · *Today:* plain `TEXT` columns, access control not yet verified.
+- [ ] **SEC-30 Payout and ID data protection.** Payout access controls and ciphertext-only responses are due in Stage 6. The crypto layer is implemented: AES-256-GCM, random nonce, seller-bound AAD, versioned key IDs, environment-backed `KeyProvider`, and `npm run keys:rotate`; `test/unit/payout-encryption.test.js` and `test/unit/config.test.js` cover encryption/rotation and required production keys. The current manual identity-verification flow stores no CNIC number or document; future document storage requires legal review in `END_OF_PHASES_REVIEW.md`.
+  *Enforced by:* partial tests above · *Today:* payout API access and leak checks are pending Stage 6.
   *Offline master-key backup:* owner-held backup is required; never store it in source control, the application database, or logs.
 
 ## F. Supply chain, webhooks & money
@@ -134,8 +134,6 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [x] **SEC-38 Refresh tokens rotate and are revocable** *(added)*. Every refresh issues a new single-use token; reuse of an old one revokes its whole family and forces sign-in; absolute and inactivity expiry are enforced server-side; tokens are stored hashed (specs.md FR-84, FR-84a, approved 2026-10-17).
   *Enforced by:* `test/integration/known-mismatches.test.js` — FR-84/FR-84a/SEC-38 tests concurrent refresh reuse and family revocation.
 
-- [x] **SEC-30 Sensitive payout fields are encrypted at application level** *(FR-79f)*. AES-256-GCM uses a random nonce, seller-bound AAD, a versioned key ID and an environment-backed `KeyProvider`; mixed versions can be re-encrypted with `npm run keys:rotate`. `test/unit/payout-encryption.test.js` covers authenticated encryption and rotation. Production configuration rejects missing or invalid active keys. Offline backup and deployment rotation remain live checks.
-  *Enforced by:* `test/unit/payout-encryption.test.js` and `test/unit/config.test.js`.
 
 ---
 

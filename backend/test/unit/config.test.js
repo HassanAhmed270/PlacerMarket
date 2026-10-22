@@ -58,6 +58,8 @@ describe('FR-84c: production configuration validation', () => {
       .toThrow('fake credential adapters are forbidden');
     expect(() => getRuntimeConfig(validProductionEnv({ CHALLENGE_VERIFIER_ADAPTER: undefined })))
       .toThrow('production requires configured email and challenge provider adapters');
+    expect(() => getRuntimeConfig(validProductionEnv({ DEV_FAKES: '1' })))
+      .toThrow('fake credential adapters are forbidden');
   });
 
   test('requires an explicit opt-in before selecting development fakes', () => {

@@ -1012,3 +1012,11 @@ ALTER TABLE measurement_field_defs
 -- columns remain untouched until the payout UI migration is ready.
 ALTER TABLE seller_profiles
   ADD COLUMN payout_details_encrypted JSONB;
+
+-- Migration: 008_manual_identity_verification.sql
+-- FR-66 / FR-08a: audit the manual Admin identity check without retaining
+-- identity numbers or documents.
+ALTER TABLE seller_profiles
+  ADD COLUMN verified_by UUID REFERENCES users(id),
+  ADD COLUMN verified_at TIMESTAMPTZ,
+  ADD COLUMN verification_note TEXT;

@@ -38,5 +38,6 @@ put live credentials in this file, source control, test output, or logs.
   `npm run keys:rotate`, verify no ciphertext references the old key, then
   remove the old key only after the rollback window closes.
 - [ ] Document and exercise the manual Admin identity-verification procedure:
-  verify identity without retaining a CNIC number or document, set the audit
-  fields, and confirm first-payout gating checks id_verified rather than email.
+  verify identity without retaining a CNIC number or document, submit only a
+  short note through the Admin route, confirm verified_by/verified_at are set,
+  and confirm first-payout gating checks id_verified rather than email.

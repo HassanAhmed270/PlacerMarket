@@ -99,7 +99,7 @@ function getRuntimeConfig(env = process.env) {
     assertCredential(env, 'STAFF_TOTP_ENCRYPTION_SECRET', { minimumBytes: 32 });
     payoutKeyProvider = keyProviderFromEnv(env);
     assertCredential(env, 'CHALLENGE_PROVIDER_KEY');
-    if (env.EMAIL_SENDER_ADAPTER === 'fake' || env.CHALLENGE_VERIFIER_ADAPTER === 'fake' || env.ALLOW_FAKE_ADAPTERS === 'true') {
+    if (env.EMAIL_SENDER_ADAPTER === 'fake' || env.CHALLENGE_VERIFIER_ADAPTER === 'fake' || env.ALLOW_FAKE_ADAPTERS === 'true' || env.DEV_FAKES === '1') {
       throw new Error('Configuration error: fake credential adapters are forbidden in production.');
     }
     if (env.EMAIL_SENDER_ADAPTER !== 'provider' || env.CHALLENGE_VERIFIER_ADAPTER !== 'provider') {

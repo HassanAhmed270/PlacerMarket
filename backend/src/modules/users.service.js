@@ -29,6 +29,7 @@ const { signAccessToken, getJwtConfig } = require('../lib/jwt');
 const { decryptStaffTotpSecret, matchingTotpStep } = require('../lib/totp');
 const { encryptStaffTotpSecret, verifyTotpCode } = require('../lib/totp');
 const { NotFoundError, ForbiddenError, ValidationError } = require('../lib/errors');
+const { createIdentityVerifier } = require('../lib/adapters/identityVerifier');
 const { getSecurityLimits } = require('../config');
 const {
   makeCode, addressDigest, queueCodeEmail, queueEmail, reserveAddressSend, emailVerificationLocked,
@@ -609,9 +610,22 @@ async function isEmailVerified(userId) {
   return Boolean(rows[0]?.email_verified_at);
 }
 
-/** FR-08a: mark a seller ID-verified. */
-async function markIdVerified(userId, adminId) {
-  await db.query('UPDATE seller_profiles SET id_verified = true WHERE user_id = $1', [userId]);
+/** FR-66: record an Admin's manual identity check; no document or ID number is accepted. */
+async function verifySellerIdentity(userId, { adminId, note }) {
+  const verifier = createIdentityVerifier({ adapter: 'manual-admin' });
+  const result = await verifier.verify({ sellerId: userId, adminId, note });
+  if (!result.verified || result.method !== 'manual_admin') throw new ValidationError('Manual identity verification was not completed.');
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `UPDATE seller_profiles
+          SET id_verified = true, verified_by = $2, verified_at = now(), verification_note = $3
+        WHERE user_id = $1
+        RETURNING user_id, id_verified, verified_by, verified_at, verification_note`,
+      [userId, adminId, note]
+    );
+    if (!rows[0]) throw new NotFoundError('seller_profile', userId);
+    return rows[0];
+  });
 }
 
 /** FR-09: individual seller profile (must read as an individual, not a storefront). */
@@ -678,7 +692,7 @@ module.exports = {
   isIdVerificationRequired,
   isIdVerified,
   isEmailVerified,
-  markIdVerified,
+  verifySellerIdentity,
   getSellerProfile,
   updateSellerPayoutMethod,
   suspendSeller,

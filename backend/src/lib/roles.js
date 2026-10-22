@@ -32,6 +32,7 @@ const MODERATOR_ALLOWED_ACTIONS = new Set([
 // hasPermission() below would deny these to a moderator by default anyway.
 const ADMIN_ONLY_ACTIONS = new Set([
   'catalog.manage', // FR-12, FR-15a
+  'seller_identity.verify', // FR-66, manual identity check
   'fee.configure', // FR-58
   'user.suspend', // FR-10, FR-05a ("cannot suspend users")
   'user.reinstate',

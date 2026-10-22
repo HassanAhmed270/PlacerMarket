@@ -120,3 +120,42 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Live checks:** `LIVE_CHECKS.md` tracks offline key backup, staged rotation,
   rollback window, and old-key removal.
 - **Next:** Stage 4 — ID VERIFICATION.
+
+## Stage 4 — ID VERIFICATION — complete (2026-10-22)
+
+- **Files:** migration `db/migrations/008_manual_identity_verification.sql`,
+  generated `schema.sql`, `src/lib/adapters/identityVerifier.js`,
+  `src/modules/users.service.js`, `src/modules/admin.service.js`,
+  `src/routes/admin.routes.js`, `src/lib/roles.js`, integration and unit tests,
+  `src/config.js`, `agent.md`, `specs.md`, `security.md`, `Phases.md`, and this
+  checkpoint.
+- **Migrations:** 001 `initial_schema`, 002 `pgboss_schema`, 003
+  `auth_foundation`, 004 `email_code_purpose`, 005
+  `staff_totp_replay_guard`, 006 `measurement_field_lifecycle`, 007
+  `payout_encryption_envelope`, 008 `manual_identity_verification`. Snapshot
+  regenerated.
+- **Behavior:** Admin-only `POST /api/admin/sellers/:id/identity-verification`
+  accepts a short note and rejects extra data (including CNIC/document fields).
+  `users.service.js` delegates to manual-admin `IdentityVerifier` and records
+  `id_verified`, `verified_by`, `verified_at`, and `verification_note` in one
+  database transaction. The fake requires `DEV_FAKES=1` and production rejects
+  that setting. Email verification does not set identity verification.
+- **Threshold check:** existing `isIdVerificationRequired` and moderation
+  queue use strict `>`; equality and above-threshold behavior are covered by
+  named PostgreSQL tests in `specs.md`.
+- **Verification:** focused identity adapter, Admin permission/input,
+  production config, and migration snapshot tests — 4 suites / 37 tests passed.
+  Full `npm.cmd test -- --runInBand` — 35 suites / 384 tests passed;
+  `npm.cmd run db:check-schema` passed. Full PostgreSQL 18.6 integration run —
+  4 suites passed / 1 suite skipped, 74 passed / 3 skipped. Redis tests remain
+  skipped because `TEST_REDIS_URL` is unset and no Redis service is available.
+- **Rows ticked:** FR-66a and FR-08b; FR-66 payout refusal remains Stage 6.
+  Tests named in `specs.md`.
+- **Parked:** no ID provider was selected or implemented. No CNIC number or
+  document is collected or stored.
+- **Provisional assumptions:** manual identity note is required, trimmed and
+  limited to 500 characters; admin must complete the check before calling the
+  route.
+- **Live checks:** manual Admin procedure is tracked in `LIVE_CHECKS.md`.
+- **Next:** Stage 5 — SELLER AUTHENTICATOR, BACKUP CODES, STEP-UP, NEW-DEVICE
+  NOTICE.

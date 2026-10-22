@@ -46,6 +46,11 @@ async function getSellerApplicationQueue(options) {
   return users.getSellerApplicationQueue(options);
 }
 
+/** FR-66: Admin-only manual identity check delegates storage to users.service. */
+async function verifySellerIdentity(sellerId, { adminId, note }) {
+  return users.verifySellerIdentity(sellerId, { adminId, note });
+}
+
 // ---- FR-54: listings ----
 
 /** FR-54, FR-19a: approve a listing to go live (delegates to listings.service). */
@@ -111,6 +116,7 @@ module.exports = {
   suspendUser,
   reviewSellerApplication,
   getSellerApplicationQueue,
+  verifySellerIdentity,
   approveListing,
   rejectListing,
   grantVerifiedBadge,

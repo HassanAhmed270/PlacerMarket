@@ -557,11 +557,27 @@ describe('known schema and service mismatches', () => {
     ]));
     expect(await users.isIdVerificationRequired(1)).toBe(false);
     expect(await users.isIdVerified(fixture.userId)).toBe(false);
-    await users.markIdVerified(fixture.userId, fixture.userId);
+    const verification = await users.verifySellerIdentity(fixture.userId, {
+      adminId: fixture.otherUserId, note: 'Identity checked in person',
+    });
+    expect(verification).toMatchObject({
+      user_id: fixture.userId, id_verified: true, verified_by: fixture.otherUserId,
+      verification_note: 'Identity checked in person',
+    });
+    expect(verification.verified_at).toBeTruthy();
     expect(await users.isIdVerified(fixture.userId)).toBe(true);
     expect((await users.getSellerProfile(fixture.userId)).user_id).toBe(fixture.userId);
     await expect(users.getSellerProfile('00000000-0000-0000-0000-000000000000'))
       .rejects.toMatchObject({ name: 'NotFoundError', statusCode: 404 });
+  });
+
+  test('FR-66: email verification does not set or imply manual identity verification', async () => {
+    await db.query('UPDATE seller_profiles SET id_verified = false, verified_by = NULL, verified_at = NULL, verification_note = NULL WHERE user_id = $1', [fixture.userId]);
+    await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [fixture.userId]);
+    expect(await users.isEmailVerified(fixture.userId)).toBe(true);
+    expect(await users.isIdVerified(fixture.userId)).toBe(false);
+    const { rows } = await db.query('SELECT verified_by, verified_at, verification_note FROM seller_profiles WHERE user_id = $1', [fixture.userId]);
+    expect(rows[0]).toEqual({ verified_by: null, verified_at: null, verification_note: null });
   });
 
   test('sub-category listing scopes to its main category and creation persists', async () => {
@@ -751,7 +767,7 @@ describe('known schema and service mismatches', () => {
     expect(rows[0].status).toBe('pending_review');
   });
 
-  test('FR-08a, FR-19b: the threshold is not high-value and prices above it remain pending', async () => {
+  test('FR-08b, FR-19b: above-threshold listing remains pending until registered email verification', async () => {
     const { rows: settings } = await db.query(
       "SELECT value::numeric AS threshold FROM platform_settings WHERE key = 'high_value_threshold_pkr'"
     );
@@ -763,7 +779,9 @@ describe('known schema and service mismatches', () => {
       .rejects.toBeInstanceOf(ForbiddenError);
     const { rows: stillPending } = await db.query('SELECT status FROM listings WHERE id = $1', [fixture.listingId]);
     expect(stillPending[0].status).toBe('pending_review');
-    await users.markIdVerified(fixture.userId, fixture.userId);
+    await users.verifySellerIdentity(fixture.userId, {
+      adminId: fixture.otherUserId, note: 'Separate manual identity check',
+    });
     await expect(listings.approveListing(fixture.listingId, fixture.userId))
       .rejects.toBeInstanceOf(ForbiddenError);
     const { rows: stillPendingAfterLegacyFlag } = await db.query(

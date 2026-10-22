@@ -36,6 +36,7 @@ const routes = adminRouter.stack
 // FR-05a: admin-only actions a Moderator/Ops account must NOT reach.
 const ADMIN_ONLY_PATHS = [
   '/api/admin/users/x/suspend',
+  '/api/admin/sellers/x/identity-verification',
   '/api/admin/operations-overview',
   '/api/admin/delivery-partners',
   '/api/admin/fees/commission',
@@ -70,5 +71,12 @@ describe('admin routes: permission gates at the route layer', () => {
   test('seller-application review needs approve vs reject permission by body.decision', async () => {
     const res = await request(appAs('buyer')).post('/api/admin/seller-applications/x/review').send({ decision: 'approved' });
     expect(res.status).toBe(403);
+  });
+
+  test('FR-66: manual verification rejects identity document or number fields without persisting them', async () => {
+    const res = await request(appAs('admin')).post('/api/admin/sellers/x/identity-verification')
+      .send({ note: 'Identity checked', cnic: 'must-not-be-accepted' });
+    expect(res.status).toBe(400);
+    expect(res.body).not.toHaveProperty('cnic');
   });
 });
