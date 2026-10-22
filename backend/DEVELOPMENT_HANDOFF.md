@@ -5,7 +5,11 @@ a backend, React/Vite frontend, PostgreSQL queue, migrations, and completed
 Phase 0 auth implementation. Local verification is green except for the real
 Redis integration suite, which is skipped because no local Redis is available;
 the hosted workflow and live providers remain unverified.
-Read `MASTER_PROJECT_CONTEXT.md` and `PHASE0_PROGRESS.md` for current evidence.
+Read `MASTER_PROJECT_CONTEXT.md`, `PHASE1_PROGRESS.md`, and
+`PHASE1_GATE_REPORT.md` for current evidence. Phase 1 implementation stages and
+local checks are recorded, but the broader gate remains open; the local demo
+was blocked by missing development database/JWT/Redis configuration. See
+`DEMO_RUN.md` and `LIVE_CHECKS.md`.
 
 ## 1. What you are working with
 
@@ -37,9 +41,10 @@ high-value listings strictly above the threshold. Historical Phase 0 gate
 evidence still contains the prior first-payout email wording, documented as a
 conflict in `END_OF_PHASES_REVIEW.md`.
 
-## 3. What to do next (Phase 0)
+## 3. What to do next (Phase 1 handoff)
 
-Resume from the first incomplete stage in `PHASE0_PROGRESS.md`. Owner decisions
+Resume from the residual items in `PHASE1_GATE_REPORT.md`, not by repeating
+completed implementation stages. Owner decisions
 dated 2026-10-21 set FR-83d limits, the FR-84b Argon2id/Redis scope, FR-83g
 self-service password reset, the strict high-value threshold, and the Phase 2
 gate amendment. FR-83k recovery policy is now decided; implementation is in the
@@ -55,9 +60,12 @@ requires `TEST_REDIS_URL`; Redis is unavailable in the current workspace.
 Stage 4 adds address verification, encrypted queue delivery, code attempt and
 send limits, and the high-value email-ownership gate. Stages 5–7 add buyer email
 factor login, staff TOTP, rotating refresh sessions, reset flows and the one-time
-admin bootstrap. Stage 9 adds frontend account screens. Resume from Stage 11 in
-`PHASE0_PROGRESS.md`; complete remaining external gates and publish the final
-gate report before changing the current phase.
+admin bootstrap. Phase 1 Stages 1–10 and local checks are documented in
+`PHASE1_PROGRESS.md`. The account UI has not had browser-level testing, real
+Redis tests were skipped, and demo seed/smoke did not run. Resolve these and the
+unchecked items in `PHASE1_GATE_REPORT.md` before claiming release readiness.
+`LISTING_REVISIONS_PLAN.md` is proposed design only; resolve its questions before
+Phase 2 implementation.
 
 ## 4. Working agreements (details in `rules.md`)
 

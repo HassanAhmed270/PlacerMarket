@@ -4,6 +4,11 @@
 
 **Legend:** `[ ]` = not done · `[x]` = done · items marked **(DEFERRED)** are explicitly out of MVP scope · items marked **(OPEN)** still need a product decision before they can be built · items marked **(DISCUSS)** are recommended or proposed but NOT confirmed by the human — discuss before building; they cannot be ticked until the human removes the tag · items marked **(SUPERSEDED)** were replaced by a later decision — do not build them
 
+Phase 1 implementation evidence and residual release-gate items are summarized
+in `PHASE1_GATE_REPORT.md`. Checked rows below retain their named test evidence;
+unchecked rows remain open. `LISTING_REVISIONS_PLAN.md` is a Phase 2 proposal and
+does not satisfy or tick FR-73/FR-73a/FR-73e.
+
 ---
 
 ## 1. Identity & Users
@@ -33,8 +38,8 @@
 
 ## 3. Listings
 - [ ] FR-15 Sellers create a listing: category, sub-category, condition, asking/reference price (not fixed buy-now), description, structured measurements, images.
-- [x] FR-15a Measurement fields are defined per sub-category and are admin-configurable; each listing stores structured values against the field set active at creation. Admins can add, rename and reorder definitions, and retire rather than delete referenced definitions. Tests: `FR-15a: measurement definition replacement persists flexible fields in display order`, `FR-15a: administrators can rename and reorder existing measurement field definitions`, `FR-15a: required active measurement fields persist and are enforced when a listing is created`, and `FR-15a: referenced measurement definitions retire while existing listing values remain` in `test/integration/known-mismatches.test.js`.
-- [ ] FR-15d A measurement definition has `required BOOLEAN NOT NULL DEFAULT false` and `is_active BOOLEAN NOT NULL DEFAULT true`. Admins choose whether a field is required; active required fields are enforced at listing creation. Retired definitions remain available to existing listings, which retain their stored values.
+- [x] FR-15a Measurement fields are defined per sub-category and are admin-configurable; each listing stores structured values against the field set active at creation. Admins can add, rename and reorder definitions, and retire rather than delete referenced definitions. Tests: `FR-15a: measurement definition replacement persists flexible fields in display order`, `FR-15a: administrators can rename and reorder existing measurement field definitions`, `FR-15a/FR-15d: required active measurement fields persist and are enforced when a listing is created`, and `FR-15a/FR-15d: referenced measurement definitions retire while existing listing values remain` in `test/integration/known-mismatches.test.js`.
+- [x] FR-15d A measurement definition has `required BOOLEAN NOT NULL DEFAULT false` and `is_active BOOLEAN NOT NULL DEFAULT true`. Admins choose whether a field is required; active required fields are enforced at listing creation. Retired definitions remain available to existing listings, which retain their stored values. Tests: `FR-15a/FR-15d: required active measurement fields persist and are enforced when a listing is created` and `FR-15a/FR-15d: referenced measurement definitions retire while existing listing values remain` in `test/integration/known-mismatches.test.js`.
 - [ ] FR-15b Richer attributes: fabric/material, brand (if applicable), color, embellishment/handwork detail.
 - [ ] FR-16 Sellers can upload multiple images per listing.
 - [ ] FR-17 Sellers can optionally submit authenticity evidence (receipts, tags, docs) for a listing.

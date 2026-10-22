@@ -1,5 +1,10 @@
 # End-of-phases review
 
+Current Phase 1 evidence and release-gate residuals are summarized in
+`PHASE1_GATE_REPORT.md`. The Phase 2 listing-revision design is recorded as a
+proposal in `LISTING_REVISIONS_PLAN.md`; its SQL sketches and recommendations
+are not owner-approved decisions.
+
 Items to revisit after the scheduled phases. Deferral here does not authorize
 building these features during Phases 1 or 2.
 

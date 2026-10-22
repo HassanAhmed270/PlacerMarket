@@ -1,5 +1,12 @@
 # Live checks before launch
 
+Phase 1 local evidence and remaining implementation-gate items are mapped in
+`PHASE1_GATE_REPORT.md`. Stage 9 did not execute the service-backed demo:
+PostgreSQL service exists, but an app `DEMO_DATABASE_URL`/`DATABASE_URL`, valid
+JWT secret, and Redis were unavailable. `DEMO_RUN.md` contains the guarded
+commands and observed limits. Do not treat the frontend Vite HTTP 200 as a
+backend or end-to-end demo check.
+
 Fake adapters and local integration tests do not satisfy these checks. Never
 put live credentials in this file, source control, test output, or logs.
 

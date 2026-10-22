@@ -6,6 +6,16 @@ inspected and tested directly) with the later Poshaak development (decisions
 recorded in a handoff document). **Poshaak is the single, current name** — files
 and chats that say "Marketplace" mean the same project.
 
+**Owner update (2026-10-22):** the approved Phase 1 implementation stages are
+recorded in `PHASE1_PROGRESS.md`, with evidence and remaining gate work in
+`PHASE1_GATE_REPORT.md`. Seller application/approval, flexible measurements,
+payout protections, manual identity verification, and the account workspace
+are implemented and locally verified. The development demo did not run because
+the app database URL, valid local JWT secret and Redis are unavailable. Phase 1
+is not represented as a closed release gate; see the report and `LIVE_CHECKS.md`.
+The document-only `LISTING_REVISIONS_PLAN.md` is a Phase 2 proposal, not an
+approved migration or implementation contract.
+
 **Owner update (2026-10-21):** Phase 0 auth implementation includes buyer
 email-code login, staff TOTP, durable rotating refresh sessions, password reset
 and one-time admin bootstrap. The owner also confirmed Phase 1/2 seller,

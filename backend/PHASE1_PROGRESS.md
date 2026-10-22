@@ -319,3 +319,28 @@ Resume at the first incomplete stage. Completed stages are not repeated.
   FR-73b–d and field-scope questions remain subject to owner resolution.
 - **Next:** Stage 11 — consolidate Phase 1 handoff and gate evidence, then run
   final checks and push the staged commits once.
+
+## Stage 11 — final Phase 1 handoff and gate report
+
+- **Delivered:** `PHASE1_GATE_REPORT.md` maps the dated implementation backlog
+  to completion evidence, parked items, live checks, and next actions. Handoff
+  references are updated in `agent.md`, `open-questions.md`, `specs.md`,
+  `security.md`, `Phases.md`, `LIVE_CHECKS.md`, `MASTER_PROJECT_CONTEXT.md`,
+  `DEVELOPMENT_HANDOFF.md`, and `END_OF_PHASES_REVIEW.md`.
+- **Gate status:** implementation stages and recorded local checks are
+  complete, but the broad release gate is still open. FR-07b and other
+  functional/frontend/security rows remain unchecked; recovery implementation
+  is pending; Redis, provider, key custody, deployment, hosted CI, browser, and
+  service-backed demo checks remain outstanding. See the gate report.
+- **Final verification:** backend unit 38 suites / 441 tests passed; PostgreSQL
+  integration 4 suites / 77 tests passed, 4 Redis-only tests skipped; schema
+  check passed; backend production and frontend audits each found 0
+  vulnerabilities; frontend lint passed, 4 tests passed, and build succeeded.
+- **Git:** the Phase 2 plan/checkpoint is committed as `1433a03`. The initial
+  Stage 10 commit accidentally included two pre-staged unrelated Word paths;
+  the unpushed commit was corrected locally and the clean replacement commit
+  contains only `LISTING_REVISIONS_PLAN.md` and this progress file. The original
+  staged/deleted Word entries remain staged and are excluded from subsequent
+  commits.
+- **Next:** run the final verification set, commit Stage 11 documentation, and
+  push the planned Phase 1 commits once. Do not call the blocked demo successful.

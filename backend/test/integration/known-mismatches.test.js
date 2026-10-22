@@ -655,7 +655,7 @@ describe('known schema and service mismatches', () => {
     ]);
   });
 
-  test('FR-15a: required active measurement fields persist and are enforced when a listing is created', async () => {
+  test('FR-15a/FR-15d: required active measurement fields persist and are enforced when a listing is created', async () => {
     const definitions = await setMeasurementFieldDefs(fixture.subCategoryId, [
       { fieldName: 'chest', unit: 'inches', required: true },
       { fieldName: 'waist', unit: 'inches', required: false },
@@ -690,7 +690,7 @@ describe('known schema and service mismatches', () => {
     expect(await catalog.getMeasurementFieldDefs(fixture.subCategoryId)).toEqual([]);
   });
 
-  test('FR-15a: referenced measurement definitions retire while existing listing values remain', async () => {
+  test('FR-15a/FR-15d: referenced measurement definitions retire while existing listing values remain', async () => {
     await db.query('INSERT INTO listing_measurements (listing_id, field_def_id, value) VALUES ($1, $2, 41)',
       [fixture.listingId, fixture.fieldDefId]);
     const retired = await setMeasurementFieldDefs(fixture.subCategoryId, []);

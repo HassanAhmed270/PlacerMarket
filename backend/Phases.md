@@ -246,13 +246,26 @@ refuses the flag. Guarded `demo:seed` and `demo:smoke` scripts implement the
 local Phase 1 walkthrough. Service-backed execution is recorded in Stage 9;
 the fake does not represent provider delivery.
 
-**Stage 9 verification checkpoint (2026-10-22):** backend unit (38 suites /
-439 tests), PostgreSQL integration (77 passed / 4 Redis-only skips), schema
+**Stage 9 verification checkpoint (2026-10-22; refreshed at Stage 11):** backend
+unit (38 suites / 441 tests), PostgreSQL integration (77 passed / 4 Redis-only skips), schema
 check, both audits, and frontend lint/test/build pass. Local PostgreSQL is up,
 but Redis, a development DATABASE_URL and a valid JWT secret are unavailable;
 backend startup, demo seed/smoke, and live CORS were therefore not claimed.
 Vite returned HTTP 200 at `http://127.0.0.1:5173/`. Exact commands and limits
 are in `DEMO_RUN.md`.
+
+**Stage 10 design checkpoint (2026-10-22):** the document-only
+`LISTING_REVISIONS_PLAN.md` records a proposed side-copy design for moderated
+edits, with illustrative DDL and real-Postgres acceptance tests. It is not an
+approved schema or migration; settle its owner questions and reconcile FR-73b–d
+before coding.
+
+**Stage 11 handoff (2026-10-22):** `PHASE1_GATE_REPORT.md` maps each dated
+implementation-backlog item to evidence, parked work, and live checks. Local
+implementation checks passed, but the broader release gate is not closed:
+FR-07b, unfinished functional/frontend/security rows, recovery implementation,
+and live service/provider checks remain open. Do not expose unfinished Phase 1
+or Phase 2 routes to real users.
 
 **Gate**
 - [ ] Backend FRs above ticked

@@ -1,5 +1,11 @@
 # security.md — security checklist
 
+Phase 1 security implementation evidence and outstanding live checks are
+summarized in `PHASE1_GATE_REPORT.md` and `LIVE_CHECKS.md`. Only checked rows
+have the required implementation/test evidence; SEC-11/12/13 and SEC-34 remain
+open. Payout encryption custody/rotation and real Redis concurrency are live
+checks, not completed security evidence.
+
 Read alongside `rules.md` (Section 9 makes this binding). Same convention as
 `specs.md`: **every row has a checkbox**, ticked only when that job is done.
 

@@ -13,6 +13,16 @@ say "Marketplace" — same project). **Reading order for a new session:**
 
 ## Phase status — implemented foundation and planned follow-up
 
+**Phase 1 implementation handoff (2026-10-22):** seller onboarding, measurement
+administration, payout protection, manual identity verification, account UI,
+and the guarded demo harness are recorded in `PHASE1_PROGRESS.md`; current
+evidence and residuals are mapped in `PHASE1_GATE_REPORT.md`. Local unit,
+PostgreSQL, schema, audit, lint, frontend test, and build checks passed as listed
+there. The service-backed demo is blocked by missing development DB/JWT/Redis
+configuration; provider, key-custody, real-Redis, browser, and deployment checks
+remain open. Phase 1 is not a closed release gate. `LISTING_REVISIONS_PLAN.md`
+is proposed Phase 2 design only; resolve its questions before coding.
+
 Decided in the scale/escrow/auth program (see `specs.md` sections 13–20 and
 `MASTER_PROJECT_CONTEXT.md`): Phase 0b now has `worker.js`, `lib/queue.js`
 (PostgreSQL queue with transactional notification enqueue), and a Redis

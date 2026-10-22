@@ -87,6 +87,16 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-13 · SEC-14 · Postgres row-level security: recommended to defer (one DB role, modular monolith). Awaiting confirmation.
 - 2026-10-14 · Load-test targets and SLOs (proposed: p95 browse under 500 ms, error rate under 1%, search p95 under 300 ms, cache hit above 90%).
 
+## Current handoff notes (2026-10-22)
+
+- `PHASE1_GATE_REPORT.md` maps implementation evidence and residuals; it does
+  not mark the broad Phase 1 release gate closed. The local demo remains blocked
+  by missing development database/JWT/Redis configuration; see `DEMO_RUN.md` and
+  `LIVE_CHECKS.md`.
+- `LISTING_REVISIONS_PLAN.md` is a proposed Phase 2 document only. It does not
+  resolve FR-73b–d or the field/media/lifecycle questions listed in that plan.
+  Do not treat its recommendations or illustrative SQL as owner decisions.
+
 ## Resolved
 
 - 2026-10-21 · FR-06 · Seller application name, phone and city come from the user's profile; city must be verified under FR-03. The application stores only `reason_for_selling` and `what_will_sell`.
