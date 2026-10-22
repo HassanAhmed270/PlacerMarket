@@ -55,3 +55,32 @@ Resume at the first incomplete stage. Completed stages are not repeated.
 - **Live checks:** none required for this backend stage; production checks remain
   open in `LIVE_CHECKS.md`.
 - **Next:** Stage 2 — MEASUREMENTS.
+
+## Stage 2 — MEASUREMENTS — complete (2026-10-22)
+
+- **Files:** `db/migrations/006_measurement_field_lifecycle.sql`, generated
+  `schema.sql`, `src/modules/catalog.service.js`, `src/modules/listings.service.js`,
+  `src/routes/catalog.routes.js`, `src/lib/roles.js`, unit and PostgreSQL
+  integration tests, `agent.md`, `SCHEMA_CODE_AUDIT.md`, `specs.md`, `Phases.md`,
+  and this checkpoint.
+- **Migrations:** `001_initial_schema.sql`, `002_pgboss_schema.sql`,
+  `003_auth_foundation.sql`, `004_email_code_purpose.sql`,
+  `005_staff_totp_replay_guard.sql` (existing); `006_measurement_field_lifecycle.sql`
+  (added). Snapshot regenerated.
+- **Behavior:** required and active flags persist; admins can add, rename,
+  reorder and retire definitions. Omitted unreferenced fields are deleted;
+  referenced fields are marked inactive and retain old values. Public definitions
+  and listing creation use active fields only. Creation rejects missing required
+  fields. Catalog editing and listing creation lock their sub-category row to
+  serialize definition changes with newly created listing measurements.
+- **Verification:** full `npm.cmd test -- --runInBand` — 33 suites / 369 tests
+  passed. PostgreSQL 18.6 focused integration — 1 suite / 58 tests passed.
+  Targeted catalog permission, role, migration snapshot, and FR-comment checks —
+  4 suites / 127 tests passed. `npm.cmd run db:check-schema` passed.
+- **Rows ticked:** FR-15a, with named PostgreSQL tests in `specs.md`.
+- **Parked:** none for the measurement contract; Admin catalog edits use the
+  Admin-only `catalog.manage` permission.
+- **Provisional assumptions:** none introduced in this stage.
+- **Live checks:** none required for this backend stage; deployment checks remain
+  open in `LIVE_CHECKS.md`.
+- **Next:** Stage 3 — KEY PROVIDER + ENCRYPTION.

@@ -73,34 +73,89 @@ function assertNotRentalListing({ listingType }) {
 // ---- FR-15a (definitions side): measurement field defs, admin-configurable per sub-category ----
 
 /** FR-15a: admin-defined measurement fields for a sub-category. */
-async function getMeasurementFieldDefs(subCategoryId) {
+async function getMeasurementFieldDefs(subCategoryId, { includeInactive = false } = {}) {
   const { rows } = await db.query(
-    'SELECT * FROM measurement_field_defs WHERE sub_category_id = $1 ORDER BY display_order',
-    [subCategoryId]
+    `SELECT * FROM measurement_field_defs
+     WHERE sub_category_id = $1 AND ($2::boolean OR is_active = true)
+     ORDER BY display_order, id`,
+    [subCategoryId, includeInactive]
   );
   return rows;
 }
 
-/** FR-15a: admin replaces the measurement field set for a sub-category. */
-async function setMeasurementFieldDefs(subCategoryId, fieldDefs, adminId) {
-  // The schema has no `required` column. Reject that contract explicitly before
-  // deleting current definitions; do not silently lose the caller's setting.
-  if (fieldDefs.some((def) => Object.prototype.hasOwnProperty.call(def, 'required'))) {
-    throw new ValidationError('Persisting measurement required flags requires a schema/API decision');
+/** FR-15a: share-lock the owning sub-category while a listing reads its active definitions. */
+async function lockSubCategoryForListing(client, subCategoryId) {
+  const { rows } = await client.query('SELECT id FROM sub_categories WHERE id = $1 FOR SHARE', [subCategoryId]);
+  if (!rows[0]) throw new NotFoundError('sub_category', subCategoryId);
+}
+
+/** FR-15a: admin adds, renames, reorders, and retires definitions without deleting referenced fields. */
+async function setMeasurementFieldDefs(subCategoryId, fieldDefs, adminId, getReferencedDefinitionIds) {
+  if (!Array.isArray(fieldDefs) || fieldDefs.some((definition) =>
+    !definition || typeof definition !== 'object' || Array.isArray(definition) ||
+    typeof definition.fieldName !== 'string' || !definition.fieldName.trim() || definition.fieldName.trim().length > 50 ||
+    (definition.unit != null && (typeof definition.unit !== 'string' || definition.unit.length > 20)) ||
+    (definition.required != null && typeof definition.required !== 'boolean') ||
+    (definition.isActive != null && typeof definition.isActive !== 'boolean')
+  )) {
+    throw new ValidationError('Each measurement definition needs a fieldName, optional unit, required, and isActive values');
+  }
+  if (typeof getReferencedDefinitionIds !== 'function') {
+    throw new ValidationError('A listing-measurement reference checker is required');
   }
 
-  // fieldDefs: [{ fieldName, unit }, ...] — admin-defined, extensible over time.
   return db.withTransaction(async (client) => {
-    await client.query('DELETE FROM measurement_field_defs WHERE sub_category_id = $1', [subCategoryId]);
-    for (const [i, def] of fieldDefs.entries()) {
-      await client.query(
-        `INSERT INTO measurement_field_defs (sub_category_id, field_name, unit, display_order)
-         VALUES ($1, $2, $3, $4)`,
-        [subCategoryId, def.fieldName, def.unit, i]
-      );
+    const { rows: subCategories } = await client.query(
+      'SELECT id FROM sub_categories WHERE id = $1 FOR UPDATE', [subCategoryId]
+    );
+    if (!subCategories[0]) throw new NotFoundError('sub_category', subCategoryId);
+    const { rows: existingRows } = await client.query(
+      'SELECT * FROM measurement_field_defs WHERE sub_category_id = $1 FOR UPDATE', [subCategoryId]
+    );
+    const existingById = new Map(existingRows.map((definition) => [definition.id, definition]));
+    const existingByName = new Map(existingRows.map((definition) => [definition.field_name, definition]));
+    const retainedIds = new Set();
+    const names = new Set();
+    for (const [displayOrder, definition] of fieldDefs.entries()) {
+      const fieldName = definition.fieldName.trim();
+      if (names.has(fieldName)) throw new ValidationError(`Duplicate measurement field name: ${fieldName}`);
+      names.add(fieldName);
+      const existing = definition.id
+        ? existingById.get(definition.id)
+        : existingByName.get(fieldName);
+      if (definition.id && !existing) throw new ValidationError('Measurement field id does not belong to this sub-category');
+      if (existing && retainedIds.has(existing.id)) throw new ValidationError('A measurement field may be listed only once');
+      const active = definition.isActive !== false;
+      if (existing) {
+        retainedIds.add(existing.id);
+        await client.query(
+          `UPDATE measurement_field_defs
+           SET field_name = $1, unit = $2, required = $3, is_active = $4, display_order = $5
+           WHERE id = $6`,
+          [fieldName, definition.unit ?? null, definition.required ?? false, active, displayOrder, existing.id]
+        );
+      } else {
+        const { rows } = await client.query(
+          `INSERT INTO measurement_field_defs
+             (sub_category_id, field_name, unit, required, is_active, display_order)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [subCategoryId, fieldName, definition.unit ?? null, definition.required ?? false, active, displayOrder]
+        );
+        retainedIds.add(rows[0].id);
+      }
+    }
+
+    const omittedIds = existingRows.filter((definition) => !retainedIds.has(definition.id)).map((definition) => definition.id);
+    const referencedIds = new Set(await getReferencedDefinitionIds(client, omittedIds));
+    for (const definitionId of omittedIds) {
+      if (referencedIds.has(definitionId)) {
+        await client.query('UPDATE measurement_field_defs SET is_active = false WHERE id = $1', [definitionId]);
+      } else {
+        await client.query('DELETE FROM measurement_field_defs WHERE id = $1', [definitionId]);
+      }
     }
     const { rows } = await client.query(
-      'SELECT * FROM measurement_field_defs WHERE sub_category_id = $1 ORDER BY display_order',
+      'SELECT * FROM measurement_field_defs WHERE sub_category_id = $1 ORDER BY display_order, id',
       [subCategoryId]
     );
     return rows;
@@ -117,5 +172,6 @@ module.exports = {
   assertReplicaDisclosureIfNeeded,
   assertNotRentalListing,
   getMeasurementFieldDefs,
+  lockSubCategoryForListing,
   setMeasurementFieldDefs,
 };

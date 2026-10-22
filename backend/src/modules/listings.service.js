@@ -93,6 +93,7 @@ async function createListing(sellerId, data) {
   catalog.assertReplicaDisclosureIfNeeded(data); // FR-14
 
   return db.withTransaction(async (client) => {
+    await catalog.lockSubCategoryForListing(client, data.subCategoryId);
     const { rows } = await client.query(
       `INSERT INTO listings
          (seller_id, main_category_id, sub_category_id, condition, title, replica_disclosure,
@@ -106,27 +107,53 @@ async function createListing(sellerId, data) {
     );
     const listing = rows[0];
 
-    if (data.measurements?.length) {
-      await saveListingMeasurements(client, listing.id, data.subCategoryId, data.measurements); // FR-15a
-    }
+    await saveListingMeasurements(client, listing.id, data.subCategoryId, data.measurements); // FR-15a
     return listing;
   });
 }
 
 /** FR-15a: validates values against catalog.service's admin-defined field set before storing. */
 async function saveListingMeasurements(client, listingId, subCategoryId, measurements) {
+  if (measurements != null && !Array.isArray(measurements)) {
+    throw new ValidationError('measurements must be an array');
+  }
+  const submitted = measurements || [];
   const defs = await catalog.getMeasurementFieldDefs(subCategoryId);
   const defsByName = new Map(defs.map((def) => [def.field_name, def]));
-  for (const m of measurements) {
+  const submittedIds = new Set();
+  const resolved = [];
+  for (const m of submitted) {
+    if (!m || typeof m !== 'object' || typeof m.fieldName !== 'string') {
+      throw new ValidationError('Each measurement needs a fieldName and value');
+    }
     const definition = defsByName.get(m.fieldName);
     if (!definition) {
       throw new ValidationError(`Unknown measurement field "${m.fieldName}" for this sub-category (FR-15a)`);
     }
+    if (submittedIds.has(definition.id)) throw new ValidationError(`Measurement field "${m.fieldName}" was submitted more than once`);
+    submittedIds.add(definition.id);
+    resolved.push({ definition, value: m.value });
+  }
+  const missingRequired = defs.find((definition) => definition.required && !submittedIds.has(definition.id));
+  if (missingRequired) {
+    throw new ValidationError(`Required measurement field "${missingRequired.field_name}" is missing (FR-15a)`);
+  }
+  for (const { definition, value } of resolved) {
     await client.query(
       `INSERT INTO listing_measurements (listing_id, field_def_id, value) VALUES ($1, $2, $3)`,
-      [listingId, definition.id, m.value]
+      [listingId, definition.id, value]
     );
   }
+}
+
+/** FR-15a: report which catalog definitions have stored listing measurements. */
+async function getReferencedMeasurementDefinitionIds(client, definitionIds) {
+  if (!definitionIds.length) return [];
+  const { rows } = await client.query(
+    'SELECT DISTINCT field_def_id FROM listing_measurements WHERE field_def_id = ANY($1::uuid[])',
+    [definitionIds]
+  );
+  return rows.map((row) => row.field_def_id);
 }
 
 /** FR-16, FR-20: the listing owner may add photos while a draft or rejected listing is editable. */
@@ -363,6 +390,7 @@ async function resubmitListing(listingId, sellerId) {
 
 module.exports = {
   createListing,
+  getReferencedMeasurementDefinitionIds,
   addListingImages,
   getListingImages,
   submitListingForReview,

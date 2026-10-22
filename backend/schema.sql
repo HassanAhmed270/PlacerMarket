@@ -1000,3 +1000,9 @@ CREATE UNIQUE INDEX email_login_codes_one_active_verification_idx
 -- Expand-only TOTP replay protection; one accepted counter value per credential.
 ALTER TABLE staff_totp_credentials
   ADD COLUMN last_used_step BIGINT;
+
+-- Migration: 006_measurement_field_lifecycle.sql
+-- Expand measurement definitions for required and retired fields (FR-15a).
+ALTER TABLE measurement_field_defs
+  ADD COLUMN required BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT true;

@@ -28,6 +28,12 @@ async function addListingPhotos(listing, count) {
   );
 }
 
+async function setMeasurementFieldDefs(subCategoryId, definitions, adminId = fixture.userId) {
+  return catalog.setMeasurementFieldDefs(
+    subCategoryId, definitions, adminId, listings.getReferencedMeasurementDefinitionIds
+  );
+}
+
 beforeEach(async () => {
   fixture = await createFixture();
   registrationPhone = null;
@@ -410,11 +416,11 @@ describe('known schema and service mismatches', () => {
     expect(fields.map((field) => field.field_name)).toEqual(['sleeve', 'chest']);
   });
 
-  test('measurement definition replacement persists supported fields in display order', async () => {
-    const definitions = await catalog.setMeasurementFieldDefs(fixture.subCategoryId, [
+  test('FR-15a: measurement definition replacement persists flexible fields in display order', async () => {
+    const definitions = await setMeasurementFieldDefs(fixture.subCategoryId, [
       { fieldName: 'waist', unit: 'inches' },
       { fieldName: 'sleeve', unit: 'cm' },
-    ], fixture.userId);
+    ]);
 
     expect(definitions).toEqual([
       expect.objectContaining({ field_name: 'waist', unit: 'inches', display_order: 0 }),
@@ -422,45 +428,73 @@ describe('known schema and service mismatches', () => {
     ]);
   });
 
-  test('measurement required flags fail before replacing existing definitions', async () => {
-    const before = await catalog.getMeasurementFieldDefs(fixture.subCategoryId);
-    const error = await catalog.setMeasurementFieldDefs(fixture.subCategoryId, [
-      { fieldName: 'waist', unit: 'inches', required: true },
-    ], fixture.userId).catch((caught) => caught);
-    expect(error).toBeInstanceOf(ValidationError);
-    expect(error.statusCode).toBe(400);
-    expect(error.message).toBe('Persisting measurement required flags requires a schema/API decision');
-
-    const existing = await catalog.getMeasurementFieldDefs(fixture.subCategoryId);
-    expect(existing).toEqual(before);
-    expect(existing).toEqual([expect.objectContaining({ id: fixture.fieldDefId, field_name: 'chest' })]);
+  test('FR-15a: administrators can rename and reorder existing measurement field definitions', async () => {
+    const initial = await setMeasurementFieldDefs(fixture.subCategoryId, [
+      { fieldName: 'chest', unit: 'inches' },
+      { fieldName: 'waist', unit: 'inches' },
+    ]);
+    const updated = await setMeasurementFieldDefs(fixture.subCategoryId, [
+      { id: initial[1].id, fieldName: 'waistline', unit: 'cm', required: true },
+      { id: initial[0].id, fieldName: 'bust', unit: 'cm', required: false },
+    ]);
+    expect(updated).toEqual([
+      expect.objectContaining({ id: initial[1].id, field_name: 'waistline', unit: 'cm', required: true, display_order: 0 }),
+      expect.objectContaining({ id: initial[0].id, field_name: 'bust', unit: 'cm', required: false, display_order: 1 }),
+    ]);
   });
 
-  test('duplicate measurement field names fail with 23505 and preserve original definitions', async () => {
+  test('FR-15a: required active measurement fields persist and are enforced when a listing is created', async () => {
+    const definitions = await setMeasurementFieldDefs(fixture.subCategoryId, [
+      { fieldName: 'chest', unit: 'inches', required: true },
+      { fieldName: 'waist', unit: 'inches', required: false },
+    ]);
+    expect(definitions).toEqual([
+      expect.objectContaining({ field_name: 'chest', required: true, is_active: true, display_order: 0 }),
+      expect.objectContaining({ field_name: 'waist', required: false, is_active: true, display_order: 1 }),
+    ]);
+    const listingData = {
+      mainCategoryId: fixture.categoryId, subCategoryId: fixture.subCategoryId,
+      condition: 'brand_new', title: 'Required measurement fixture', askingPrice: 100,
+    };
+    await expect(listings.createListing(fixture.userId, listingData)).rejects.toThrow('Required measurement field "chest" is missing');
+    const listing = await listings.createListing(fixture.userId, {
+      ...listingData, measurements: [{ fieldName: 'chest', value: 41 }],
+    });
+    const { rows } = await db.query('SELECT field_def_id, value FROM listing_measurements WHERE listing_id = $1', [listing.id]);
+    expect(rows).toEqual([{ field_def_id: definitions[0].id, value: '41.00' }]);
+  });
+
+  test('FR-15a: duplicate measurement field names are rejected without changing definitions', async () => {
     const before = await catalog.getMeasurementFieldDefs(fixture.subCategoryId);
-    await expect(catalog.setMeasurementFieldDefs(fixture.subCategoryId, [
+    await expect(setMeasurementFieldDefs(fixture.subCategoryId, [
       { fieldName: 'waist', unit: 'inches' }, { fieldName: 'waist', unit: 'cm' },
-    ], fixture.userId)).rejects.toMatchObject({ code: '23505' });
+    ])).rejects.toThrow(ValidationError);
     expect(await catalog.getMeasurementFieldDefs(fixture.subCategoryId)).toEqual(before);
   });
 
   test('measurement definitions can be replaced with an empty array when unused', async () => {
-    const replaced = await catalog.setMeasurementFieldDefs(fixture.subCategoryId, [], fixture.userId);
+    const replaced = await setMeasurementFieldDefs(fixture.subCategoryId, []);
     expect(replaced).toEqual([]);
     expect(await catalog.getMeasurementFieldDefs(fixture.subCategoryId)).toEqual([]);
   });
 
-  test('measurement replacement with a referencing listing measurement fails 23503 and rolls back', async () => {
+  test('FR-15a: referenced measurement definitions retire while existing listing values remain', async () => {
     await db.query('INSERT INTO listing_measurements (listing_id, field_def_id, value) VALUES ($1, $2, 41)',
       [fixture.listingId, fixture.fieldDefId]);
-    const beforeDefs = await catalog.getMeasurementFieldDefs(fixture.subCategoryId);
-    await expect(catalog.setMeasurementFieldDefs(fixture.subCategoryId, [], fixture.userId))
-      .rejects.toMatchObject({ code: '23503' });
-    expect(await catalog.getMeasurementFieldDefs(fixture.subCategoryId)).toEqual(beforeDefs);
+    const retired = await setMeasurementFieldDefs(fixture.subCategoryId, []);
+    expect(retired).toEqual([expect.objectContaining({ id: fixture.fieldDefId, is_active: false })]);
+    expect(await catalog.getMeasurementFieldDefs(fixture.subCategoryId)).toEqual([]);
+    expect(await catalog.getMeasurementFieldDefs(fixture.subCategoryId, { includeInactive: true }))
+      .toEqual([expect.objectContaining({ id: fixture.fieldDefId, is_active: false })]);
     const { rows } = await db.query(
       'SELECT field_def_id, value FROM listing_measurements WHERE listing_id = $1', [fixture.listingId]
     );
     expect(rows).toEqual([{ field_def_id: fixture.fieldDefId, value: '41.00' }]);
+    await expect(listings.createListing(fixture.userId, {
+      mainCategoryId: fixture.categoryId, subCategoryId: fixture.subCategoryId, condition: 'brand_new',
+      title: 'Retired measurement fixture', askingPrice: 100,
+      measurements: [{ fieldName: 'chest', value: 41 }],
+    })).rejects.toThrow('Unknown measurement field');
   });
 
   test('known mismatch pin: payout method fails with PostgreSQL error 42703', async () => {

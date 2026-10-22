@@ -1,6 +1,8 @@
 const { Router } = require('express');
 const catalog = require('../modules/catalog.service');
+const listings = require('../modules/listings.service');
 const { requirePermission } = require('../middleware/auth');
+const { ValidationError } = require('../lib/errors');
 
 const router = Router();
 
@@ -20,12 +22,21 @@ router.get('/sub-categories/:id/measurement-fields', async (req, res) => {
   res.json(await catalog.getMeasurementFieldDefs(req.params.id)); // FR-15a (definitions side)
 });
 
-// Admin-only catalog management — no dedicated 'catalog.manage' permission
-// defined yet in lib/roles.js; using Admin-only gate directly for now.
-router.post('/main-categories', requirePermission('fee.configure'), async (req, res) => {
-  // NOTE: reusing 'fee.configure' as a stand-in Admin-only gate is a shortcut —
-  // add a proper 'catalog.manage' permission in lib/roles.js before relying on this.
+router.post('/main-categories', requirePermission('catalog.manage'), async (req, res) => {
   res.status(201).json(await catalog.createMainCategory(req.body, req.user.id)); // FR-12
+});
+
+router.get('/sub-categories/:id/measurement-fields/admin', requirePermission('catalog.manage'), async (req, res) => {
+  res.json(await catalog.getMeasurementFieldDefs(req.params.id, { includeInactive: true })); // FR-15a
+});
+
+router.put('/sub-categories/:id/measurement-fields', requirePermission('catalog.manage'), async (req, res) => {
+  if (!req.body || Object.keys(req.body).some((key) => key !== 'fieldDefs') || !Array.isArray(req.body.fieldDefs)) {
+    throw new ValidationError('fieldDefs must be an array');
+  }
+  res.json(await catalog.setMeasurementFieldDefs(
+    req.params.id, req.body.fieldDefs, req.user.id, listings.getReferencedMeasurementDefinitionIds
+  )); // FR-15a
 });
 
 module.exports = router;

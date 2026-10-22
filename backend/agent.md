@@ -275,16 +275,11 @@ purpose so the schema works whichever way this eventually gets decided.
   the audited users/catalog SQL covered there; other phase rows remain unfixed.
   The unit tests mock `db.service`, so use the real-Postgres integration harness
   before trusting SQL behavior.
-- **Measurement definition `required` flag:** `measurement_field_defs` has no
-  `required` column. `setMeasurementFieldDefs` rejects definitions that include
-  it with a `ValidationError` before changing existing rows. Do not silently
-  drop the flag or add a schema column. Resolve whether this is a schema/API
-  change before implementing persistence.
-- **Measurement definition replacement with references:** deleting a definition
-  referenced by `listing_measurements.field_def_id` fails with PostgreSQL `23503`
-  and rolls back. Decide whether referenced definitions should be updated in
-  place or whether explicit removal/replacement rules should apply; neither option
-  is approved implementation guidance yet.
+- **FR-15a measurement definitions:** migration `006_measurement_field_lifecycle.sql`
+  adds `required` and `is_active`. Catalog editing is additive/update-based;
+  referenced omitted definitions are retired, and listing creation locks the
+  sub-category while enforcing active required fields. The real-Postgres
+  regression tests are in `test/integration/known-mismatches.test.js`.
 - **Real-Postgres integration harness:** set `TEST_DATABASE_URL` to the
   specifically owner-approved `testing_only` database, or a disposable
   PostgreSQL database whose decoded name contains `test` as a complete

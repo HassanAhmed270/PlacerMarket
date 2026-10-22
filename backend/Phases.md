@@ -162,7 +162,7 @@ Wallet payout field.
 
 **Decisions needed first:** none remain from the 2026-10-21 owner decision set.
 
-**Dated implementation backlog (owner decisions 2026-10-21; no rows are ticked):**
+**Dated implementation backlog (owner decisions 2026-10-21; progress is tracked in `PHASE1_PROGRESS.md`):**
 seller-application contract (profile name/phone/verified city; application reason
 and what-will-sell only) · atomic approval/revocation role and profile state ·
 measurement `required` / `is_active` migration and enforcement · bank/Easypaisa/
@@ -181,6 +181,16 @@ name, phone and city joined from the user profile; the existing
 `POST /api/admin/seller-applications/:id/review` decides the application. The
 backend stage evidence is in `PHASE1_PROGRESS.md`; the admin queue's navigation
 placement remains a frontend item.
+
+**Stage 2 contract (implemented 2026-10-22):** `GET
+/api/catalog/sub-categories/:id/measurement-fields` returns active definitions;
+Admin-only `GET /api/catalog/sub-categories/:id/measurement-fields/admin`
+includes retired definitions; Admin-only `PUT
+/api/catalog/sub-categories/:id/measurement-fields` accepts
+`{fieldDefs:[{id?,fieldName,unit?,required?,isActive?},...]}`. Omitted unreferenced
+fields are removed; omitted fields with stored listing values are retired.
+Migration `006_measurement_field_lifecycle.sql` adds `required` and `is_active`.
+Stage evidence is in `PHASE1_PROGRESS.md`.
 
 **Gate**
 - [ ] Backend FRs above ticked

@@ -33,7 +33,7 @@
 
 ## 3. Listings
 - [ ] FR-15 Sellers create a listing: category, sub-category, condition, asking/reference price (not fixed buy-now), description, structured measurements, images.
-- [ ] FR-15a Measurement fields are defined per sub-category and are admin-configurable; each listing stores structured values against the field set active at creation. Admins can add, rename and reorder definitions, and retire rather than delete referenced definitions.
+- [x] FR-15a Measurement fields are defined per sub-category and are admin-configurable; each listing stores structured values against the field set active at creation. Admins can add, rename and reorder definitions, and retire rather than delete referenced definitions. Tests: `FR-15a: measurement definition replacement persists flexible fields in display order`, `FR-15a: administrators can rename and reorder existing measurement field definitions`, `FR-15a: required active measurement fields persist and are enforced when a listing is created`, and `FR-15a: referenced measurement definitions retire while existing listing values remain` in `test/integration/known-mismatches.test.js`.
 - [ ] FR-15d A measurement definition has `required BOOLEAN NOT NULL DEFAULT false` and `is_active BOOLEAN NOT NULL DEFAULT true`. Admins choose whether a field is required; active required fields are enforced at listing creation. Retired definitions remain available to existing listings, which retain their stored values.
 - [ ] FR-15b Richer attributes: fabric/material, brand (if applicable), color, embellishment/handwork detail.
 - [ ] FR-16 Sellers can upload multiple images per listing.
