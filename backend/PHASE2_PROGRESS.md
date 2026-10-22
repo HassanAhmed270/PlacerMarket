@@ -35,3 +35,26 @@ Resume at the first incomplete stage. Do not repeat completed stages.
 - **Git:** started on `main` at `1e53551`; preserved the two pre-existing
   staged/deleted `.docx` files outside the stage commit.
 - **Next:** Stage 1 — listing core repairs.
+
+## Stage 1 — LISTING CORE REPAIRS — complete (2026-10-23)
+
+- **Files changed:** `src/modules/listings.service.js`,
+  `src/modules/discovery.service.js`, `src/routes/listings.routes.js`,
+  `test/unit/listings.service.test.js`,
+  `test/integration/known-mismatches.test.js`, `SCHEMA_CODE_AUDIT.md`,
+  `specs.md`, `open-questions.md`.
+- **Migrations:** none; the listing schema supports these changes.
+- **Changes:** title and create-payload validation; measurement
+  definition resolution by exact name or ID with active/required checks;
+  reviewer attribution; immediate pause/resume/removal; edit rejection for
+  previously published records; seller-city filtering; public `display_alias`;
+-  stricter queue threshold coverage. Retired the held-pending helper and route.
+- **Verification:** backend unit suite: 38 suites / 450 tests passed. Backend
+  integration: 4 suites passed, 83 tests passed, 4 skipped; one Redis-dependent
+  suite skipped because `TEST_REDIS_URL` is unset. `git diff --check` passed.
+- **Parked:** Phase 2 Stages 2–7 remain unstarted.
+- **Provisional assumptions:** none. The task explicitly selects seller
+  registered city for `cityId` and requests `display_alias` on the public card;
+  these are recorded in `open-questions.md` and `specs.md`.
+- **Live checks:** none executed.
+- **Next:** Stage 2 — storage adapter and media.

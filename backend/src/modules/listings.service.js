@@ -41,6 +41,11 @@ const EDITABLE_LISTING_FIELDS = new Map([
   ['color', 'color'],
   ['embellishmentDetail', 'embellishment_detail'],
 ]);
+const CREATE_LISTING_FIELDS = new Set([
+  'title', 'mainCategoryId', 'subCategoryId', 'condition', 'replicaDisclosure',
+  'askingPrice', 'description', 'fabricMaterial', 'brand', 'color',
+  'embellishmentDetail', 'measurements',
+]);
 
 /** FR-16, FR-74: require three through six listing images before submission or publication. */
 function assertValidListingImageCount(count) {
@@ -88,26 +93,35 @@ async function assertApprovedSeller(sellerId) {
 
 /** FR-15, FR-15a, FR-15b: approved sellers create a draft listing. */
 async function createListing(sellerId, data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new ValidationError('Listing details are required');
+  }
   await assertApprovedSeller(sellerId);
   catalog.assertNotRentalListing(data); // FR-14a
   catalog.assertReplicaDisclosureIfNeeded(data); // FR-14
+  const unsupported = Object.keys(data).find((key) => !CREATE_LISTING_FIELDS.has(key));
+  if (unsupported) throw new ValidationError(`Unsupported or retired listing field: ${unsupported}`);
+  if (typeof data.title !== 'string' || !data.title.trim() || data.title.trim().length > 150) {
+    throw new ValidationError('title is required and must be at most 150 characters');
+  }
+  const input = { ...data, title: data.title.trim() };
 
   return db.withTransaction(async (client) => {
-    await catalog.lockSubCategoryForListing(client, data.subCategoryId);
+    await catalog.lockSubCategoryForListing(client, input.subCategoryId);
     const { rows } = await client.query(
       `INSERT INTO listings
          (seller_id, main_category_id, sub_category_id, condition, title, replica_disclosure,
           asking_price, description, fabric_material, brand, color, embellishment_detail, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'draft') RETURNING *`,
       [
-        sellerId, data.mainCategoryId, data.subCategoryId, data.condition, data.title,
-        data.replicaDisclosure, data.askingPrice, data.description, data.fabricMaterial,
-        data.brand, data.color, data.embellishmentDetail,
+        sellerId, input.mainCategoryId, input.subCategoryId, input.condition, input.title,
+        input.replicaDisclosure, input.askingPrice, input.description, input.fabricMaterial,
+        input.brand, input.color, input.embellishmentDetail,
       ]
     );
     const listing = rows[0];
 
-    await saveListingMeasurements(client, listing.id, data.subCategoryId, data.measurements); // FR-15a
+    await saveListingMeasurements(client, listing.id, input.subCategoryId, input.measurements); // FR-15a
     return listing;
   });
 }
@@ -118,23 +132,33 @@ async function saveListingMeasurements(client, listingId, subCategoryId, measure
     throw new ValidationError('measurements must be an array');
   }
   const submitted = measurements || [];
-  const defs = await catalog.getMeasurementFieldDefs(subCategoryId);
-  const defsByName = new Map(defs.map((def) => [def.field_name, def]));
+  const defs = await catalog.getMeasurementFieldDefs(subCategoryId, { includeInactive: true });
   const submittedIds = new Set();
   const resolved = [];
   for (const m of submitted) {
-    if (!m || typeof m !== 'object' || typeof m.fieldName !== 'string') {
-      throw new ValidationError('Each measurement needs a fieldName and value');
+    if (!m || typeof m !== 'object' || Array.isArray(m)) {
+      throw new ValidationError('Each measurement needs one fieldName or fieldDefId and a value');
     }
-    const definition = defsByName.get(m.fieldName);
-    if (!definition) {
-      throw new ValidationError(`Unknown measurement field "${m.fieldName}" for this sub-category (FR-15a)`);
+    const hasName = Object.hasOwn(m, 'fieldName');
+    const hasId = Object.hasOwn(m, 'fieldDefId');
+    if (hasName === hasId) throw new ValidationError('Each measurement must specify exactly one of fieldName or fieldDefId');
+    let matches;
+    if (hasName && typeof m.fieldName === 'string') {
+      matches = defs.filter((def) => def.field_name === m.fieldName);
+    } else if (hasId && typeof m.fieldDefId === 'string') {
+      matches = defs.filter((def) => def.id === m.fieldDefId);
+    } else {
+      throw new ValidationError('Each measurement needs a valid fieldName or fieldDefId');
     }
-    if (submittedIds.has(definition.id)) throw new ValidationError(`Measurement field "${m.fieldName}" was submitted more than once`);
+    if (!matches.length) throw new ValidationError('Unknown measurement field for this sub-category (FR-15a)');
+    if (matches.length > 1) throw new ValidationError('Measurement field name is ambiguous; use its fieldDefId');
+    const definition = matches[0];
+    if (!definition.is_active) throw new ValidationError(`Measurement field "${definition.field_name}" is inactive`);
+    if (submittedIds.has(definition.id)) throw new ValidationError(`Measurement field "${definition.field_name}" was submitted more than once`);
     submittedIds.add(definition.id);
     resolved.push({ definition, value: m.value });
   }
-  const missingRequired = defs.find((definition) => definition.required && !submittedIds.has(definition.id));
+  const missingRequired = defs.find((definition) => definition.is_active && definition.required && !submittedIds.has(definition.id));
   if (missingRequired) {
     throw new ValidationError(`Required measurement field "${missingRequired.field_name}" is missing (FR-15a)`);
   }
@@ -241,6 +265,7 @@ async function setVerifiedBadge(listingId, { granted, reviewerId }) {
 
 /** FR-19: ONE unified moderation queue; high-value / evidence-submitted listings are flagged inline, not split out. */
 async function getModerationQueue() {
+  // cross-module read: platform_settings (owned by settlement.service.js), allowed for this queue view.
   const { rows } = await db.query(
     `SELECT l.*,
             (l.asking_price > (SELECT value::numeric FROM platform_settings WHERE key = 'high_value_threshold_pkr')) AS is_high_value,
@@ -309,6 +334,9 @@ async function updateOwnListing(listingId, sellerId, patch) {
     const listing = rows[0];
     if (!listing) throw new NotFoundError('listing', listingId);
     if (listing.seller_id !== sellerId) throw new ForbiddenError('Not your listing');
+    if (listing.published_at) {
+      throw new ValidationError('Previously published listing edits require a moderated revision (FR-73)');
+    }
     if (listing.status === 'published') {
       throw new ValidationError(
         'Published listing edits require pending-version storage (FR-73); this schema has no safe place to keep them'
@@ -368,10 +396,10 @@ async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
     const { rows } = await client.query(
       `UPDATE listings
        SET status = CASE WHEN status = 'published' THEN 'unpublished'::listing_status ELSE 'rejected'::listing_status END,
-           rejection_reason = $1, updated_at = now()
-       WHERE id = $2 AND status IN ('pending_review', 'published')
+           reviewed_by = $1, rejection_reason = $2, updated_at = now()
+       WHERE id = $3 AND status IN ('pending_review', 'published')
        RETURNING *`,
-      [reason, listingId]
+      [reviewerId, reason, listingId]
     );
     if (!rows[0]) {
       const { rows: existing } = await client.query('SELECT id FROM listings WHERE id = $1', [listingId]);
@@ -380,6 +408,42 @@ async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
     }
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: rows[0].status, reason }, { transaction: client });
     return rows[0];
+  });
+}
+
+/** FR-20: sellers may immediately pause or resume a published listing they own. */
+async function setOwnListingPaused(listingId, sellerId, paused) {
+  if (typeof paused !== 'boolean') throw new ValidationError('paused must be a boolean');
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query('SELECT seller_id, status FROM listings WHERE id = $1 FOR UPDATE', [listingId]);
+    if (!rows[0]) throw new NotFoundError('listing', listingId);
+    if (rows[0].seller_id !== sellerId) throw new ForbiddenError('Not your listing');
+    if (!['published', 'paused'].includes(rows[0].status)) {
+      throw new ValidationError('Only a published or paused listing can be paused or resumed');
+    }
+    const status = paused ? 'paused' : 'published';
+    const { rows: updated } = await client.query(
+      'UPDATE listings SET status = $1, updated_at = now() WHERE id = $2 RETURNING *', [status, listingId]
+    );
+    await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status }, { transaction: client });
+    return updated[0];
+  });
+}
+
+/** FR-20: sellers may immediately remove their own listings from the marketplace. */
+async function removeOwnListing(listingId, sellerId) {
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query('SELECT seller_id, status FROM listings WHERE id = $1 FOR UPDATE', [listingId]);
+    if (!rows[0]) throw new NotFoundError('listing', listingId);
+    if (rows[0].seller_id !== sellerId) throw new ForbiddenError('Not your listing');
+    if (['removed', 'unpublished'].includes(rows[0].status)) {
+      throw new ValidationError('This listing is already unavailable');
+    }
+    const { rows: updated } = await client.query(
+      "UPDATE listings SET status = 'removed', updated_at = now() WHERE id = $1 RETURNING *", [listingId]
+    );
+    await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: 'removed' }, { transaction: client });
+    return updated[0];
   });
 }
 
@@ -399,6 +463,8 @@ module.exports = {
   getModerationQueue,
   approveListing,
   updateOwnListing,
+  setOwnListingPaused,
+  removeOwnListing,
   rejectOrUnpublishListing,
   resubmitListing,
 };

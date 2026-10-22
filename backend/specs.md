@@ -37,8 +37,8 @@ does not satisfy or tick FR-73/FR-73a/FR-73e.
 - [ ] FR-14a Buy-only for MVP — no rent/lease listing type. **(DEFERRED: rental)**
 
 ## 3. Listings
-- [ ] FR-15 Sellers create a listing: category, sub-category, condition, asking/reference price (not fixed buy-now), description, structured measurements, images.
-- [x] FR-15a Measurement fields are defined per sub-category and are admin-configurable; each listing stores structured values against the field set active at creation. Admins can add, rename and reorder definitions, and retire rather than delete referenced definitions. Tests: `FR-15a: measurement definition replacement persists flexible fields in display order`, `FR-15a: administrators can rename and reorder existing measurement field definitions`, `FR-15a/FR-15d: required active measurement fields persist and are enforced when a listing is created`, and `FR-15a/FR-15d: referenced measurement definitions retire while existing listing values remain` in `test/integration/known-mismatches.test.js`.
+- [ ] FR-15 Sellers create a listing with a server-validated title: category, sub-category, condition, asking/reference price (not fixed buy-now), description, structured measurements, images. Unsupported and retired fields are rejected.
+- [x] FR-15a Measurement fields are defined per sub-category and are admin-configurable; each listing stores structured values against the field set active at creation. Admins can add, rename and reorder definitions, and retire rather than delete referenced definitions. Creation accepts exactly one exact `fieldName` or `fieldDefId`; unknown, ambiguous, duplicate, and inactive definitions are rejected. Tests: `FR-15a: measurement definition replacement persists flexible fields in display order`, `FR-15a: administrators can rename and reorder existing measurement field definitions`, `FR-15a/FR-15d: required active measurement fields persist and are enforced when a listing is created`, `FR-15a/FR-15d: referenced measurement definitions retire while existing listing values remain`, `FR-15a: listing creation accepts an active measurement definition ID`, and `FR-15a: listing creation rejects unknown and inactive measurement definitions` in `test/integration/known-mismatches.test.js`.
 - [x] FR-15d A measurement definition has `required BOOLEAN NOT NULL DEFAULT false` and `is_active BOOLEAN NOT NULL DEFAULT true`. Admins choose whether a field is required; active required fields are enforced at listing creation. Retired definitions remain available to existing listings, which retain their stored values. Tests: `FR-15a/FR-15d: required active measurement fields persist and are enforced when a listing is created` and `FR-15a/FR-15d: referenced measurement definitions retire while existing listing values remain` in `test/integration/known-mismatches.test.js`.
 - [ ] FR-15b Richer attributes: fabric/material, brand (if applicable), color, embellishment/handwork detail.
 - [ ] FR-16 Sellers can upload multiple images per listing.
@@ -57,11 +57,11 @@ does not satisfy or tick FR-73/FR-73a/FR-73e.
 - [ ] FR-22a Login required the moment a user favorites a listing, messages a seller, or makes an offer.
 - [ ] FR-22b Redirect-and-return login pattern: logged-out user attempting a gated action is sent to /login, then returned to the exact action after successful login (no inline modal).
 - [x] FR-23 Buyers can search listings by keyword.
-- [ ] FR-24 Buyers can filter by main category, sub-category/occasion, condition, price range, city.
+- [ ] FR-24 Buyers can filter by main category, sub-category/occasion, condition, price range, and seller registered city. The city filter joins through `users.city_id`.
 - [x] FR-25 Buyers can view full listing details, seller profile summary, images.
 - [ ] FR-26 Buyers can favorite/save listings (requires login).
 - [ ] FR-27 Buyers can share a listing (external link, no login required).
-- [x] FR-27a Seller's public profile card (buyer-facing) shows ONLY rating + join date — no sales count, no verified badge, no response-time stats. (Seller's own private dashboard may show richer stats to themselves.)
+- [x] FR-27a Seller's public profile card (buyer-facing) shows the seller's `display_alias`, rating, and join date — no sales count, no verified badge, no response-time stats. (Seller's own private dashboard may show richer stats to themselves.) Test: `FR-27a: public seller card includes display alias, rating, and join date only` in `test/integration/known-mismatches.test.js`.
 - [ ] FR-27b Two-way rating system: after order completion, both buyer and seller can rate each other. Feeds FR-27a.
 
 ## 5. Messaging & Negotiation

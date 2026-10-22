@@ -56,7 +56,6 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - CNIC/document retention and legal review are required only if a future provider or workflow stores identity documents. Deferred decisions and external review are listed in `END_OF_PHASES_REVIEW.md`; current manual verification stores no CNIC number or document.
 
 ### Needed by Phase 3
-- 2026-10-19 · FR-24 · `filterListings` accepts `cityId`, but listings have no city column. Decide whether seller city should drive the filter or the listing data model should change.
 - 2026-10-14 · CDN provider (a node near Pakistani users matters; Cloudflare was mentioned as a candidate — verify).
 - 2026-10-14 · FR-80f · Sold items hidden from search, reserved shown with a badge (proposed default).
 - 2026-10-14 · FR-82–FR-82d · All SEO decisions, via SEO-GATE at page-building time, including which languages buyers search in (English, Roman Urdu, Urdu script).
@@ -99,6 +98,8 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 
 ## Resolved
 
+- 2026-10-22 · FR-24 · The discovery `cityId` filter follows the listing seller's registered `users.city_id`; it is applied with a users join. No listing-level city field is introduced.
+- 2026-10-22 · FR-27a · The buyer-facing seller card includes `seller_profiles.display_alias`, rating and join date; it omits seller IDs, sales counts, the verified badge and response-time statistics.
 - 2026-10-21 · FR-06 · Seller application name, phone and city come from the user's profile; city must be verified under FR-03. The application stores only `reason_for_selling` and `what_will_sell`.
 - 2026-10-21 · FR-07 / FR-08 · Approval sets the Seller role, `seller_profiles.is_approved` and `approved_at` in one transaction; suspension/revocation clears the seller approval state.
 - 2026-10-21 · FR-15a / FR-15d · Measurement definitions have admin-chosen `required BOOLEAN NOT NULL DEFAULT false` and `is_active BOOLEAN NOT NULL DEFAULT true`; active required fields are enforced at listing creation. Admins may add, rename and reorder definitions, retire rather than delete a referenced definition, and existing listings retain their stored values.

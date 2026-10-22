@@ -393,17 +393,32 @@ describe('known schema and service mismatches', () => {
     const email = `device-${fixture.suffix}@example.test`;
     const passwordHash = await hashPassword('long-enough-device-test-password');
     try {
-      await db.query('UPDATE users SET email = $2, password_hash = $3 WHERE id = $1', [fixture.userId, email, passwordHash]);
+      await db.query("UPDATE users SET email = $2, password_hash = $3, role = 'buyer', is_suspended = false WHERE id = $1", [fixture.userId, email, passwordHash]);
       const { rows: before } = await db.query("SELECT count(*)::int AS count FROM pgboss.job WHERE name = 'email'");
       const context = { deviceIdentity: `test-device:${fixture.suffix}` };
-      const first = await users.authenticate({ email, password: 'long-enough-device-test-password' }, context);
-      const second = await users.authenticate({ email, password: 'long-enough-device-test-password' }, context);
-      expect(first.session.sessionId).toBeTruthy();
-      expect(second.session.sessionId).toBeTruthy();
+      const previousRedis = getSharedRedisClient();
+      setSharedRedisClient({ isOpen: true, eval: async (_script, { arguments: args }) => args[2] === '0' ? 0 : 1 });
+      const sessions = [];
+      try {
+        for (const code of ['735101', '735102']) {
+          const challenge = await users.authenticate({ email, password: 'long-enough-device-test-password' }, context);
+          expect(challenge).toMatchObject({ challengeRequired: true, factor: 'email' });
+          await db.query(
+            `INSERT INTO email_login_codes
+              (login_attempt_id, user_id, email_digest, code_hash, expires_at, purpose)
+             VALUES ($1, $2, $3, $4, now() + interval '5 minutes', 'login')`,
+            [challenge.loginAttemptId, fixture.userId, addressDigest(email), hashCode(code)]
+          );
+          sessions.push(await users.completeBuyerLogin(challenge.loginAttemptId, code, email, context));
+        }
+      } finally {
+        setSharedRedisClient(previousRedis);
+      }
+      expect(sessions.every((session) => session.sessionId)).toBe(true);
       const { rows: devices } = await db.query('SELECT device_hash FROM known_auth_devices WHERE user_id = $1', [fixture.userId]);
       expect(devices).toHaveLength(1);
       const { rows: limitedSessions } = await db.query('SELECT enrollment_only FROM auth_sessions WHERE user_id = $1', [fixture.userId]);
-      expect(limitedSessions.every((row) => row.enrollment_only)).toBe(true);
+      expect(limitedSessions.every((row) => !row.enrollment_only)).toBe(true);
       const { rows: after } = await db.query("SELECT count(*)::int AS count FROM pgboss.job WHERE name = 'email'");
       expect(after[0].count - before[0].count).toBe(1);
     } finally {
@@ -611,11 +626,13 @@ describe('known schema and service mismatches', () => {
     });
   });
 
-  test('FR-27a: public seller card contains only rating and join date', async () => {
+  test('FR-27a: public seller card includes display alias, rating, and join date only', async () => {
     const card = await discovery.getSellerPublicCard(fixture.userId);
     expect(card).toEqual({
+      displayAlias: expect.stringMatching(/^Fixture alias /),
       joinDate: expect.any(Date), averageRating: 0, ratingCount: 0,
     });
+    expect(Object.keys(card).sort()).toEqual(['averageRating', 'displayAlias', 'joinDate', 'ratingCount']);
   });
 
   test('measurement definition lookup returns fields ordered by display_order', async () => {
@@ -706,7 +723,7 @@ describe('known schema and service mismatches', () => {
       mainCategoryId: fixture.categoryId, subCategoryId: fixture.subCategoryId, condition: 'brand_new',
       title: 'Retired measurement fixture', askingPrice: 100,
       measurements: [{ fieldName: 'chest', value: 41 }],
-    })).rejects.toThrow('Unknown measurement field');
+    })).rejects.toThrow('is inactive');
   });
 
   test('FR-09a: obsolete payout method values are rejected before payout SQL', async () => {
@@ -804,18 +821,69 @@ describe('known schema and service mismatches', () => {
     expect(await catalog.listSubCategories(otherCategory.id)).toEqual([]);
   });
 
-  test('FR-14, FR-15: listing creation persists title and replica disclosure and starts as draft', async () => {
+  test('FR-14, FR-15, FR-15b: listing creation persists title, replica disclosure, attributes, and starts as draft', async () => {
     const created = await listings.createListing(fixture.userId, {
       title: 'Replica probe listing', mainCategoryId: fixture.categoryId,
       subCategoryId: fixture.subCategoryId, condition: 'replica',
       replicaDisclosure: 'This is a replica item.', askingPrice: 10,
+      fabricMaterial: 'silk', brand: 'Probe brand', color: 'blue', embellishmentDetail: 'zardozi',
     });
     const { rows } = await db.query(
-      'SELECT title, replica_disclosure, status FROM listings WHERE id = $1', [created.id]
+      'SELECT title, replica_disclosure, fabric_material, brand, color, embellishment_detail, status FROM listings WHERE id = $1', [created.id]
     );
     expect(rows[0]).toEqual({
-      title: 'Replica probe listing', replica_disclosure: 'This is a replica item.', status: 'draft',
+      title: 'Replica probe listing', replica_disclosure: 'This is a replica item.', fabric_material: 'silk',
+      brand: 'Probe brand', color: 'blue', embellishment_detail: 'zardozi', status: 'draft',
     });
+  });
+
+  test('FR-15: listing title is validated, trimmed, and retired fields are rejected on creation', async () => {
+    await expect(listings.createListing(fixture.userId, {
+      title: '  ', mainCategoryId: fixture.categoryId, subCategoryId: fixture.subCategoryId,
+      condition: 'brand_new', askingPrice: 10,
+    })).rejects.toThrow('title is required');
+    await expect(listings.createListing(fixture.userId, {
+      title: 'A'.repeat(151), mainCategoryId: fixture.categoryId, subCategoryId: fixture.subCategoryId,
+      condition: 'brand_new', askingPrice: 10,
+    })).rejects.toThrow('150 characters');
+    await expect(listings.createListing(fixture.userId, {
+      title: 'Retired field probe', mainCategoryId: fixture.categoryId, subCategoryId: fixture.subCategoryId,
+      condition: 'brand_new', askingPrice: 10, listingType: 'sale',
+    })).rejects.toThrow('Unsupported or retired listing field: listingType');
+    const created = await listings.createListing(fixture.userId, {
+      title: '  Valid title  ', mainCategoryId: fixture.categoryId,
+      subCategoryId: fixture.subCategoryId, condition: 'brand_new', askingPrice: 10,
+    });
+    expect(created.title).toBe('Valid title');
+  });
+
+  test('FR-15a: listing creation accepts an active measurement definition ID', async () => {
+    await setMeasurementFieldDefs(fixture.subCategoryId, [
+      { id: fixture.fieldDefId, fieldName: 'chest', required: true },
+    ]);
+    const created = await listings.createListing(fixture.userId, {
+      title: 'Definition ID probe', mainCategoryId: fixture.categoryId,
+      subCategoryId: fixture.subCategoryId, condition: 'brand_new', askingPrice: 10,
+      measurements: [{ fieldDefId: fixture.fieldDefId, value: 40 }],
+    });
+    const stored = await db.query('SELECT field_def_id, value FROM listing_measurements WHERE listing_id = $1', [created.id]);
+    expect(stored.rows).toEqual([{ field_def_id: fixture.fieldDefId, value: '40.00' }]);
+  });
+
+  test('FR-15a: listing creation rejects unknown and inactive measurement definitions', async () => {
+    const input = {
+      title: 'Measurement rejection probe', mainCategoryId: fixture.categoryId,
+      subCategoryId: fixture.subCategoryId, condition: 'brand_new', askingPrice: 10,
+    };
+    await expect(listings.createListing(fixture.userId, {
+      ...input, measurements: [{ fieldName: 'missing field', value: 10 }],
+    })).rejects.toThrow('Unknown measurement field');
+    await setMeasurementFieldDefs(fixture.subCategoryId, [
+      { id: fixture.fieldDefId, fieldName: 'chest', isActive: false },
+    ]);
+    await expect(listings.createListing(fixture.userId, {
+      ...input, measurements: [{ fieldDefId: fixture.fieldDefId, value: 10 }],
+    })).rejects.toThrow('is inactive');
   });
 
   test('FR-15a: listing measurements store the configured field definition ID', async () => {
@@ -871,7 +939,7 @@ describe('known schema and service mismatches', () => {
     });
   });
 
-  test('FR-21: rejection stores its reason for a listing in the review queue', async () => {
+  test('FR-21: rejection stores its reason and reviewer in real listing columns', async () => {
     await addListingPhotos(fixture, 3);
     await listings.submitListingForReview(fixture.listingId, fixture.userId);
     const rejected = await listings.rejectOrUnpublishListing(fixture.listingId, {
@@ -880,9 +948,9 @@ describe('known schema and service mismatches', () => {
     expect(rejected.status).toBe('rejected');
     expect(rejected.rejection_reason).toBe('Missing details');
     const { rows } = await db.query(
-      'SELECT status, rejection_reason FROM listings WHERE id = $1', [fixture.listingId]
+      'SELECT status, rejection_reason, reviewed_by FROM listings WHERE id = $1', [fixture.listingId]
     );
-    expect(rows[0]).toEqual({ status: 'rejected', rejection_reason: 'Missing details' });
+    expect(rows[0]).toEqual({ status: 'rejected', rejection_reason: 'Missing details', reviewed_by: fixture.userId });
   });
 
   test('FR-21: unpublishing a published listing stores its reason and valid status', async () => {
@@ -909,6 +977,24 @@ describe('known schema and service mismatches', () => {
       expect.objectContaining({
         id: fixture.listingId, status: 'pending_review', is_high_value: false, has_evidence_submitted: true,
       }),
+    ]));
+  });
+
+  test('FR-19b: moderation queue flags a price strictly above the platform threshold', async () => {
+    const { rows: settings } = await db.query(
+      "SELECT value::numeric AS threshold FROM platform_settings WHERE key = 'high_value_threshold_pkr'"
+    );
+    await db.query("UPDATE listings SET asking_price = $2, status = 'pending_review' WHERE id = $1",
+      [fixture.listingId, Number(settings[0].threshold) + 1]);
+    const queue = await listings.getModerationQueue();
+    expect(queue).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: fixture.listingId, is_high_value: true }),
+    ]));
+    await db.query('UPDATE listings SET asking_price = $2 WHERE id = $1',
+      [fixture.listingId, Number(settings[0].threshold)]);
+    const atThreshold = await listings.getModerationQueue();
+    expect(atThreshold).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: fixture.listingId, is_high_value: false }),
     ]));
   });
 
@@ -1048,14 +1134,28 @@ describe('known schema and service mismatches', () => {
   });
 
   test('FR-20, FR-73: published edits are refused without pending-version storage', async () => {
-    await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
+    await db.query("UPDATE listings SET status = 'published', published_at = now() WHERE id = $1", [fixture.listingId]);
     await expect(listings.updateOwnListing(fixture.listingId, fixture.userId, {
       title: 'Must stay unpublished until moderation',
     })).rejects.toMatchObject({
-      name: 'ValidationError', message: expect.stringContaining('pending-version storage'),
+      name: 'ValidationError', message: expect.stringContaining('moderated revision'),
     });
     const { rows } = await db.query('SELECT title, status FROM listings WHERE id = $1', [fixture.listingId]);
     expect(rows[0]).toEqual({ title: `Fixture listing ${fixture.suffix}`, status: 'published' });
+  });
+
+  test('FR-20: seller pause, resume, and removal take effect immediately and enforce ownership', async () => {
+    await db.query("UPDATE listings SET status = 'published', published_at = now() WHERE id = $1", [fixture.listingId]);
+    await expect(listings.setOwnListingPaused(fixture.listingId, fixture.otherUserId, true))
+      .rejects.toBeInstanceOf(ForbiddenError);
+    await expect(listings.setOwnListingPaused(fixture.listingId, fixture.userId, true))
+      .resolves.toMatchObject({ status: 'paused' });
+    expect(await discovery.getListingDetail(fixture.listingId)).toBeNull();
+    await expect(listings.setOwnListingPaused(fixture.listingId, fixture.userId, false))
+      .resolves.toMatchObject({ status: 'published' });
+    await expect(listings.removeOwnListing(fixture.listingId, fixture.userId))
+      .resolves.toMatchObject({ status: 'removed' });
+    expect(await discovery.getListingDetail(fixture.listingId)).toBeNull();
   });
 
   test('FR-21a: only rejected listings can be resubmitted and their rejection reason remains visible', async () => {
@@ -1145,6 +1245,25 @@ describe('known schema and service mismatches', () => {
     expect(results.map((row) => row.id)).toContain(fixture.listingId);
   });
 
+  test('FR-24: city filter uses the seller registered city', async () => {
+    await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
+    const matches = await discovery.filterListings({ cityId: fixture.cityId });
+    expect(matches.map((row) => row.id)).toContain(fixture.listingId);
+    const { rows: otherCities } = await db.query('INSERT INTO cities (name) VALUES ($1) RETURNING id',
+      [`Other filter city ${fixture.suffix}`]);
+    const otherCityId = otherCities[0].id;
+    try {
+      await db.query('UPDATE users SET city_id = $2 WHERE id = $1', [fixture.userId, otherCityId]);
+      const noLongerMatches = await discovery.filterListings({ cityId: fixture.cityId });
+      expect(noLongerMatches.map((row) => row.id)).not.toContain(fixture.listingId);
+      const newCityMatches = await discovery.filterListings({ cityId: otherCityId });
+      expect(newCityMatches.map((row) => row.id)).toContain(fixture.listingId);
+    } finally {
+      await db.query('UPDATE users SET city_id = $2 WHERE id = $1', [fixture.userId, fixture.cityId]);
+      await db.query('DELETE FROM cities WHERE id = $1', [otherCityId]);
+    }
+  });
+
   test('FR-25: listing details hide non-published content and include ordered images and limited seller summary', async () => {
     expect(await discovery.getListingDetail(fixture.listingId)).toBeNull();
     await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
@@ -1160,6 +1279,7 @@ describe('known schema and service mismatches', () => {
     ], seller: { joinDate: expect.any(Date), averageRating: 0, ratingCount: 0 } });
     expect(detail).not.toHaveProperty('reviewed_by');
     expect(detail).not.toHaveProperty('seller_id');
+    expect(detail.seller.displayAlias).toMatch(/^Fixture alias /);
     expect(detail.seller).not.toHaveProperty('displayName');
     await db.query("UPDATE listings SET status = 'rejected' WHERE id = $1", [fixture.listingId]);
     expect(await discovery.getListingDetail(fixture.listingId)).toBeNull();

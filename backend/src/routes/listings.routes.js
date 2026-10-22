@@ -26,6 +26,18 @@ router.patch('/:id', requireAuth, async (req, res) => {
   res.json(await listings.updateOwnListing(req.params.id, req.user.id, req.body)); // FR-20
 });
 
+router.post('/:id/pause', requireAuth, async (req, res) => {
+  res.json(await listings.setOwnListingPaused(req.params.id, req.user.id, true)); // FR-20
+});
+
+router.post('/:id/resume', requireAuth, async (req, res) => {
+  res.json(await listings.setOwnListingPaused(req.params.id, req.user.id, false)); // FR-20
+});
+
+router.post('/:id/remove', requireAuth, async (req, res) => {
+  res.json(await listings.removeOwnListing(req.params.id, req.user.id)); // FR-20
+});
+
 router.post('/:id/resubmit', requireAuth, async (req, res) => {
   res.json(await listings.resubmitListing(req.params.id, req.user.id)); // FR-21a
 });
