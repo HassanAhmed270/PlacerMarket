@@ -26,6 +26,27 @@ async function call(path, { method = 'GET', body, token } = {}) {
   return result;
 }
 
+async function upload(path, bytes, token) {
+  const response = await fetch(`${apiBase}/${path.replace(/^\/+/, '')}`, {
+    method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/octet-stream', Authorization: `Bearer ${token}` }, body: bytes,
+  });
+  const result = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(`POST /${path} failed (${response.status}): ${result?.error || 'request rejected'}`);
+  return result;
+}
+
+async function waitForImages(imageIds) {
+  const db = require('../src/db.service');
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    const { rows } = await db.query('SELECT id, processing_state FROM listing_images WHERE id = ANY($1::uuid[])', [imageIds]);
+    if (rows.length === imageIds.length && rows.every((row) => row.processing_state === 'ready')) return;
+    if (rows.some((row) => row.processing_state === 'failed')) throw new Error('A demo listing image failed processing.');
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error('Timed out waiting for worker-produced image variants.');
+}
+
 async function waitForCode(email, afterTime) {
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
@@ -141,6 +162,63 @@ async function main() {
   await users.assertPayoutAllowed(application.user_id);
   console.log('10. Admin payout view shows changedRecently=true, idVerified=true, and masked last4=6702.');
   console.log('11. Payout guard allows the verified seller; manual ID verification is a development demonstration only.');
+
+  const db = require('../src/db.service');
+  const sharp = require('sharp');
+  const { rows: catalog } = await db.query(
+    `SELECT c.id AS category_id, s.id AS sub_category_id, m.id AS field_id
+     FROM main_categories c JOIN sub_categories s ON s.main_category_id = c.id
+     JOIN measurement_field_defs m ON m.sub_category_id = s.id
+     WHERE c.name = 'Women Demo' AND s.name = 'Formal Demo' AND m.field_name = 'chest demo'`
+  );
+  if (!catalog[0]) throw new Error('Demo listing catalog is missing; rerun demo:seed on this development database.');
+  const listing = await call('listings', { method: 'POST', token: approvedSellerSession.accessToken, body: {
+    title: 'Demo listing before review', mainCategoryId: catalog[0].category_id, subCategoryId: catalog[0].sub_category_id,
+    condition: 'brand_new', askingPrice: 1000, description: 'Local moderated listing demonstration.',
+    measurements: [{ fieldDefId: catalog[0].field_id, value: 40 }],
+  } });
+  const slots = ['front', 'back', 'other'];
+  const images = [];
+  for (const [index, slot] of slots.entries()) {
+    const png = await sharp({ create: { width: 48, height: 48, channels: 3, background: { r: 40 + index * 30, g: 90, b: 160 } } }).png().toBuffer();
+    images.push(await upload(`media/listings/${listing.id}/images?slot=${slot}`, png, approvedSellerSession.accessToken));
+  }
+  await waitForImages(images.map((image) => image.id));
+  console.log('12. Seller created a listing and uploaded tiny generated PNGs to Front, Back, and Other; the worker produced variants.');
+  await call(`listings/${listing.id}/submit`, { method: 'POST', token: approvedSellerSession.accessToken });
+  for (const photo of images) await call(`listings/photos/${photo.id}/confirm`, { method: 'POST', token: adminToken });
+  await call(`listings/${listing.id}/approve`, { method: 'POST', token: adminToken });
+  const publicBefore = await call(`listings/${listing.id}`);
+  const publicJson = JSON.stringify(publicBefore);
+  if (publicBefore.title !== 'Demo listing before review' || !publicJson.includes('/api/media/images/') || /original_key|thumbnail_key|medium_key|large_key|content_hash|private-media/.test(publicJson)) {
+    throw new Error('Public listing detail did not expose a safe processed variant URL.');
+  }
+  console.log('13. Moderator confirmed every required photo and approved the listing; public detail contains a processed variant URL and no private storage keys.');
+
+  const { rows: threshold } = await db.query("SELECT value::numeric AS value FROM platform_settings WHERE key = 'high_value_threshold_pkr'");
+  const highPrice = Number(threshold[0].value) + 1;
+  await db.query('UPDATE users SET email_verified_at = NULL WHERE id = $1', [application.user_id]);
+  const results = await Promise.allSettled([
+    call(`listings/${listing.id}/revisions`, { method: 'POST', token: approvedSellerSession.accessToken, body: { askingPrice: highPrice } }),
+    call(`listings/${listing.id}/revisions`, { method: 'POST', token: approvedSellerSession.accessToken, body: { askingPrice: highPrice + 1 } }),
+  ]);
+  const accepted = results.filter((result) => result.status === 'fulfilled');
+  const refused = results.filter((result) => result.status === 'rejected');
+  if (accepted.length !== 1 || refused.length !== 1 || !refused[0].reason.message.includes('(409)')) throw new Error('Concurrent revision submit did not yield exactly one pending revision.');
+  const revision = accepted[0].value;
+  const unchanged = await call(`listings/${listing.id}`);
+  if (Number(unchanged.asking_price) !== 1000) throw new Error('Public listing changed before revision approval.');
+  let thresholdRefused = false;
+  try { await call(`listings/revisions/${revision.id}/approve`, { method: 'POST', token: adminToken }); }
+  catch (error) { thresholdRefused = error.message.includes('(403)'); }
+  if (!thresholdRefused) throw new Error('Above-threshold approval was not refused for an unverified email.');
+  await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [application.user_id]);
+  const beforeVersion = Number((await db.query('SELECT content_version FROM listings WHERE id = $1', [listing.id])).rows[0].content_version);
+  await call(`listings/revisions/${revision.id}/approve`, { method: 'POST', token: adminToken });
+  const publicAfter = await call(`listings/${listing.id}`);
+  const afterVersion = Number((await db.query('SELECT content_version FROM listings WHERE id = $1', [listing.id])).rows[0].content_version);
+  if (Number(publicAfter.asking_price) !== highPrice || afterVersion !== beforeVersion + 1) throw new Error('Approved revision did not publish and increment content_version exactly once.');
+  console.log('14. Concurrent price edit yielded exactly one pending revision; public detail stayed unchanged. Unverified above-threshold approval was refused. After email verification and moderator approval, public price updated and content_version incremented once.');
   console.log(`Demo seller: ${sellerEmail}. Demo Admin credentials remain in backend/.demo.env; secrets and codes were omitted.`);
 }
 
