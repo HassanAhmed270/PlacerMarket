@@ -1,217 +1,155 @@
-# Phase 1 demo run
+# Phase 2 local demo run (2026-10-23)
 
-## Phase 2 run status (2026-10-23)
+## Configuration and services
 
-The Phase 2 smoke flow is implemented in `scripts/demo-smoke.js`, but was not
-run here. PostgreSQL accepted TCP connections on 127.0.0.1:5432; `backend/.env`
-contains `TEST_DATABASE_URL` only, with no development `DATABASE_URL`,
-`DEMO_DATABASE_URL`, or `REDIS_URL`. Redis did not accept a connection on
-127.0.0.1:6379. `psql`, `redis-cli`, Docker, and Memurai are unavailable. WSL is
-installed, but its Redis service status was not checked. No migrations, development seeds,
-backend server, or worker were run. The only DB string in the IDE context points
-to `testing_only` and must never be used for the demo.
+The final local values in `backend/.env` were used without changing them:
+`DATABASE_URL` resolves to localhost database `poshaak_demo`; `JWT_ACCESS_SECRET`
+is present and valid. Neither value is printed here. Migrations 001–012,
+`db:seed`, and `demo:seed` completed against that development database. The
+ignored `backend/.demo.env` holds generated demo credentials.
 
-`npm run demo:seed` was attempted without changing the environment and refused:
+Redis at `127.0.0.1:6379` was reachable. The successful demo used logical DB 2
+on the same local Redis service so existing hourly development rate-limit
+counters were left untouched. The worker processed media across API/worker
+processes using shared local-disk storage; fake media storage remains explicit
+opt-in and development-only.
 
-    Demo seed failed: demo:seed requires non-production DEV_FAKES=1.
+Vite routes returned HTTP 200: `/`, `/login`, `/register`, `/account`,
+`/seller/listings`, `/moderation`, and `/listing/demo-id`. These are SPA fallback
+responses, not browser-level proof that every screen renders correctly. A live
+API CORS preflight to `http://127.0.0.1:3000/api/users/cities` from origin
+`http://127.0.0.1:5173` returned 204 and allowed that exact origin; methods were
+`GET, HEAD, POST, PATCH, DELETE`; headers were `authorization, content-type`.
 
-The process has no development database URL, so enabling DEV_FAKES alone would
-still not permit a demo seed. No demo transcript or seeded demo accounts exist
-on this machine. Do not infer backend/CORS behavior from the frontend check.
+## Exact PowerShell commands
 
-Current audit commands after registry access was approved:
+These commands load configured values from `.env`; do not copy secrets into
+shell history or this document. Start a local PostgreSQL database named
+`poshaak_demo` and Redis at `127.0.0.1:6379` first.
 
-    backend: npm.cmd audit --omit=dev  # found 0 vulnerabilities
-    frontend: npm.cmd audit --omit=dev # found 0 vulnerabilities
-    backend: npm.cmd audit             # 28 high severity, Jest 29 dev chain
-    frontend: npm.cmd audit            # found 0 vulnerabilities
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+$env:NODE_ENV = 'development'
+$env:DEV_FAKES = '1'
+node --env-file-if-exists=.env db/migrate.js
+node --env-file-if-exists=.env db/seed.js
+npm.cmd run demo:seed
+```
 
-The API startup attempt exited with `JWT_ACCESS_SECRET must contain at least 32
-bytes of externally configured key material.` The worker startup attempt exited
-with `Worker startup failed { code: 'unknown' }` because the local app runtime
-has no configured development database/worker service. Vite returned HTTP 200
-for `/`, `/login`, `/register`, `/account`, `/seller/listings`, `/moderation`,
-and `/listing/demo-id`; these are dev-server fallback responses, not proof that
-each API-backed screen rendered successfully. Live CORS was not checked.
+Start API and worker in separate PowerShell terminals:
 
-## Phase 2 PowerShell setup
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+$env:REDIS_URL = 'redis://localhost:6379/2'
+node --env-file-if-exists=.demo.env src/server.js
+```
 
-Use a dedicated local PostgreSQL database named `poshaak_demo` (never a database
-whose name contains `test` or `testing_only`) and a local Redis service. Replace
-the local-only placeholders with local credentials; do not commit them. Run
-these commands in a fresh PowerShell session:
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+$env:REDIS_URL = 'redis://localhost:6379/2'
+node --env-file-if-exists=.demo.env worker.js
+```
 
-    Set-Location D:\Havuor\marketplace\backend
-    $env:NODE_ENV = 'development'
-    $env:DEV_FAKES = '1'
-    $env:DEMO_DATABASE_URL = 'postgres://<local-user>:<local-password>@127.0.0.1:5432/poshaak_demo'
-    $env:DATABASE_URL = $env:DEMO_DATABASE_URL
-    $env:REDIS_URL = 'redis://127.0.0.1:6379'
-    $env:CORS_ORIGINS = 'http://127.0.0.1:5173,http://localhost:5173'
-    npm.cmd run db:migrate
-    npm.cmd run db:seed
-    npm.cmd run demo:seed
+Start Vite in another terminal:
 
-`demo:seed` writes the generated local secrets to ignored `.demo.env`. Start
-the API and worker in separate backend terminals:
+```powershell
+Set-Location D:\Havuor\marketplace\frontend
+$env:VITE_API_BASE_URL = 'http://127.0.0.1:3000/api'
+$env:VITE_DEV_FAKES = '1'
+npm.cmd run dev -- --host 127.0.0.1
+```
 
-    Set-Location D:\Havuor\marketplace\backend
-    node --env-file-if-exists=.demo.env src/server.js
+With API and worker running:
 
-    Set-Location D:\Havuor\marketplace\backend
-    node --env-file-if-exists=.demo.env worker.js
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+$env:REDIS_URL = 'redis://localhost:6379/2'
+npm.cmd run demo:smoke
+```
 
-Start the UI in another terminal:
+URLs: Vite `http://127.0.0.1:5173/`; login `/login`; account `/account`;
+seller workspace `/seller/listings`; moderator workspace `/moderation`; public
+detail `/listing/<listing-id>`; API base `http://127.0.0.1:3000/api`.
 
-    Set-Location D:\Havuor\marketplace\frontend
-    $env:VITE_API_BASE_URL = 'http://127.0.0.1:3000/api'
-    $env:VITE_DEV_FAKES = '1'
-    npm.cmd run dev -- --host 127.0.0.1
+Demo Admin email is `demo-admin@poshaak.local`; the seeded candidate is
+`demo-seller-candidate@poshaak.local`. Generated passwords and the Admin TOTP
+seed remain only in ignored `.demo.env`. The smoke creates a unique seller;
+the generated email appears on successful completion. Passwords, email/TOTP
+codes, backup codes, and storage keys are omitted. Challenge/email delivery and
+seller identity verification are faked/manual development flows. PostgreSQL,
+HTTP routes, Redis counters/queue, local media storage, image processing,
+moderation, revision concurrency, and public detail are real local services.
+No hosted provider, CDN, payment gateway, or real identity provider is used.
 
-Then, in the backend terminal with `.demo.env` loaded, run:
+## Successful smoke transcript
 
-    Set-Location D:\Havuor\marketplace\backend
-    npm.cmd run demo:smoke
+Earlier attempts on Redis logical DB 0 hit accumulated hourly rate limits. The
+successful rerun used logical DB 2 and exited with code 0. No transcript
+contains secrets, codes, or storage keys.
 
-Expected local URLs: frontend `http://127.0.0.1:5173/`; API
-`http://127.0.0.1:3000/api`; login `/login`; seller workspace
-`/seller/listings`; moderator workspace `/moderation`; public listing detail
-`/listing/<listing-id>`; account `/account`. The generated demo config allows
-the two exact Vite origins above. CORS allowlist behavior is unit-tested in
-`test/unit/http-hardening.test.js`; a live CORS request remains pending until
-the API is configured and running.
+```text
+> npm.cmd run demo:smoke
+1. Registered a new buyer through the API with the seeded demo city.
+2. Confirmed the registration email using the code delivered to the development outbox.
+3. Completed email-factor login using the second code from the development outbox.
+4. Submitted the seller application through the API.
+5. Demo Admin signed in with TOTP and approved the seller application.
+6. Approved seller signed in again with password and an email code from the development outbox.
+7. Seller enrolled an authenticator; ten single-use backup codes were returned (codes omitted from transcript).
+8. Seller completed authenticator step-up and saved encrypted bank details (API returned last four only).
+9. Payout guard refused disbursement before identity verification.
+10. Admin payout view shows changedRecently=true, idVerified=true, and masked last4=6702.
+11. Payout guard allows the verified seller; manual ID verification is a development demonstration only.
+12. Seller created a listing and uploaded tiny generated PNGs to Front, Back, and Other; the worker produced variants.
+13. Moderator confirmed every required photo and approved the listing; public detail contains a processed variant URL and no private storage keys.
+14. Concurrent price edit yielded exactly one pending revision; public detail stayed unchanged. Unverified above-threshold approval was refused. After email verification and moderator approval, public price updated and content_version incremented once.
+Demo seller: demo-seller-1792751396872-d0d254@example.test. Demo Admin credentials remain in backend/.demo.env; secrets and codes were omitted.
+```
 
-Demo Admin email is `demo-admin@poshaak.local`; its password and TOTP seed are
-randomly generated into ignored `backend/.demo.env`. The seller account is
-randomly generated by `demo:smoke`; it registers, verifies email, and uses
-password plus a development outbox email code to sign in again after approval.
-The demo flow does not print passwords, TOTP/email codes, or storage keys.
-Email delivery and challenge are faked locally; PostgreSQL, API routes, media
-processing, and moderation are real. Identity verification uses the manual
-development adapter. No external identity, CDN/storage provider, email provider,
-or payment gateway is exercised.
+Before success, the first run failed image processing because API and worker
+used isolated in-memory media adapters. The default was corrected to shared
+local disk. A later run exposed a detail-route typo; `demo-smoke.js` now calls
+`/api/discovery/listings/:id`.
 
-## Current machine result (2026-10-22)
+## Verification results
 
-The UI ran at http://127.0.0.1:5173/ and returned HTTP 200 with title
-frontend. PostgreSQL 18.6 is running locally and port 5432 accepts a TCP
-connection. The demo itself did not run: this machine has no configured
-DEMO_DATABASE_URL, DATABASE_URL, REDIS_URL, or usable JWT signing secret
-in the backend process environment. No Redis server/client or psql executable
-was found on PATH. Backend startup was attempted and stopped at configuration:
+```text
+Backend unit: npm.cmd test -- --runInBand
+Test Suites: 39 passed, 39 total
+Tests:       487 passed, 487 total
 
-    JWT_ACCESS_SECRET must contain at least 32 bytes of externally configured key material.
+Focused storage regression: npm.cmd test -- --runInBand test/unit/media.service.test.js
+Test Suites: 1 passed, 1 total
+Tests:       4 passed, 4 total
 
-Therefore there is no demo transcript, no seeded demo account, and no live
-backend CORS check from this machine. The Stage 8 unit tests verify the outbox
-opt-in and production refusal; they do not replace a live worker/API demo.
+Integration: npm.cmd run test:integration -- --runInBand
+Test Suites: 7 passed, 7 total
+Tests:       98 passed, 98 total
 
-## PowerShell commands for a local demo
+Schema: npm.cmd run db:check-schema
+Passed (exit 0)
 
-Use a local PostgreSQL database whose name contains demo, dev, or local;
-demo:seed refuses remote, production-like, and testing_only databases. Set
-your own local connection string and start a Redis server listening at
-127.0.0.1:6379 in another terminal. Do not paste real credentials into this
-document or source control.
+Backend production audit: npm.cmd audit --omit=dev
+found 0 vulnerabilities
+Frontend production audit: npm.cmd audit --omit=dev
+found 0 vulnerabilities
+Backend full audit: npm.cmd audit
+28 high severity vulnerabilities in the Jest 29 development dependency chain
+Frontend full audit: npm.cmd audit
+found 0 vulnerabilities
 
-    Set-Location D:\Havuor\marketplace\backend
-    $env:NODE_ENV = 'development'
-    $env:DEV_FAKES = '1'
-    $env:DEMO_DATABASE_URL = 'postgres://<local-user>:<local-password>@127.0.0.1:5432/poshaak_demo'
-    $env:DATABASE_URL = $env:DEMO_DATABASE_URL
-    $env:REDIS_URL = 'redis://127.0.0.1:6379'
-    node --env-file-if-exists=.env db/migrate.js
-    node --env-file-if-exists=.env db/seed.js
-    npm.cmd run demo:seed
+Frontend lint: npm.cmd run lint
+Passed (oxlint, exit 0)
+Frontend test: npm.cmd test
+# tests 5
+# pass 5
+# fail 0
+Frontend build: npm.cmd run build
+Passed (20 modules, exit 0)
+```
 
-demo:seed creates ignored backend/.demo.env with local-only generated
-secrets, a TOTP-enrolled Demo Admin, a seller-candidate buyer, a demo city,
-category/subcategory, and a required measurement field. It prints no passwords,
-TOTP seed, payout key, or email code.
-
-The registration endpoint is limited to **5 requests per hour per IP** (and
-3 per account by default). For local development only, if an isolated Redis
-database has stale rate-limit counters, delete the application's rate-limit
-keys with:
-
-    redis-cli --scan --pattern 'pm:rl:*' | ForEach-Object { redis-cli DEL $_ }
-
-Run this only against the dedicated development Redis database; these counters
-are shared by all local app instances using that database.
-
-Start these in separate terminals:
-
-    Set-Location D:\Havuor\marketplace\backend
-    node --env-file-if-exists=.demo.env src/server.js
-
-    Set-Location D:\Havuor\marketplace\backend
-    node --env-file-if-exists=.demo.env worker.js
-
-    Set-Location D:\Havuor\marketplace\backend
-    npm.cmd run demo:smoke
-
-    Set-Location D:\Havuor\marketplace\frontend
-    $env:VITE_API_BASE_URL = 'http://127.0.0.1:3000/api'
-    $env:VITE_DEV_FAKES = '1'
-    npm.cmd run dev -- --host 127.0.0.1
-
-Open http://127.0.0.1:5173/; sign-in is at
-http://127.0.0.1:5173/login, and the authenticated tools render at
-http://127.0.0.1:5173/account. Check browser requests to the backend use
-http://127.0.0.1:3000/api; .demo.env allows both localhost and 127.0.0.1
-frontend origins.
-
-## Demo accounts and what is real
-
-- Demo Admin credentials and authenticator seed are generated locally and
-  stored only in ignored backend/.demo.env. The seller email/password are
-  generated by demo:smoke; the script prints the seller email only. This
-  machine did not seed either account.
-- PostgreSQL, migrations, service/API behavior, TOTP generation, encrypted
-  payout storage, step-up grants, and Admin identity/payout controls are real
-  application code when the demo is run.
-- Email delivery is faked: the worker decrypts queued email payloads and writes
-  messages to an OS-temporary JSONL outbox. GET/DELETE /api/dev/outbox exists
-  only when DEV_FAKES=1 in non-production. Codes are not printed by the
-  walkthrough.
-- Identity verification is the manual Admin adapter, exercised with a
-  development note; no real identity provider or document/CNIC is used.
-- No payment gateway or automatic payout provider is configured. The smoke
-  checks the payout eligibility guard directly before and after manual ID
-  verification; it does not transfer money.
-
-## Verification commands and results
-
-    npm.cmd test -- --runInBand
-    Test Suites: 38 passed, 38 total
-    Tests:       439 passed, 439 total
-
-    node --env-file-if-exists=.env --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --config test/integration/jest.config.js
-    Test Suites: 1 skipped, 4 passed, 4 of 5 total
-    Tests:       4 skipped, 77 passed, 81 total
-
-The four skipped integration checks require Redis; 127.0.0.1:6379 was not
-listening. The integration run used the guarded PostgreSQL testing_only
-target. The payout API/leak regression passed in PostgreSQL.
-
-    npm.cmd run db:check-schema
-    > node db/generate-schema-snapshot.js --check
-
-    npm.cmd run lint           # frontend
-    > oxlint
-
-    npm.cmd test               # frontend
-    # tests 4, pass 4, fail 0
-
-    npm.cmd run build          # frontend
-    built in 583ms; 19 modules; JS 74.71 kB gzip
-
-    npm.cmd audit --omit=dev   # backend
-    found 0 vulnerabilities
-
-    npm.cmd audit              # frontend
-    found 0 vulnerabilities
-
-demo:seed, demo:smoke, backend migrations/seed against a development
-database, backend HTTP/CORS, and the demo transcript remain unrun for the
-configuration/service reasons above.
+The integration harness used the separately guarded `testing_only` database;
+the development migration/seed/demo run used `poshaak_demo`. The full Jest-chain
+audit is owner-triaged under SEC-31; it does not stop Phase 2. Only a nonzero
+`npm audit --omit=dev` in either package stops work. Keep Jest 29 through Phase
+2; schedule Jest 29 -> 30 as the separate immediate follow-up.

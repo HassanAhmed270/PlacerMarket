@@ -12,6 +12,15 @@ implemented FR-73 scope per the 2026-10-22 corrections. FR-73a cached version
 serving and the tagged FR-73b-d proposals remain unresolved and are not implied
 by that implementation.
 
+**Phase 2 verification refresh (2026-10-23):** the backend unit suite passed
+39 suites/487 tests, the focused media test passed 4/4, and the frontend lint,
+5 tests, build and schema check passed. No checkbox was added by this refresh;
+the FR-73/FR-73e/FR-74/FR-74a–c checked rows continue to rely on the named
+passing tests listed in each row. Integration could not be freshly rerun because
+`TEST_DATABASE_URL` was not stored in `.env`; the guarded integration run used
+the owner-provided test URL in its process environment and passed 7 suites/98
+tests. Frontend UI behavior rows without named tests remain unchecked.
+
 ---
 
 ## 1. Identity & Users

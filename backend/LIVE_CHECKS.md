@@ -2,11 +2,12 @@
 
 Phase 1 and Phase 2 local evidence and remaining implementation-gate items are
 mapped in `PHASE1_GATE_REPORT.md` and `PHASE2_GATE_REPORT.md`. On 2026-10-23,
-PostgreSQL accepted a local TCP connection, but no development
-`DEMO_DATABASE_URL`/`DATABASE_URL` is configured and Redis did not accept a
-connection on 127.0.0.1:6379. The frontend Vite page returned HTTP 200; backend,
-CORS, and end-to-end demo behavior remain unverified on this machine. See
-`DEMO_RUN.md` for the exact commands and limits.
+the configured development database and JWT secret were used; migrations,
+seeds, API, worker, and Vite started. Redis at 127.0.0.1:6379 was reachable.
+Vite route fallbacks returned HTTP 200, and a live local API CORS preflight
+returned 204 with the configured exact origin. The 14-step local demo passed
+using Redis logical DB 2. Integration passed with the guarded
+`TEST_DATABASE_URL` and `TEST_REDIS_URL`. See `DEMO_RUN.md` for exact results.
 
 Fake adapters and local integration tests do not satisfy these checks. Never
 put live credentials in this file, source control, test output, or logs.
@@ -17,12 +18,12 @@ put live credentials in this file, source control, test output, or logs.
   and failure behavior; production currently has no live sender implementation.
 - [ ] Challenge verifier selected; verify the soft per-IP challenge signal and
   confirm the fake adapter cannot be selected in production.
-- [ ] Verify Redis limit counters under concurrent traffic, eviction/failover,
-  and deployed proxy IP forwarding; the limiter currently fails closed when
-  Redis is unavailable.
-- [ ] Run the seller authenticator/step-up endpoint limit under real Redis
-  concurrency (`FR-83f`); the local integration test is skipped without
-  `TEST_REDIS_URL`.
+- [ ] Verify Redis limit counters under deployed concurrent traffic,
+  eviction/failover, and proxy IP forwarding. Local concurrency checks passed;
+  the limiter currently fails closed when Redis is unavailable.
+- [x] Run the seller authenticator/step-up endpoint limit under real Redis
+  concurrency (`FR-83f`); `test/integration/rate-limit.test.js` passed with
+  local `TEST_REDIS_URL`. Deployed Redis behavior remains pending.
 - [ ] Production secrets and required credential variables provisioned through
   the hosting secret store; startup rejects missing values and placeholders.
 - [ ] Provision and document rotation for `EMAIL_QUEUE_ENCRYPTION_SECRET`; queued
@@ -30,12 +31,12 @@ put live credentials in this file, source control, test output, or logs.
 - [ ] Select and provision a durable, shared production media storage backend;
   local-disk storage is for single-host development only. Verify signed private
   reads, lifecycle/backup policy, and worker/web access before enabling uploads.
-- [ ] Run the Phase 2 end-to-end demo against a dedicated localhost development
-  database and Redis; verify worker variants, moderator slot confirmation,
-  public detail privacy, revision concurrency, threshold refusal, and approval.
-- [ ] Verify live backend CORS headers from the configured Vite origin after
-  local app configuration is available. Unit allowlist coverage is not a live
-  server check.
+- [x] Run the Phase 2 end-to-end demo against the configured localhost database
+  and local Redis; the full 14-step walkthrough passed. This is local evidence;
+  hosted providers/storage remain unverified. See transcript in `DEMO_RUN.md`.
+- [x] Verify local backend CORS headers from the configured Vite origin;
+  `DEMO_RUN.md` records the 204 preflight and exact allowed origin. Production
+  domain/proxy CORS behavior remains pending.
 - [ ] Staff TOTP encryption key provisioned outside PostgreSQL/source control;
   document secure rotation and recovery before enrollment is enabled. First
   admin bootstrap consumes its confirmation code; wait for the next 30-second

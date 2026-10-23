@@ -6,15 +6,17 @@ inspected and tested directly) with the later Poshaak development (decisions
 recorded in a handoff document). **Poshaak is the single, current name** — files
 and chats that say "Marketplace" mean the same project.
 
-**Owner update (2026-10-22):** the approved Phase 1 implementation stages are
+**Owner update (2026-10-22; machine state refreshed 2026-10-23):** the approved Phase 1 implementation stages are
 recorded in `PHASE1_PROGRESS.md`, with evidence and remaining gate work in
 `PHASE1_GATE_REPORT.md`. Seller application/approval, flexible measurements,
 payout protections, manual identity verification, and the account workspace
-are implemented and locally verified. The development demo did not run because
-the app database URL, valid local JWT secret and Redis are unavailable. Phase 1
+are implemented and locally verified. At the time of the owner update, the
+development demo was blocked by missing local configuration. On 2026-10-23 the
+configured database/JWT values were used, Redis was reachable, and the local
+demo seed/API/worker started; the full smoke passed on a fresh Redis logical DB.
+Phase 1
 is not represented as a closed release gate; see the report and `LIVE_CHECKS.md`.
-The document-only `LISTING_REVISIONS_PLAN.md` is a Phase 2 proposal, not an
-approved migration or implementation contract.
+The revisions plan now records implementation per the 2026-10-22 corrections.
 
 **Owner update (2026-10-21):** Phase 0 auth implementation includes buyer
 email-code login, staff TOTP, durable rotating refresh sessions, password reset
@@ -25,14 +27,12 @@ its implementation remains in the Phase 1 backlog. See `Phases.md`,
 `open-questions.md` and `END_OF_PHASES_REVIEW.md`. Current stage evidence is
 maintained in `PHASE0_PROGRESS.md`; production checks are in `LIVE_CHECKS.md`.
 
-Backend unit, PostgreSQL integration, schema, frontend lint/test/build and
-production dependency audits have been run. The local Redis integration suite
-was skipped because no Redis service is available; the GitHub Actions workflow
-has not yet run. Email/challenge provider setup, production secrets/TLS and
-deployed cookie behavior remain live checks. Current phase stays Phase 0 until
-the remaining gate items are evidenced. Phase 2 design and expand-only
-migrations may proceed under the 2026-10-21 amendment; its routes remain gated
-from real users until authentication is complete.
+Backend unit/integration, schema, frontend lint/test/build and production
+dependency audits have passed locally. The integration harness received the
+owner-provided guarded `TEST_DATABASE_URL` in its process environment; it is not
+stored in `.env`. Local Redis is reachable. Email/challenge provider setup,
+production secrets/TLS and deployed cookie behavior remain live checks. Phase 2
+remains ungated until its remaining evidence is complete.
 
 **Precedence rule used to merge:** where two sources conflict, the human's latest
 *finalized* decision wins; a recommendation that was only proposed (by Claude) is
@@ -257,11 +257,12 @@ with 9 new tests in `test/unit/git-hooks.test.js`; `test/unit/specs-checkboxes.t
 
 ## Phase 2 status update (2026-10-23)
 
-Stages 1-5 are implemented and committed on `main`; Stage 6's demo flow is
-implemented in `scripts/demo-smoke.js` but has not run on this machine because
-no development database URL is configured. Local PostgreSQL is reachable, Redis
-is not. Backend unit, PostgreSQL integration, schema, frontend lint/test/build
-checks passed; Redis-dependent integration checks were skipped. See
+Stages 1-5 are implemented and committed on `main`. The configured local
+database/JWT values were used; migrations, seeds, API, worker, Vite, route
+fallback checks and local CORS preflight ran. The full 14-step demo passed using
+local Redis logical DB 2. Backend unit passed 39/487; integration passed 7/98
+with the guarded test DB and local Redis; schema and frontend lint/test/build
+passed. Both production audits returned zero. See
 `PHASE2_PROGRESS.md`, `PHASE2_GATE_REPORT.md`, and `DEMO_RUN.md`. Phase 2 is not
 declared gated. The Jest 29 development-tree findings remain owner-triaged under
 SEC-31; only production dependency audit findings stop work.

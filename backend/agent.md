@@ -18,12 +18,15 @@ media processing/storage adapter, photo moderation, listing revisions, and
 workspace screens are implemented. Detailed evidence and remaining gate items
 are in `PHASE2_PROGRESS.md` and `PHASE2_GATE_REPORT.md`. Listing revisions
 require `LISTING_REVISIONS_ENABLED=1` in production; the production default is
-off. The current local unit/integration/frontend/schema suites pass except for
-four Redis-dependent integration checks, skipped because Redis is unavailable.
+off. Backend unit passed 39 suites/487 tests; focused media unit passed 4/4;
+integration passed 7 suites/98 tests with the guarded test database and local
+Redis; frontend lint, 5 tests, build, and schema check passed.
 The dev-tree Jest 29 advisories are owner-triaged under SEC-31 and do not stop
 Phase 2; only a nonzero production dependency audit in either package blocks.
-The live demo is not run: no development `DEMO_DATABASE_URL`/`DATABASE_URL` or
-Redis is configured. Phase 2 is not a closed gate. The revisions plan is marked
+The configured local database URL and JWT secret were used. Migrations 001–012,
+seeders, API and worker startup, Vite routes, live CORS, and the 14-step demo
+passed. Phase 2 is not closed: production storage/provider checks and named
+frontend behavior evidence remain pending. The revisions plan is marked
 implemented per the 2026-10-22 corrections; FR-73a and tagged FR-73b-d remain
 open.
 

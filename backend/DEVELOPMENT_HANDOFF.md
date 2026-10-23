@@ -1,26 +1,27 @@
 # DEVELOPMENT_HANDOFF.md — resuming Poshaak development
 
-**State updated 2026-10-21.** Poshaak (formerly "Marketplace" — same project) has
+**State updated 2026-10-23.** Poshaak (formerly "Marketplace" — same project) has
 a backend, React/Vite frontend, PostgreSQL queue, migrations, and completed
-Phase 0 auth implementation. Local verification is green except for the real
-Redis integration suite, which is skipped because no local Redis is available;
-the hosted workflow and live providers remain unverified.
+Phase 0 auth implementation. Local Redis is reachable; the hosted workflow and
+live providers remain unverified.
 Read `MASTER_PROJECT_CONTEXT.md`, `PHASE1_PROGRESS.md`, and
 `PHASE1_GATE_REPORT.md` for current evidence. Phase 1 implementation stages and
-local checks are recorded, but the broader gate remains open; the local demo
-was blocked by missing development database/JWT/Redis configuration. See
+local checks are recorded, but the broader gate remains open. Configured
+development database/JWT values were used; the full local demo passed using a
+fresh Redis logical DB. See
 `DEMO_RUN.md` and `LIVE_CHECKS.md`.
 
 ## Phase 2 update (2026-10-23)
 
 Listing core, media pipeline, photo moderation, listing revisions, and workspace
 screens are implemented. See `PHASE2_PROGRESS.md` and `PHASE2_GATE_REPORT.md`.
-Backend unit tests passed (39 suites/487 tests), PostgreSQL integration passed
-(6 suites/94 tests; 4 Redis-dependent tests skipped), and frontend lint/test/build
-plus schema check passed. The service-backed demo is unrun because no development
-database URL is configured; Redis is unavailable at 127.0.0.1:6379. npm audit
-could not reach the audit endpoint in the sandbox, so Phase 2 is not a closed
-gate. See `DEMO_RUN.md`, `security.md` SEC-31, and `LIVE_CHECKS.md`.
+Backend unit tests passed (39 suites/487 tests), integration passed (7
+suites/98 tests with the guarded test database and local Redis), and frontend
+lint/test/build plus schema check passed. Both production audits returned 0
+vulnerabilities. Migrations, seeds, API/worker startup, Vite routes, local CORS,
+and the 14-step local demo passed. See `DEMO_RUN.md`, `security.md` SEC-31, and
+`LIVE_CHECKS.md`. Phase 2 is not a closed gate because hosted provider/storage
+checks and named frontend behavior evidence remain pending.
 
 ## 1. What you are working with
 

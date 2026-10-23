@@ -99,6 +99,8 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 
 ## Resolved
 
+- 2026-10-23 · SEC-31 verification: both `npm audit --omit=dev` checks returned zero vulnerabilities. The full backend audit currently reports 28 high-severity vulnerabilities in the Jest 29 development chain; the full frontend audit is clean. This current count does not change the owner's 2026-10-22 triage of 33 advisory findings. Preserve Jest 29 through Phase 2 and do its version 30 upgrade as the immediate separate follow-up.
+
 - 2026-10-22 Â· SEC-31 Â· **Owner decision:** keep Jest 29 through Phase 2. The 33 development-tree npm audit advisories in its Jest 29 chain are triaged and do not stop work. Only a nonzero production dependency audit (`npm audit --omit=dev`) in either package blocks. Schedule “Jest 29 -> 30 upgrade (separate small task, right after Phase 2)” in `Phases.md`.
 
 - 2026-10-22 · FR-24 · The discovery `cityId` filter follows the listing seller's registered `users.city_id`; it is applied with a users join. No listing-level city field is introduced.

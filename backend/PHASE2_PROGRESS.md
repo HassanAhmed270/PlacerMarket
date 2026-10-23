@@ -113,7 +113,7 @@ Resume at the first incomplete stage. Do not repeat completed stages.
   production storage/CORS checks. Frontend Phase 2 gap-analysis rows remain
   unchecked because they do not yet have passing tests naming the UI behavior.
 
-## Stage 6 — demo — implemented, machine run pending (2026-10-23)
+## Stage 6 — demo — complete locally (2026-10-23)
 
 - `scripts/demo-smoke.js` now exercises registration/email confirmation and
   re-login after seller approval, generated PNG uploads to all three required
@@ -121,21 +121,20 @@ Resume at the first incomplete stage. Do not repeat completed stages.
   safe public detail, above-threshold unverified-email refusal, a concurrent
   double-submit, unchanged pending public content, and approved price/version
   update. It prints no secret, code, or storage key.
-- **Machine verification:** unit and integration coverage passed, but the full
-  service-backed demo was not run. Local PostgreSQL accepts TCP on port 5432;
-  no development database URL exists in `backend/.env`. Redis is unavailable
-  on 127.0.0.1:6379; `psql`, `redis-cli`, Docker and Memurai are unavailable.
-  Vite returned HTTP 200 at `http://127.0.0.1:5173/` with title Poshaak.
-  API startup exited on the missing `JWT_ACCESS_SECRET`; worker startup exited
-  with `{ code: 'unknown' }` under the unconfigured local runtime. Dev-DB
-  migrations/seeds, live CORS, and smoke transcript remain pending. See
-  `DEMO_RUN.md`.
-- **Suite results:** unit 39 suites/487 passed; PostgreSQL integration 6
-  suites/94 passed, 4 Redis-dependent tests skipped; frontend lint/test (5)/build
-  passed; `db:check-schema` passed. Both production-only audits returned 0
-  vulnerabilities; full backend audit reported 28 high-severity findings in
-  the Jest 29 dev chain, and full frontend audit returned 0. Owner-triaged
-  findings remain non-blocking under SEC-31.
+- **Machine verification:** used the final `.env` `DATABASE_URL` (localhost,
+  database `poshaak_demo`) and `JWT_ACCESS_SECRET`; neither value is printed.
+  Migrations 001–012, `db:seed`, and `demo:seed` completed. Redis at
+  `127.0.0.1:6379` was reachable; API and worker started. Vite routes returned
+  HTTP 200 and the API CORS preflight returned 204 with the configured Vite
+  origin. The full 14-step smoke passed using Redis logical DB 2 to avoid the
+  existing hourly counters in DB 0. Transcript is in `DEMO_RUN.md`.
+- **Suite results:** backend unit 39 suites/487 passed; focused media unit test
+  1 suite/4 passed. Integration passed 7 suites/98 tests with guarded
+  `TEST_DATABASE_URL` and local `TEST_REDIS_URL`. `db:check-schema`, frontend
+  lint, 5 frontend tests and build passed. Both production-only audits
+  returned 0 vulnerabilities. Full backend audit reported 28 high-severity
+  findings in the Jest 29 dev chain; full frontend audit returned 0. Owner-
+  triaged findings remain non-blocking under SEC-31.
 
 ## Stage 7 — docs and gate — recorded (2026-10-23)
 
@@ -151,6 +150,5 @@ Resume at the first incomplete stage. Do not repeat completed stages.
   Phase 2; its 33 dev advisories are triaged and do not stop work. A nonzero
   production audit (`npm audit --omit=dev`) in either package is the only
   dependency stop condition. Jest 29 -> 30 is queued right after Phase 2.
-- **Next:** provision a dedicated local development PostgreSQL URL and Redis,
-  run the demo flow, and complete remaining frontend and live-check evidence
-  before evaluating the Phase 2 gate.
+- **Next:** finish remaining hosted-provider, production storage/secrets, and
+  UI behavior evidence before evaluating the Phase 2 gate.
