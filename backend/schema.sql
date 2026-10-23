@@ -1088,3 +1088,73 @@ ALTER TABLE seller_profiles
   ADD COLUMN payout_hold_cleared_by UUID REFERENCES users(id),
   ADD COLUMN payout_hold_cleared_at TIMESTAMPTZ,
   ADD COLUMN payout_hold_clear_reason TEXT;
+
+-- Migration: 011_listing_media.sql
+-- FR-74: expand listing image storage for private originals and processed variants.
+ALTER TABLE listing_images
+  ADD COLUMN slot VARCHAR(16),
+  ADD COLUMN processing_state VARCHAR(16) NOT NULL DEFAULT 'ready'
+    CHECK (processing_state IN ('pending', 'processing', 'ready', 'failed')),
+  ADD COLUMN original_key TEXT,
+  ADD COLUMN thumbnail_key TEXT,
+  ADD COLUMN medium_key TEXT,
+  ADD COLUMN large_key TEXT,
+  ADD COLUMN social_key TEXT,
+  ADD COLUMN content_hash CHAR(64),
+  ADD COLUMN label_confirmed_by UUID REFERENCES users(id),
+  ADD COLUMN label_confirmed_at TIMESTAMPTZ,
+  ADD COLUMN label_rejected_by UUID REFERENCES users(id),
+  ADD COLUMN label_rejected_at TIMESTAMPTZ,
+  ADD COLUMN label_rejected_reason TEXT;
+
+CREATE UNIQUE INDEX listing_images_slot_unique
+  ON listing_images (listing_id, slot)
+  WHERE slot IS NOT NULL;
+CREATE INDEX listing_images_processing_idx
+  ON listing_images (processing_state, id)
+  WHERE processing_state IN ('pending', 'failed');
+
+-- Migration: 012_listing_revisions.sql
+-- FR-73: moderated listing content versions. Additive only; public reads stay on listings.
+SET lock_timeout = '3s';
+
+ALTER TABLE listings ADD COLUMN content_version BIGINT NOT NULL DEFAULT 1;
+
+CREATE TYPE listing_revision_status AS ENUM ('pending_review', 'approved', 'rejected', 'withdrawn');
+
+CREATE TABLE listing_revisions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  listing_id UUID NOT NULL REFERENCES listings(id),
+  seller_id UUID NOT NULL REFERENCES users(id),
+  base_content_version BIGINT NOT NULL CHECK (base_content_version > 0),
+  proposed_condition listing_condition NOT NULL,
+  proposed_replica_disclosure TEXT,
+  proposed_title VARCHAR(150) NOT NULL,
+  proposed_description TEXT,
+  proposed_asking_price NUMERIC(12,2) NOT NULL CHECK (proposed_asking_price > 0),
+  proposed_fabric_material VARCHAR(100),
+  proposed_brand VARCHAR(100),
+  proposed_color VARCHAR(50),
+  proposed_embellishment_detail TEXT,
+  status listing_revision_status NOT NULL DEFAULT 'pending_review',
+  submitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reviewed_by UUID REFERENCES users(id),
+  reviewed_at TIMESTAMPTZ,
+  rejection_reason TEXT
+);
+
+CREATE UNIQUE INDEX listing_revisions_one_pending_per_listing
+  ON listing_revisions (listing_id) WHERE status = 'pending_review';
+CREATE INDEX listing_revisions_review_queue
+  ON listing_revisions (submitted_at, id) WHERE status = 'pending_review';
+CREATE INDEX listing_revisions_seller_history
+  ON listing_revisions (seller_id, listing_id, submitted_at DESC);
+
+CREATE TABLE listing_revision_measurements (
+  revision_id UUID NOT NULL REFERENCES listing_revisions(id) ON DELETE CASCADE,
+  field_def_id UUID NOT NULL REFERENCES measurement_field_defs(id),
+  value NUMERIC(6,2) NOT NULL CHECK (value >= 0),
+  PRIMARY KEY (revision_id, field_def_id)
+);
+
+RESET lock_timeout;

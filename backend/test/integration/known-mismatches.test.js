@@ -21,11 +21,19 @@ let createdSubCategoryId;
 let createdMainCategoryId;
 
 async function addListingPhotos(listing, count) {
-  await listings.addListingImages(
-    listing.listingId,
-    listing.userId,
-    Array.from({ length: count }, (_, index) => `https://images.invalid/${listing.suffix}-${index}.jpg`)
-  );
+  const slots = ['front', 'back', 'other', 'optional_1', 'optional_2', 'optional_3'];
+  for (let index = 0; index < count; index += 1) {
+    await db.query(
+      `INSERT INTO listing_images (listing_id, image_url, display_order, slot, processing_state)
+       VALUES ($1, $2, $3, $4, 'ready')`,
+      [listing.listingId, `https://images.invalid/${listing.suffix}-${index}.jpg`, index, slots[index]]
+    );
+  }
+}
+
+async function confirmListingPhotos(listingId) {
+  const { rows } = await db.query('SELECT id FROM listing_images WHERE listing_id = $1 AND slot IN (\'front\', \'back\', \'other\')', [listingId]);
+  for (const row of rows) await listings.confirmListingPhoto(row.id, fixture.otherUserId);
 }
 
 async function setMeasurementFieldDefs(subCategoryId, definitions, adminId = fixture.userId) {
@@ -451,6 +459,7 @@ describe('known schema and service mismatches', () => {
     try {
       await db.query('UPDATE users SET email = $2, role = \'seller\' WHERE id = $1', [fixture.userId, email]);
       await db.query("UPDATE users SET role = 'admin' WHERE id = $1", [fixture.otherUserId]);
+      expect(await users.getAuthenticationPrincipal(fixture.otherUserId)).toMatchObject({ role: 'admin' });
       const { rows: enrollmentSessionRows } = await db.query(
         `INSERT INTO auth_sessions (family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at, enrollment_only)
          VALUES (gen_random_uuid(), $1, $2, now() + interval '1 hour', now() + interval '1 day', true) RETURNING id`,
@@ -927,6 +936,7 @@ describe('known schema and service mismatches', () => {
   test('FR-19a: approval publishes a submitted listing with reviewer and timestamp', async () => {
     await addListingPhotos(fixture, 3);
     await listings.submitListingForReview(fixture.listingId, fixture.userId);
+    await confirmListingPhotos(fixture.listingId);
     const approved = await listings.approveListing(fixture.listingId, fixture.userId);
     expect(approved.status).toBe('published');
     expect(approved.reviewed_by).toBe(fixture.userId);
@@ -978,6 +988,40 @@ describe('known schema and service mismatches', () => {
         id: fixture.listingId, status: 'pending_review', is_high_value: false, has_evidence_submitted: true,
       }),
     ]));
+  });
+
+  test('FR-74a, SEC-12: photo moderation confirms labels, records reviewer, and denies seller BOLA', async () => {
+    const previousSecret = process.env.JWT_ACCESS_SECRET;
+    process.env.JWT_ACCESS_SECRET = 'integration-photo-moderation-jwt-secret-at-least-32-bytes';
+    try {
+      await addListingPhotos(fixture, 3);
+      await listings.submitListingForReview(fixture.listingId, fixture.userId);
+      const { rows: photos } = await db.query('SELECT id, slot FROM listing_images WHERE listing_id = $1 ORDER BY display_order', [fixture.listingId]);
+      const sellerToken = signAccessToken(fixture.userId, { secret: process.env.JWT_ACCESS_SECRET });
+      await request(app).post(`/api/listings/photos/${photos[0].id}/confirm`).set('Authorization', `Bearer ${sellerToken}`)
+        .expect(403);
+      await db.query("UPDATE users SET role = 'admin' WHERE id = $1", [fixture.otherUserId]);
+      const moderatorToken = signAccessToken(fixture.otherUserId, { secret: process.env.JWT_ACCESS_SECRET });
+      const response = await request(app).post(`/api/listings/photos/${photos[0].id}/confirm`)
+        .set('Authorization', `Bearer ${moderatorToken}`);
+      if (response.status !== 200) throw new Error(JSON.stringify(response.body));
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({ id: photos[0].id, slot: photos[0].slot, label_confirmed_by: fixture.otherUserId });
+      const queue = await request(app).get('/api/listings/moderation-queue').set('Authorization', `Bearer ${moderatorToken}`).expect(200);
+      const card = queue.body.find((listing) => listing.id === fixture.listingId);
+      expect(card.photos).toHaveLength(3);
+      expect(JSON.stringify(card.photos)).not.toMatch(/original_key|thumbnail_key|content_hash/);
+      const rejected = await request(app).post(`/api/listings/photos/${photos[1].id}/reject`)
+        .set('Authorization', `Bearer ${moderatorToken}`).send({ reason: 'Wrong photo label' }).expect(200);
+      expect(rejected.body).toMatchObject({ label_rejected_reason: 'Wrong photo label', label_rejected_by: fixture.otherUserId });
+      await expect(listings.approveListing(fixture.listingId, fixture.otherUserId)).rejects.toBeInstanceOf(ValidationError);
+      await listings.confirmListingPhoto(photos[1].id, fixture.otherUserId);
+      await listings.confirmListingPhoto(photos[2].id, fixture.otherUserId);
+      await expect(listings.approveListing(fixture.listingId, fixture.otherUserId)).resolves.toMatchObject({ status: 'published' });
+    } finally {
+      if (previousSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousSecret;
+    }
   });
 
   test('FR-19b: moderation queue flags a price strictly above the platform threshold', async () => {
@@ -1073,6 +1117,7 @@ describe('known schema and service mismatches', () => {
     await addListingPhotos(fixture, 3);
     const submitted = await listings.submitListingForReview(fixture.listingId, fixture.userId);
     expect(submitted.requires_id_verification).toBe(true);
+    await confirmListingPhotos(fixture.listingId);
     await expect(listings.approveListing(fixture.listingId, fixture.userId))
       .rejects.toBeInstanceOf(ForbiddenError);
     const { rows: stillPending } = await db.query('SELECT status FROM listings WHERE id = $1', [fixture.listingId]);
@@ -1087,6 +1132,7 @@ describe('known schema and service mismatches', () => {
     );
     expect(stillPendingAfterLegacyFlag[0].status).toBe('pending_review');
     await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [fixture.userId]);
+    await confirmListingPhotos(fixture.listingId);
     await expect(listings.approveListing(fixture.listingId, fixture.userId)).resolves.toMatchObject({ status: 'published' });
   });
 
@@ -1098,6 +1144,7 @@ describe('known schema and service mismatches', () => {
     await db.query('UPDATE listings SET asking_price = $2 WHERE id = $1', [fixture.listingId, Number(rows[0].threshold)]);
     await addListingPhotos(fixture, 3);
     await listings.submitListingForReview(fixture.listingId, fixture.userId);
+    await confirmListingPhotos(fixture.listingId);
     await expect(listings.approveListing(fixture.listingId, fixture.userId)).resolves.toMatchObject({ status: 'published' });
   });
 

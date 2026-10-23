@@ -5,6 +5,7 @@ const router = Router();
 router.use('/users', require('./users.routes'));
 router.use('/catalog', require('./catalog.routes'));
 router.use('/listings', require('./listings.routes'));
+router.use('/media', require('./media.routes'));
 router.use('/discovery', require('./discovery.routes'));
 router.use('/negotiation', require('./negotiation.routes'));
 router.use('/orders', require('./orders.routes'));

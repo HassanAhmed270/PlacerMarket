@@ -73,3 +73,23 @@ test('FR-83c/f: protected seller API requests use only the in-memory access toke
   assert.equal(calls[1].options.headers.Authorization, undefined)
   assert.equal(Object.hasOwn(globalThis, 'localStorage'), false)
 })
+
+test('FR-74: listing image upload sends raw bytes with the in-memory bearer token', async () => {
+  let call
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      call = { url, options }
+      return { ok: true, status: 202, json: async () => ({ id: 'image-1', processing_state: 'pending' }) }
+    },
+  })
+  const file = new Blob(['png-bytes'], { type: 'image/png' })
+  client.setAccessToken('short-lived-memory-token')
+  const uploaded = await client.uploadListingImage('listing-1', 'front', file)
+  assert.equal(call.url, 'https://api.example.test/api/media/listings/listing-1/images?slot=front')
+  assert.equal(call.options.method, 'POST')
+  assert.equal(call.options.headers.Authorization, 'Bearer short-lived-memory-token')
+  assert.equal(call.options.headers['Content-Type'], 'application/octet-stream')
+  assert.equal(call.options.body, file)
+  assert.equal(uploaded.processing_state, 'pending')
+})

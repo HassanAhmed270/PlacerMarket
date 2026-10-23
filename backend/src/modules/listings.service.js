@@ -67,9 +67,17 @@ async function transitionListingToReview(listingId, sellerId, expectedStatus) {
     }
 
     const { rows: imageRows } = await client.query(
-      'SELECT count(*)::int AS count FROM listing_images WHERE listing_id = $1', [listingId]
+      `SELECT count(*)::int AS count,
+              count(*) FILTER (WHERE processing_state <> 'ready')::int AS unprocessed,
+              count(*) FILTER (WHERE slot = 'front' AND processing_state = 'ready')::int AS front,
+              count(*) FILTER (WHERE slot = 'back' AND processing_state = 'ready')::int AS back,
+              count(*) FILTER (WHERE slot = 'other' AND processing_state = 'ready')::int AS other
+       FROM listing_images WHERE listing_id = $1`, [listingId]
     );
     assertValidListingImageCount(imageRows[0].count);
+    if (imageRows[0].unprocessed > 0 || !imageRows[0].front || !imageRows[0].back || !imageRows[0].other) {
+      throw new ValidationError('Front, Back, and Other photos must finish processing before submission');
+    }
     const requiresId = await users.isIdVerificationRequired(listing.asking_price);
     const { rows: updated } = await client.query(
       `UPDATE listings
@@ -221,6 +229,18 @@ async function getListingImages(listingId) {
   return rows;
 }
 
+/** FR-20: seller workspace list with status and safe image processing metadata. */
+async function getOwnListings(sellerId) {
+  const { rows } = await db.query(
+    `SELECT l.id, l.title, l.status, l.asking_price, l.created_at, l.updated_at, l.published_at, l.content_version,
+       coalesce((SELECT jsonb_agg(jsonb_build_object('id', i.id, 'slot', i.slot,
+         'processingState', i.processing_state, 'imageUrl', CASE WHEN i.processing_state = 'ready' THEN i.image_url ELSE NULL END)
+         ORDER BY i.display_order) FROM listing_images i WHERE i.listing_id = l.id), '[]'::jsonb) AS photos
+     FROM listings l WHERE l.seller_id = $1 ORDER BY l.updated_at DESC, l.id DESC LIMIT 100`, [sellerId]
+  );
+  return rows;
+}
+
 /** FR-19: sellers explicitly submit a draft after completing its required photos. */
 async function submitListingForReview(listingId, sellerId) {
   return transitionListingToReview(listingId, sellerId, 'draft');
@@ -269,12 +289,48 @@ async function getModerationQueue() {
   const { rows } = await db.query(
     `SELECT l.*,
             (l.asking_price > (SELECT value::numeric FROM platform_settings WHERE key = 'high_value_threshold_pkr')) AS is_high_value,
-            EXISTS(SELECT 1 FROM listing_evidence e WHERE e.listing_id = l.id) AS has_evidence_submitted
+            EXISTS(SELECT 1 FROM listing_evidence e WHERE e.listing_id = l.id) AS has_evidence_submitted,
+            coalesce((SELECT jsonb_agg(jsonb_build_object('id', i.id, 'slot', i.slot,
+              'imageUrl', CASE WHEN i.processing_state = 'ready' AND i.medium_key IS NOT NULL
+                THEN '/api/media/moderation-images/' || i.id || '/medium/' || split_part(i.medium_key, '/', 2) || '.webp'
+                ELSE NULL END,
+              'processingState', i.processing_state, 'labelConfirmedAt', i.label_confirmed_at,
+              'labelRejectedBy', i.label_rejected_by, 'labelRejectedAt', i.label_rejected_at,
+              'labelRejectedReason', i.label_rejected_reason) ORDER BY i.display_order)
+              FROM listing_images i WHERE i.listing_id = l.id), '[]'::jsonb) AS photos
      FROM listings l
      WHERE l.status = 'pending_review'
      ORDER BY l.created_at ASC`
   );
   return rows;
+}
+
+/** FR-74a: moderator confirms that a processed photo matches its assigned label. */
+async function confirmListingPhoto(imageId, reviewerId) {
+  const { rows } = await db.query(
+    `UPDATE listing_images i SET label_confirmed_by = $2, label_confirmed_at = now(),
+       label_rejected_by = NULL, label_rejected_at = NULL, label_rejected_reason = NULL
+     FROM listings l WHERE i.id = $1 AND l.id = i.listing_id AND l.status = 'pending_review'
+       AND i.processing_state = 'ready' AND i.slot IS NOT NULL
+     RETURNING i.id, i.slot, i.label_confirmed_by, i.label_confirmed_at`, [imageId, reviewerId]
+  );
+  if (!rows[0]) throw new ValidationError('Only processed photos on a listing pending review can be confirmed');
+  return rows[0];
+}
+
+/** FR-74a: moderator rejects a photo label with an auditable reason. */
+async function rejectListingPhoto(imageId, reviewerId, reason) {
+  if (typeof reason !== 'string' || !reason.trim() || reason.trim().length > 500) {
+    throw new ValidationError('A photo rejection reason of at most 500 characters is required');
+  }
+  const { rows } = await db.query(
+    `UPDATE listing_images i SET label_confirmed_by = NULL, label_confirmed_at = NULL,
+       label_rejected_by = $2, label_rejected_at = now(), label_rejected_reason = $3
+     FROM listings l WHERE i.id = $1 AND l.id = i.listing_id AND l.status = 'pending_review' AND i.slot IS NOT NULL
+     RETURNING i.id, i.slot, i.label_rejected_by, i.label_rejected_at, i.label_rejected_reason`, [imageId, reviewerId, reason.trim()]
+  );
+  if (!rows[0]) throw new ValidationError('Only photos on a listing pending review can be rejected');
+  return rows[0];
 }
 
 /**
@@ -291,9 +347,16 @@ async function approveListing(listingId, reviewerId) {
     }
 
     const { rows: imageRows } = await client.query(
-      'SELECT count(*)::int AS count FROM listing_images WHERE listing_id = $1', [listingId]
+      `SELECT count(*)::int AS count,
+              count(*) FILTER (WHERE processing_state <> 'ready')::int AS unprocessed,
+              count(*) FILTER (WHERE slot IN ('front', 'back', 'other'))::int AS required_slots,
+              count(*) FILTER (WHERE slot IN ('front', 'back', 'other') AND label_confirmed_at IS NULL)::int AS unconfirmed
+       FROM listing_images WHERE listing_id = $1`, [listingId]
     );
     assertValidListingImageCount(imageRows[0].count);
+    if (imageRows[0].unprocessed > 0 || imageRows[0].required_slots !== 3 || imageRows[0].unconfirmed > 0) {
+      throw new ValidationError('All required photos must be processed and confirmed before publication');
+    }
 
     const requiresEmailVerification = await users.isIdVerificationRequired(listing.asking_price); // FR-08a
     if (requiresEmailVerification && !(await users.isEmailVerified(listing.seller_id))) {
@@ -457,10 +520,13 @@ module.exports = {
   getReferencedMeasurementDefinitionIds,
   addListingImages,
   getListingImages,
+  getOwnListings,
   submitListingForReview,
   submitAuthenticityEvidence,
   setVerifiedBadge,
   getModerationQueue,
+  confirmListingPhoto,
+  rejectListingPhoto,
   approveListing,
   updateOwnListing,
   setOwnListingPaused,

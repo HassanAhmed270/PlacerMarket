@@ -11,6 +11,7 @@ const queue = require('../lib/queue');
 const NOTIFICATION_EVENTS = Object.freeze([
   events.SELLER_APPLICATION_STATUS_CHANGED,
   events.LISTING_STATUS_CHANGED,
+  events.LISTING_REVISION_DECIDED,
   events.OFFER_CREATED,
   events.ORDER_STATUS_CHANGED,
   events.DELIVERY_STATUS_CHANGED,
@@ -21,6 +22,7 @@ function jobKeys(eventName, payload) {
   const entityByEvent = {
     [events.SELLER_APPLICATION_STATUS_CHANGED]: ['seller-application', payload.applicationId],
     [events.LISTING_STATUS_CHANGED]: ['listing', payload.listingId],
+    [events.LISTING_REVISION_DECIDED]: ['listing-revision', payload.revisionId],
     [events.OFFER_CREATED]: ['offer', payload.offerId],
     [events.ORDER_STATUS_CHANGED]: ['order', payload.orderId],
     [events.DELIVERY_STATUS_CHANGED]: ['order', payload.orderId],
@@ -87,6 +89,15 @@ async function processNotificationJob(job, transactionDb) {
       );
       recipients = result.rows.map((row) => row.seller_id);
       eventType = 'listing_status';
+      break;
+    }
+    case events.LISTING_REVISION_DECIDED: {
+      // cross-module notification-recipient read: listing_revisions (owned by listingRevisions.service.js)
+      const result = await transactionDb.executeSql(
+        'SELECT seller_id FROM listing_revisions WHERE id = $1', [job.payload.revisionId]
+      );
+      recipients = result.rows.map((row) => row.seller_id);
+      eventType = 'listing_revision_status';
       break;
     }
     case events.OFFER_CREATED: {

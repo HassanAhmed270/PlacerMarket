@@ -26,6 +26,9 @@ put live credentials in this file, source control, test output, or logs.
   the hosting secret store; startup rejects missing values and placeholders.
 - [ ] Provision and document rotation for `EMAIL_QUEUE_ENCRYPTION_SECRET`; queued
   codes are encrypted at rest and expire independently after five minutes.
+- [ ] Select and provision a durable, shared production media storage backend;
+  local-disk storage is for single-host development only. Verify signed private
+  reads, lifecycle/backup policy, and worker/web access before enabling uploads.
 - [ ] Staff TOTP encryption key provisioned outside PostgreSQL/source control;
   document secure rotation and recovery before enrollment is enabled. First
   admin bootstrap consumes its confirmation code; wait for the next 30-second

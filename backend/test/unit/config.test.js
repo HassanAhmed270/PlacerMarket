@@ -14,6 +14,7 @@ function validProductionEnv(overrides = {}) {
     STAFF_TOTP_ENCRYPTION_SECRET: 'staff-totp-encryption-key-material-at-least-32bytes',
     PAYOUT_ENCRYPTION_ACTIVE_KEY_ID: '2026-01',
     PAYOUT_ENCRYPTION_KEYS_JSON: JSON.stringify({ '2026-01': Buffer.alloc(32, 7).toString('base64') }),
+    MEDIA_SIGNING_SECRET: 'media-signing-key-material-at-least-32-bytes',
     CHALLENGE_VERIFIER_ADAPTER: 'provider',
     CHALLENGE_PROVIDER_KEY: 'challenge-provider-secret',
     ...overrides,
@@ -44,6 +45,11 @@ describe('FR-84c: production configuration validation', () => {
       .toThrow('PAYOUT_ENCRYPTION_KEYS_JSON');
     expect(() => getRuntimeConfig(validProductionEnv({ PAYOUT_ENCRYPTION_KEYS_JSON: JSON.stringify({ k: 'c2hvcnQ=' }) })))
       .toThrow('exactly 32 bytes');
+  });
+
+  test('production requires a dedicated signing secret for private media URLs', () => {
+    expect(() => getRuntimeConfig(validProductionEnv({ MEDIA_SIGNING_SECRET: undefined })))
+      .toThrow('MEDIA_SIGNING_SECRET is missing');
   });
 
   test('refuses wildcard or empty production CORS origins', () => {

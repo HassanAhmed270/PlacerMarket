@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
 import AccountWorkspace from './AccountWorkspace.jsx'
+import ListingWorkspace, { PublicListingDetail } from './ListingWorkspace.jsx'
 import './App.css'
 
 function App() {
-  const isAuthRoute = ['/login', '/register', '/forgot-password', '/reset-password', '/account'].includes(window.location.pathname)
+  const path = window.location.pathname
+  const isAuthRoute = ['/login', '/register', '/forgot-password', '/reset-password', '/account'].includes(path)
   const [categories, setCategories] = useState([])
   const [categoryState, setCategoryState] = useState('loading')
 
@@ -28,6 +30,15 @@ function App() {
   }, [isAuthRoute])
 
   if (isAuthRoute) return <AuthScreen />
+  if (path === '/seller/listings' || path === '/moderation') {
+    return <ListingWorkspace path={path} onSignOut={async () => {
+      try { await api.logout() } catch { /* Expired sessions are cleared locally too. */ }
+      api.clearAccessToken()
+      window.location.assign('/login')
+    }} />
+  }
+  const publicListing = /^\/listing\/([^/]+)$/.exec(path)
+  if (publicListing) return <PublicListingDetail id={decodeURIComponent(publicListing[1])} />
 
   return (
     <div className="site-shell">
@@ -39,7 +50,8 @@ function App() {
         <nav className="main-nav" aria-label="Main navigation">
           <a href="#categories">Explore</a>
           <a href="#about">About</a>
-          <a className="nav-sell" href="#seller-note">Sell with us</a>
+          <a className="nav-sell" href="/seller/listings">Sell with us</a>
+          <a href="/moderation">Moderation</a>
         </nav>
       </header>
 
@@ -105,11 +117,11 @@ function App() {
         <section className="about-section" id="about" aria-labelledby="about-title">
           <p className="eyebrow">Made for discovery</p>
           <h2 id="about-title">Development preview</h2>
-          <p>Browse is being connected to the marketplace API. This preview does not provide sign-in or seller tools.</p>
+          <p>Sign in to create listings and manage your seller workspace.</p>
         </section>
 
         <p className="seller-note" id="seller-note">
-          Seller and account features will be available when the secure sign-in flow is ready.
+          <a href="/seller/listings">Open seller studio</a> · <a href="/moderation">Open moderation desk</a>
         </p>
       </main>
 

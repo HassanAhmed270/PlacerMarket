@@ -375,6 +375,23 @@ a:focus-visible {
   text-align: center;
 }
 
+.listing-workspace { display: grid; gap: 1.5rem; }
+.workspace-links { display: flex; flex-wrap: wrap; gap: 1rem; }
+.workspace-links a { color: inherit; }
+.listing-panel { background: #fffdf8; border: 1px solid rgba(32, 61, 52, .14); border-radius: 1rem; padding: clamp(1rem, 3vw, 2rem); }
+.listing-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 1.25rem; }
+.listing-form label, .moderation-card label { display: grid; gap: .35rem; font-weight: 600; }
+.listing-form input, .listing-form select, .listing-form textarea, .moderation-card input { width: 100%; min-height: 2.7rem; border: 1px solid #bac8bf; border-radius: .5rem; padding: .55rem .7rem; font: inherit; background: white; }
+.listing-form textarea { resize: vertical; }
+.listing-form fieldset { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: .8rem; border: 1px solid #bac8bf; border-radius: .65rem; padding: 1rem; }
+.listing-form fieldset legend { font-weight: 700; padding: 0 .4rem; }
+.workspace-list { list-style: none; padding: 0; display: grid; gap: .8rem; }
+.workspace-list li, .moderation-card { display: grid; gap: .7rem; border: 1px solid rgba(32, 61, 52, .16); border-radius: .8rem; padding: 1rem; }
+.moderation-photos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .8rem; }
+.moderation-photos > div { display: grid; align-content: start; gap: .5rem; }
+.moderation-photo { display: block; width: 100%; max-height: 240px; object-fit: contain; background: #f3f0e8; border-radius: .5rem; }
+.workspace-error { color: #9d2e24; font-weight: 700; }
+
 .site-footer {
   min-height: 83px;
   border-top: 1px solid var(--cream-200);

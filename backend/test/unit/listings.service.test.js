@@ -35,7 +35,7 @@ describe('listings.service submission flow', () => {
     const client = {
       query: jest.fn()
         .mockResolvedValueOnce({ rows: [listing] })
-        .mockResolvedValueOnce({ rows: [{ count: 3 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 3, unprocessed: 0, front: 1, back: 1, other: 1 }] })
         .mockResolvedValueOnce({ rows: [{ ...listing, status: 'pending_review', requires_id_verification: false }] }),
     };
     db.withTransaction.mockImplementation((callback) => callback(client));

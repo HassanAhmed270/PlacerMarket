@@ -369,3 +369,12 @@ purpose so the schema works whichever way this eventually gets decided.
   guards, the FR-05a permission matrix, and the mocked-db pattern; most
   `modules/*.service.js` functions have no test yet. Extend as you build
   out real logic, don't treat "tests exist" as "this module is covered."
+# Phase 2 media dependency note
+
+`sharp@0.35.5` is pinned exactly because the Phase 2 media worker must decode
+JPEG/PNG uploads, strip embedded metadata through re-encoding, and produce
+WebP variants. The npm package page reported publication more than 14 days
+before selection (2026-10-23). Backend production dependency audit after
+installation reported zero vulnerabilities. No cloud storage provider code is
+included; local-disk and explicit development fake adapters are the only
+implementations.

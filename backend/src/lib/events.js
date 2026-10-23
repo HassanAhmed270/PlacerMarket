@@ -17,6 +17,7 @@ module.exports = {
 
   // Module 3: Listings
   LISTING_STATUS_CHANGED: 'listing.status_changed', // FR-19, FR-21
+  LISTING_REVISION_DECIDED: 'listing_revision.decided', // FR-73
 
   // Module 5: Messaging & Negotiation
   OFFER_CREATED: 'offer.created', // FR-29

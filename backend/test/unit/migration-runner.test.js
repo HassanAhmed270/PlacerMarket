@@ -27,6 +27,8 @@ describe('FR-79b migration support', () => {
         '008_manual_identity_verification.sql',
         '009_seller_authenticator_step_up.sql',
         '010_payout_controls.sql',
+        '011_listing_media.sql',
+        '012_listing_revisions.sql',
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');
