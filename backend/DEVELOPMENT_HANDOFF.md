@@ -11,6 +11,17 @@ local checks are recorded, but the broader gate remains open; the local demo
 was blocked by missing development database/JWT/Redis configuration. See
 `DEMO_RUN.md` and `LIVE_CHECKS.md`.
 
+## Phase 2 update (2026-10-23)
+
+Listing core, media pipeline, photo moderation, listing revisions, and workspace
+screens are implemented. See `PHASE2_PROGRESS.md` and `PHASE2_GATE_REPORT.md`.
+Backend unit tests passed (39 suites/487 tests), PostgreSQL integration passed
+(6 suites/94 tests; 4 Redis-dependent tests skipped), and frontend lint/test/build
+plus schema check passed. The service-backed demo is unrun because no development
+database URL is configured; Redis is unavailable at 127.0.0.1:6379. npm audit
+could not reach the audit endpoint in the sandbox, so Phase 2 is not a closed
+gate. See `DEMO_RUN.md`, `security.md` SEC-31, and `LIVE_CHECKS.md`.
+
 ## 1. What you are working with
 
 The ZIP `poshaak-project-consolidated.zip` unpacks to `backend/`. It is the

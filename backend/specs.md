@@ -5,9 +5,12 @@
 **Legend:** `[ ]` = not done · `[x]` = done · items marked **(DEFERRED)** are explicitly out of MVP scope · items marked **(OPEN)** still need a product decision before they can be built · items marked **(DISCUSS)** are recommended or proposed but NOT confirmed by the human — discuss before building; they cannot be ticked until the human removes the tag · items marked **(SUPERSEDED)** were replaced by a later decision — do not build them
 
 Phase 1 implementation evidence and residual release-gate items are summarized
-in `PHASE1_GATE_REPORT.md`. Checked rows below retain their named test evidence;
-unchecked rows remain open. `LISTING_REVISIONS_PLAN.md` is a Phase 2 proposal and
-does not satisfy or tick FR-73/FR-73a/FR-73e.
+in `PHASE1_GATE_REPORT.md`; Phase 2 implementation evidence and gate gaps are
+mapped in `PHASE2_GATE_REPORT.md`. Checked rows below retain their named test
+evidence; unchecked rows remain open. `LISTING_REVISIONS_PLAN.md` records the
+implemented FR-73 scope per the 2026-10-22 corrections. FR-73a cached version
+serving and the tagged FR-73b-d proposals remain unresolved and are not implied
+by that implementation.
 
 ---
 

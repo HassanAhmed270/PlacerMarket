@@ -91,3 +91,66 @@ Resume at the first incomplete stage. Do not repeat completed stages.
 - **Live checks:** production media storage provisioning is unchecked in
   `LIVE_CHECKS.md`.
 - **Next:** Stage 3 — photo moderation.
+
+## Stages 3-5 — moderation, revisions, workspace — implemented (2026-10-23)
+
+- **Stage 3:** required photo slots and moderator confirmation/rejection are
+  implemented in the listing service and API. Evidence: passing PostgreSQL
+  integration tests `FR-74a, SEC-12: photo moderation confirms labels, records
+  reviewer, and denies seller BOLA` and listing submission/approval checks.
+- **Stage 4:** migration 012, listing revision service/routes, one-pending
+  constraint, atomic approval, threshold recheck and public live-row behavior
+  are implemented. The schema table-count test was updated in the same
+  checkpoint as migration 012. Evidence: `npm run test:integration` passed
+  `test/integration/revisions.test.js`, including concurrent submission and
+  transition, rollback, threshold, and public privacy cases. Production
+  `LISTING_REVISIONS_ENABLED` defaults off; enablement requires the explicit
+  value `1`.
+- **Stage 5:** seller listing and moderator workspace screens are implemented.
+  Evidence: frontend lint, 5 frontend tests, and Vite production build passed.
+- **Parked:** cached content-version reads (FR-73a), tagged FR-73b-d, direct to
+  storage uploads/CDN (FR-74d), optional media/video/story scope, and live
+  production storage/CORS checks. Frontend Phase 2 gap-analysis rows remain
+  unchecked because they do not yet have passing tests naming the UI behavior.
+
+## Stage 6 — demo — implemented, machine run pending (2026-10-23)
+
+- `scripts/demo-smoke.js` now exercises registration/email confirmation and
+  re-login after seller approval, generated PNG uploads to all three required
+  slots, worker variants, moderator photo confirmation and listing approval,
+  safe public detail, above-threshold unverified-email refusal, a concurrent
+  double-submit, unchanged pending public content, and approved price/version
+  update. It prints no secret, code, or storage key.
+- **Machine verification:** unit and integration coverage passed, but the full
+  service-backed demo was not run. Local PostgreSQL accepts TCP on port 5432;
+  no development database URL exists in `backend/.env`. Redis is unavailable
+  on 127.0.0.1:6379; `psql`, `redis-cli`, Docker and Memurai are unavailable.
+  Vite returned HTTP 200 at `http://127.0.0.1:5173/` with title Poshaak.
+  API startup exited on the missing `JWT_ACCESS_SECRET`; worker startup exited
+  with `{ code: 'unknown' }` under the unconfigured local runtime. Dev-DB
+  migrations/seeds, live CORS, and smoke transcript remain pending. See
+  `DEMO_RUN.md`.
+- **Suite results:** unit 39 suites/487 passed; PostgreSQL integration 6
+  suites/94 passed, 4 Redis-dependent tests skipped; frontend lint/test (5)/build
+  passed; `db:check-schema` passed. Both production-only audits returned 0
+  vulnerabilities; full backend audit reported 28 high-severity findings in
+  the Jest 29 dev chain, and full frontend audit returned 0. Owner-triaged
+  findings remain non-blocking under SEC-31.
+
+## Stage 7 — docs and gate — recorded (2026-10-23)
+
+- Updated `agent.md`, `open-questions.md`, `specs.md`, `security.md`,
+  `Phases.md`, `LIVE_CHECKS.md`, `MASTER_PROJECT_CONTEXT.md`,
+  `DEVELOPMENT_HANDOFF.md`, `DEMO_RUN.md`, and the revisions plan status.
+- `PHASE2_GATE_REPORT.md` maps every Phase 2 backlog item to evidence, parked,
+  live-check pending, or deferred. Phase 2 gate remains open; no release or push
+  is claimed. Git history already contains a combined Stage 2-5 checkpoint and
+  two earlier Phase 2 commits; no history rewrite was performed. The two
+  deleted `.docx` worktree entries remain excluded.
+- **SEC-31:** owner decision dated 2026-10-22 recorded: retain Jest 29 through
+  Phase 2; its 33 dev advisories are triaged and do not stop work. A nonzero
+  production audit (`npm audit --omit=dev`) in either package is the only
+  dependency stop condition. Jest 29 -> 30 is queued right after Phase 2.
+- **Next:** provision a dedicated local development PostgreSQL URL and Redis,
+  run the demo flow, and complete remaining frontend and live-check evidence
+  before evaluating the Phase 2 gate.

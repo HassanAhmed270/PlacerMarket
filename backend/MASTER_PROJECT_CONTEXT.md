@@ -255,6 +255,17 @@ with 9 new tests in `test/unit/git-hooks.test.js`; `test/unit/specs-checkboxes.t
 
 **2026-10-17 follow-up (documents only):** approved FR-83d (email codes, 3 attempts per code), FR-84a (token lifetimes), the queue strategy (new FR-77f, FR-79c revised), Render for initial hosting (FR-79h) and the email architecture (FR-83e); remaining email proposals split into FR-83i/FR-83j; SEC-38 added. No application code was changed. Verification of the queue library and the provider choices stay open (`open-questions.md`).
 
+## Phase 2 status update (2026-10-23)
+
+Stages 1-5 are implemented and committed on `main`; Stage 6's demo flow is
+implemented in `scripts/demo-smoke.js` but has not run on this machine because
+no development database URL is configured. Local PostgreSQL is reachable, Redis
+is not. Backend unit, PostgreSQL integration, schema, frontend lint/test/build
+checks passed; Redis-dependent integration checks were skipped. See
+`PHASE2_PROGRESS.md`, `PHASE2_GATE_REPORT.md`, and `DEMO_RUN.md`. Phase 2 is not
+declared gated. The Jest 29 development-tree findings remain owner-triaged under
+SEC-31; only production dependency audit findings stop work.
+
 ## 10. Where to look
 
 `DEVELOPMENT_HANDOFF.md` (resume), `agent.md` (where logic lives), `rules.md` (how to

@@ -308,6 +308,11 @@ step with placeholder mark and private clean originals · storage adapter (local
 disk initially; S3-compatible backend later). Keep Phase 2 routes unavailable to
 real users until authentication is complete.
 
+**Owner follow-up (2026-10-22):** Jest 29 -> 30 upgrade (separate small task,
+right after Phase 2). The 33 development-tree advisories in the Jest 29 chain
+are triaged under SEC-31 and do not block Phase 2. The release stop condition
+is a nonzero `npm audit --omit=dev` result in either package.
+
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Frontend items above ticked

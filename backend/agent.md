@@ -13,15 +13,19 @@ say "Marketplace" — same project). **Reading order for a new session:**
 
 ## Phase status — implemented foundation and planned follow-up
 
-**Phase 1 implementation handoff (2026-10-22):** seller onboarding, measurement
-administration, payout protection, manual identity verification, account UI,
-and the guarded demo harness are recorded in `PHASE1_PROGRESS.md`; current
-evidence and residuals are mapped in `PHASE1_GATE_REPORT.md`. Local unit,
-PostgreSQL, schema, audit, lint, frontend test, and build checks passed as listed
-there. The service-backed demo is blocked by missing development DB/JWT/Redis
-configuration; provider, key-custody, real-Redis, browser, and deployment checks
-remain open. Phase 1 is not a closed release gate. `LISTING_REVISIONS_PLAN.md`
-is proposed Phase 2 design only; resolve its questions before coding.
+**Phase 2 implementation handoff (2026-10-23):** listing core repairs, local
+media processing/storage adapter, photo moderation, listing revisions, and
+workspace screens are implemented. Detailed evidence and remaining gate items
+are in `PHASE2_PROGRESS.md` and `PHASE2_GATE_REPORT.md`. Listing revisions
+require `LISTING_REVISIONS_ENABLED=1` in production; the production default is
+off. The current local unit/integration/frontend/schema suites pass except for
+four Redis-dependent integration checks, skipped because Redis is unavailable.
+The dev-tree Jest 29 advisories are owner-triaged under SEC-31 and do not stop
+Phase 2; only a nonzero production dependency audit in either package blocks.
+The live demo is not run: no development `DEMO_DATABASE_URL`/`DATABASE_URL` or
+Redis is configured. Phase 2 is not a closed gate. The revisions plan is marked
+implemented per the 2026-10-22 corrections; FR-73a and tagged FR-73b-d remain
+open.
 
 Decided in the scale/escrow/auth program (see `specs.md` sections 13–20 and
 `MASTER_PROJECT_CONTEXT.md`): Phase 0b now has `worker.js`, `lib/queue.js`

@@ -12,6 +12,7 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 
 ## Open
 
+
 ### Needed by Phase 0a follow-up / Phase 1
 
 ### Needed by Phase 0
@@ -97,6 +98,8 @@ Marketplace-chat entries with the register in the Poshaak handoff.
   Do not treat its recommendations or illustrative SQL as owner decisions.
 
 ## Resolved
+
+- 2026-10-22 Â· SEC-31 Â· **Owner decision:** keep Jest 29 through Phase 2. The 33 development-tree npm audit advisories in its Jest 29 chain are triaged and do not stop work. Only a nonzero production dependency audit (`npm audit --omit=dev`) in either package blocks. Schedule “Jest 29 -> 30 upgrade (separate small task, right after Phase 2)” in `Phases.md`.
 
 - 2026-10-22 · FR-24 · The discovery `cityId` filter follows the listing seller's registered `users.city_id`; it is applied with a users join. No listing-level city field is introduced.
 - 2026-10-22 · FR-27a · The buyer-facing seller card includes `seller_profiles.display_alias`, rating and join date; it omits seller IDs, sales counts, the verified badge and response-time statistics.

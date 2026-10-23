@@ -1,6 +1,6 @@
 # Listing revisions implementation plan
 
-**Status: proposed design only.** This document is a Phase 2 planning artifact. It does not approve SQL, change the Phase 1 contract, or authorize routes. SQL below is illustrative; do not run it or turn it into a migration until the owner resolves the questions at the end. No historical revision backfill is proposed.
+**Status: implemented per the 2026-10-22 corrections.** The implemented scope is the Phase 2 revision service, migration 012, gated routes, public live-row reads, and PostgreSQL concurrency/threshold tests. This status records implementation and does not claim the Phase 2 gate or production enablement. No historical revision backfill was made.
 
 ## Goal and Phase 1 contract
 

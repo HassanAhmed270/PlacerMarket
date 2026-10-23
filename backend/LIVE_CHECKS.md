@@ -1,11 +1,12 @@
 # Live checks before launch
 
-Phase 1 local evidence and remaining implementation-gate items are mapped in
-`PHASE1_GATE_REPORT.md`. Stage 9 did not execute the service-backed demo:
-PostgreSQL service exists, but an app `DEMO_DATABASE_URL`/`DATABASE_URL`, valid
-JWT secret, and Redis were unavailable. `DEMO_RUN.md` contains the guarded
-commands and observed limits. Do not treat the frontend Vite HTTP 200 as a
-backend or end-to-end demo check.
+Phase 1 and Phase 2 local evidence and remaining implementation-gate items are
+mapped in `PHASE1_GATE_REPORT.md` and `PHASE2_GATE_REPORT.md`. On 2026-10-23,
+PostgreSQL accepted a local TCP connection, but no development
+`DEMO_DATABASE_URL`/`DATABASE_URL` is configured and Redis did not accept a
+connection on 127.0.0.1:6379. The frontend Vite page returned HTTP 200; backend,
+CORS, and end-to-end demo behavior remain unverified on this machine. See
+`DEMO_RUN.md` for the exact commands and limits.
 
 Fake adapters and local integration tests do not satisfy these checks. Never
 put live credentials in this file, source control, test output, or logs.
@@ -29,6 +30,12 @@ put live credentials in this file, source control, test output, or logs.
 - [ ] Select and provision a durable, shared production media storage backend;
   local-disk storage is for single-host development only. Verify signed private
   reads, lifecycle/backup policy, and worker/web access before enabling uploads.
+- [ ] Run the Phase 2 end-to-end demo against a dedicated localhost development
+  database and Redis; verify worker variants, moderator slot confirmation,
+  public detail privacy, revision concurrency, threshold refusal, and approval.
+- [ ] Verify live backend CORS headers from the configured Vite origin after
+  local app configuration is available. Unit allowlist coverage is not a live
+  server check.
 - [ ] Staff TOTP encryption key provisioned outside PostgreSQL/source control;
   document secure rotation and recovery before enrollment is enabled. First
   admin bootstrap consumes its confirmation code; wait for the next 30-second
