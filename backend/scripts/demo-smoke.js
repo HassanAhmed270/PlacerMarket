@@ -188,7 +188,7 @@ async function main() {
   await call(`listings/${listing.id}/submit`, { method: 'POST', token: approvedSellerSession.accessToken });
   for (const photo of images) await call(`listings/photos/${photo.id}/confirm`, { method: 'POST', token: adminToken });
   await call(`listings/${listing.id}/approve`, { method: 'POST', token: adminToken });
-  const publicBefore = await call(`listings/${listing.id}`);
+  const publicBefore = await call(`discovery/listings/${listing.id}`);
   const publicJson = JSON.stringify(publicBefore);
   if (publicBefore.title !== 'Demo listing before review' || !publicJson.includes('/api/media/images/') || /original_key|thumbnail_key|medium_key|large_key|content_hash|private-media/.test(publicJson)) {
     throw new Error('Public listing detail did not expose a safe processed variant URL.');
@@ -206,7 +206,7 @@ async function main() {
   const refused = results.filter((result) => result.status === 'rejected');
   if (accepted.length !== 1 || refused.length !== 1 || !refused[0].reason.message.includes('(409)')) throw new Error('Concurrent revision submit did not yield exactly one pending revision.');
   const revision = accepted[0].value;
-  const unchanged = await call(`listings/${listing.id}`);
+  const unchanged = await call(`discovery/listings/${listing.id}`);
   if (Number(unchanged.asking_price) !== 1000) throw new Error('Public listing changed before revision approval.');
   let thresholdRefused = false;
   try { await call(`listings/revisions/${revision.id}/approve`, { method: 'POST', token: adminToken }); }
@@ -215,7 +215,7 @@ async function main() {
   await db.query('UPDATE users SET email_verified_at = now() WHERE id = $1', [application.user_id]);
   const beforeVersion = Number((await db.query('SELECT content_version FROM listings WHERE id = $1', [listing.id])).rows[0].content_version);
   await call(`listings/revisions/${revision.id}/approve`, { method: 'POST', token: adminToken });
-  const publicAfter = await call(`listings/${listing.id}`);
+  const publicAfter = await call(`discovery/listings/${listing.id}`);
   const afterVersion = Number((await db.query('SELECT content_version FROM listings WHERE id = $1', [listing.id])).rows[0].content_version);
   if (Number(publicAfter.asking_price) !== highPrice || afterVersion !== beforeVersion + 1) throw new Error('Approved revision did not publish and increment content_version exactly once.');
   console.log('14. Concurrent price edit yielded exactly one pending revision; public detail stayed unchanged. Unverified above-threshold approval was refused. After email verification and moderator approval, public price updated and content_version incremented once.');
