@@ -34,7 +34,7 @@ describe('FR-74 media safety', () => {
     expect([social.width, social.height]).toEqual([1200, 630]);
   }, 30000);
 
-  test('local storage refuses traversal and supports private bytes; fake exists only by explicit opt-in', async () => {
+  test('FR-74: dev email fakes still use shared local media storage across web and worker processes', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'poshaak-media-'));
     const secret = randomBytes(32).toString('hex');
     const previousSecret = process.env.MEDIA_SIGNING_SECRET;
@@ -51,8 +51,15 @@ describe('FR-74 media safety', () => {
       expect(media.verifyPrivateSignature('../outside', signed.searchParams.get('expires'), signature, secret)).toBe(false);
       expect(media.verifyPrivateSignature(key, '1', signature, secret)).toBe(false);
       expect(createFakeStorage().put).toBeInstanceOf(Function);
-      expect(createStorageAdapter({ env: { NODE_ENV: 'test', DEV_FAKES: '1' } })).toHaveProperty('signedRead');
+      const webStorage = createStorageAdapter({ env: { NODE_ENV: 'development', DEV_FAKES: '1' }, root });
+      const workerStorage = createStorageAdapter({ env: { NODE_ENV: 'development', DEV_FAKES: '1' }, root });
+      const sharedKey = `ac/${'b'.repeat(64)}/original`;
+      await webStorage.put(Buffer.from('shared private bytes'), { key: sharedKey });
+      expect(await workerStorage.get(sharedKey)).toEqual(Buffer.from('shared private bytes'));
+      const explicitFake = createStorageAdapter({ env: { NODE_ENV: 'test', DEV_FAKES: '1', MEDIA_STORAGE_ADAPTER: 'fake' } });
+      expect(explicitFake.objects).toBeInstanceOf(Map);
       expect(() => createStorageAdapter({ env: { NODE_ENV: 'production', DEV_FAKES: '1' } })).toThrow('forbidden in production');
+      expect(() => createStorageAdapter({ env: { NODE_ENV: 'production', MEDIA_STORAGE_ADAPTER: 'fake' } })).toThrow('explicit non-production opt-in');
     } finally {
       if (previousSecret === undefined) delete process.env.MEDIA_SIGNING_SECRET;
       else process.env.MEDIA_SIGNING_SECRET = previousSecret;
