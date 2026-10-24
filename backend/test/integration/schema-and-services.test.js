@@ -17,11 +17,12 @@ describe('real PostgreSQL baseline', () => {
     }
   });
 
-  test('seed.js inserts four platform settings and getSetting returns commission_percent 10', async () => {
+  test('seed.js inserts five platform settings, including the 30 percent instant price decrease limit', async () => {
     const pool = require('../../src/db.service').pool;
     const { rows } = await pool.query('SELECT count(*)::int AS count FROM platform_settings');
-    expect(rows[0].count).toBe(4);
+    expect(rows[0].count).toBe(5);
     await expect(settlement.getSetting('commission_percent')).resolves.toBe('10');
+    await expect(settlement.getSetting('instant_price_decrease_max_percent')).resolves.toBe('30');
   });
 
   test('catalog.createMainCategory and listMainCategories round-trip through PostgreSQL', async () => {

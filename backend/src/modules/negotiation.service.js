@@ -16,6 +16,14 @@ const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
 
+function assertOffersEnabled() {
+  if (process.env.OFFERS_ENABLED !== '1') {
+    const error = new ValidationError('Offers are disabled by the OFFERS_ENABLED feature flag');
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
 // FR-30: very small illustrative pattern set — phone numbers, emails, bare URLs.
 // This is intentionally simple; a real implementation will need obfuscation
 // handling (e.g. "o3zero..." spelled-out digits) which isn't specified yet.
@@ -50,6 +58,7 @@ async function sendMessage(conversationId, senderId, body) {
 
 /** FR-29: no fixed Buy Now path — this is the only way a sale starts. */
 async function makeOffer(conversationId, listingId, buyerId, amount) {
+  assertOffersEnabled();
   return db.withTransaction(async (client) => {
     const { rows } = await client.query(
       `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status)
@@ -63,6 +72,7 @@ async function makeOffer(conversationId, listingId, buyerId, amount) {
 
 /** FR-29: either party can counter; chained via parent_offer_id. */
 async function counterOffer(parentOfferId, proposedBy, amount) {
+  assertOffersEnabled();
   const { rows: parentRows } = await db.query('SELECT * FROM offers WHERE id = $1', [parentOfferId]);
   const parent = parentRows[0];
   if (!parent) throw new NotFoundError('offer', parentOfferId);
@@ -86,6 +96,7 @@ async function counterOffer(parentOfferId, proposedBy, amount) {
  * touch the `orders` table directly.
  */
 async function acceptOffer(offerId, acceptedBy) {
+  assertOffersEnabled();
   const { rows } = await db.query(
     `UPDATE offers SET status = 'accepted' WHERE id = $1 AND status = 'pending' RETURNING *`,
     [offerId]

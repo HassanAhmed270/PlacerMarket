@@ -7,7 +7,16 @@ const limiters = createConfiguredRateLimiters();
 
 const router = Router();
 
-// FR-22a: every route here requires login — messaging/offers are gated actions.
+function requireOffersEnabled(_req, res, next) {
+  if (process.env.OFFERS_ENABLED !== '1') {
+    return res.status(503).json({ error: 'Offers are disabled' });
+  }
+  return next();
+}
+
+router.use(['/conversations/:id/offers', '/offers/:id'], requireOffersEnabled);
+
+// FR-22a: every active route here requires login — messaging/offers are gated actions.
 router.use(requireAuth);
 
 router.post('/conversations', async (req, res) => {

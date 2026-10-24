@@ -5,6 +5,7 @@
  * is expected to find. Without these, a large chunk of the service layer
  * throws NotFoundError on first use:
  *   - users.service.isIdVerificationRequired()   needs high_value_threshold_pkr (FR-08a)
+ *   - listingRevisions.service.js applies instant_price_decrease_max_percent (FR-73e)
  *   - disputes.service.fileDispute()              needs complaint_window_days (FR-43)
  *   - payout.service.startHold()                  needs payout_hold_days, complaint_window_days (FR-45c)
  *   - settlement.service.calculateCommission()     needs commission_percent (FR-46)
@@ -22,6 +23,7 @@ const { Pool } = require('pg');
 const SEED_SETTINGS = [
   ['commission_percent', '10'], // FR-46
   ['high_value_threshold_pkr', '100000'], // FR-08a / FR-19b
+  ['instant_price_decrease_max_percent', '30'], // FR-73e
   ['payout_hold_days', '5'], // FR-45c
   ['complaint_window_days', '3'], // FR-43
 ];

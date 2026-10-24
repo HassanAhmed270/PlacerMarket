@@ -3,6 +3,8 @@ const request = require('supertest');
 const app = require('../../src/app');
 const revisions = require('../../src/modules/listingRevisions.service');
 const discovery = require('../../src/modules/discovery.service');
+const negotiation = require('../../src/modules/negotiation.service');
+const orders = require('../../src/modules/orders.service');
 const { ForbiddenError, ValidationError } = require('../../src/lib/errors');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { createFixture } = require('./fixtures');
@@ -14,6 +16,88 @@ describe('FR-73 moderated listing revisions', () => {
     await db.query("UPDATE listings SET status = 'published', published_at = now(), title = 'Public title', asking_price = 100, content_version = 1 WHERE id = $1", [fixture.listingId]);
   });
   afterEach(async () => { if (fixture) await fixture.cleanup(); });
+
+  test('FR-73e: a decrease at the 30 percent boundary applies immediately with one audit revision', async () => {
+    const { rows: setting } = await db.query(
+      "SELECT value FROM platform_settings WHERE key = 'instant_price_decrease_max_percent'"
+    );
+    expect(setting[0].value).toBe('30');
+    const result = await revisions.submitListingRevision(fixture.listingId, fixture.userId, { askingPrice: 70 });
+    expect(result).toMatchObject({ status: 'approved', base_content_version: '1' });
+    expect(result.reviewed_at).toBeTruthy();
+    const { rows } = await db.query(
+      'SELECT asking_price, content_version FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    expect(rows[0]).toMatchObject({ asking_price: '70.00', content_version: '2' });
+    const { rows: audit } = await db.query(
+      'SELECT status, proposed_asking_price FROM listing_revisions WHERE id = $1', [result.id]
+    );
+    expect(audit[0]).toMatchObject({ status: 'approved', proposed_asking_price: '70.00' });
+  });
+
+  test('FR-73e: a 90 percent decrease remains pending moderation', async () => {
+    const result = await revisions.submitListingRevision(fixture.listingId, fixture.userId, { askingPrice: 10 });
+    expect(result).toMatchObject({ status: 'pending_review', base_content_version: '1' });
+    const { rows } = await db.query(
+      'SELECT asking_price, content_version FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    expect(rows[0]).toMatchObject({ asking_price: '100.00', content_version: '1' });
+  });
+
+  test('FR-73e: a concurrent instant decrease and revision submission have a consistent content version', async () => {
+    const results = await Promise.allSettled([
+      revisions.submitListingRevision(fixture.listingId, fixture.userId, { askingPrice: 70 }),
+      revisions.submitListingRevision(fixture.listingId, fixture.userId, { description: 'Revised description' }),
+    ]);
+    const decrease = results[0];
+    const revision = results[1];
+    const { rows: listingRows } = await db.query(
+      'SELECT asking_price, content_version FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    const { rows: pendingRows } = await db.query(
+      "SELECT base_content_version FROM listing_revisions WHERE listing_id = $1 AND status = 'pending_review'",
+      [fixture.listingId]
+    );
+
+    if (decrease.status === 'fulfilled') {
+      expect(revision.status).toBe('fulfilled');
+      expect(decrease.value.status).toBe('approved');
+      expect(listingRows[0]).toMatchObject({ asking_price: '70.00', content_version: '2' });
+      expect(pendingRows).toHaveLength(1);
+      expect(pendingRows[0].base_content_version).toBe('2');
+    } else {
+      expect(decrease.reason.statusCode).toBe(409);
+      expect(revision.status).toBe('fulfilled');
+      expect(revision.value.status).toBe('pending_review');
+      expect(listingRows[0]).toMatchObject({ asking_price: '100.00', content_version: '1' });
+      expect(pendingRows).toHaveLength(1);
+      expect(pendingRows[0].base_content_version).toBe('1');
+    }
+  });
+
+  test('FR-29: offers are disabled by default and accepting one never creates a bag entry', async () => {
+    const previousFlag = process.env.OFFERS_ENABLED;
+    delete process.env.OFFERS_ENABLED;
+    const createBagEntry = jest.spyOn(orders, 'createBagEntry');
+    try {
+      for (const [path, body] of [
+        ['/api/negotiation/conversations/00000000-0000-4000-8000-000000000001/offers', { listingId: fixture.listingId, amount: 50 }],
+        ['/api/negotiation/offers/00000000-0000-4000-8000-000000000001/counter', { amount: 50 }],
+        ['/api/negotiation/offers/00000000-0000-4000-8000-000000000001/accept', {}],
+      ]) {
+        const response = await request(app).post(path).send(body);
+        expect(response.status).toBe(503);
+        expect(response.body).toEqual({ error: 'Offers are disabled' });
+      }
+      await expect(negotiation.acceptOffer('00000000-0000-4000-8000-000000000001', fixture.userId))
+        .rejects.toThrow('Offers are disabled');
+      expect(createBagEntry).not.toHaveBeenCalled();
+    } finally {
+      createBagEntry.mockRestore();
+      if (previousFlag === undefined) delete process.env.OFFERS_ENABLED;
+      else process.env.OFFERS_ENABLED = previousFlag;
+    }
+  });
 
   test('FR-73: one pending revision keeps public data unchanged; concurrent submissions serialize and seller can withdraw/resubmit', async () => {
     const results = await Promise.allSettled([

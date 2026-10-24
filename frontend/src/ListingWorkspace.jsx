@@ -175,7 +175,7 @@ function SellerListings({ onSignOut }) {
           <label>Main category<select name="mainCategoryId" required onChange={(event) => chooseMainCategory(event.target.value)}><option value="">Choose a category</option>{categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label>Sub-category<select name="subCategoryId" required onChange={(event) => chooseSubCategory(event.target.value)}><option value="">Choose a sub-category</option>{subCategories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <label>Condition<select name="condition" required><option value="">Choose condition</option>{conditions.map((item) => <option key={item} value={item}>{item.replaceAll('_', ' ')}</option>)}</select></label>
-          <label>Asking price (PKR)<input type="number" name="askingPrice" min="0.01" step="0.01" required /></label>
+          <label>Price (PKR)<input type="number" name="askingPrice" min="0.01" step="0.01" required /></label>
           <label>Description<textarea name="description" rows="3" /></label>
           <label>Fabric / material<input name="fabricMaterial" /></label><label>Brand<input name="brand" /></label>
           <label>Color<input name="color" /></label><label>Embellishment detail<input name="embellishmentDetail" /></label>
@@ -196,7 +196,7 @@ function SellerListings({ onSignOut }) {
             {pending && <button className="text-button" type="button" disabled={busy} onClick={() => withdraw(pending.id)}>Withdraw pending revision</button>}
           </li>
         })}</ul>}
-        {selectedListing && <form className="listing-form" onSubmit={createRevision}><h3>Submit a moderated revision</h3><label>New title<input name="revisionTitle" /></label><label>New price (optional)<input name="revisionPrice" type="number" min="0.01" step="0.01" /></label><label>New description<textarea name="revisionDescription" /></label><button className="button button-primary" disabled={busy}>Submit revision</button><button className="text-button" type="button" onClick={() => setSelectedListing('')}>Cancel</button></form>}
+        {selectedListing && <form className="listing-form" onSubmit={createRevision}><h3>Change listing details</h3><label>New title<input name="revisionTitle" /></label><label>New price (optional)<input name="revisionPrice" type="number" min="0.01" step="0.01" /></label><label>New description<textarea name="revisionDescription" /></label><button className="button button-primary" disabled={busy}>Submit change</button><button className="text-button" type="button" onClick={() => setSelectedListing('')}>Cancel</button></form>}
       </section>
     </WorkspaceFrame>
   )

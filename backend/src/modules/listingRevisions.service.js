@@ -1,4 +1,4 @@
-/** FR-73: immutable moderated edits for previously published listing content. */
+/** FR-73: immutable revisions for previously published listing content. */
 const db = require('../db.service');
 const catalog = require('./catalog.service');
 const users = require('./users.service');
@@ -81,7 +81,25 @@ function validateProposedFields(proposed) {
   }
 }
 
-/** FR-73: capture an immutable seller change against the current public content version. */
+async function isImmediatePriceDecrease(client, currentPrice, proposedPrice) {
+  if (proposedPrice >= Number(currentPrice)) return false;
+  const { rows } = await client.query(
+    "SELECT value FROM platform_settings WHERE key = 'instant_price_decrease_max_percent'"
+  );
+  if (!rows[0]) throw new NotFoundError('platform setting', 'instant_price_decrease_max_percent');
+  const percent = Number(rows[0].value);
+  if (!Number.isFinite(percent) || percent < 0 || percent > 100) {
+    throw new Error('platform_settings.instant_price_decrease_max_percent must be between 0 and 100');
+  }
+  const { rows: result } = await client.query(
+    `SELECT (($1::numeric < $2::numeric) AND
+             (($2::numeric - $1::numeric) * 100 <= $2::numeric * $3::numeric)) AS immediate`,
+    [proposedPrice, currentPrice, rows[0].value]
+  );
+  return result[0].immediate;
+}
+
+/** FR-73, FR-73e: capture a seller change against the current public content version. */
 async function submitListingRevision(listingId, sellerId, patch) {
   assertEnabled();
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ValidationError('Revision details are required');
@@ -132,6 +150,36 @@ async function submitListingRevision(listingId, sellerId, patch) {
 
       const columns = Object.values(FIELDS);
       const values = Object.keys(FIELDS).map((key) => proposed[key]);
+      const priceOnlyEdit = Object.keys(patch).length === 1 && Object.hasOwn(patch, 'askingPrice');
+      if (priceOnlyEdit && await isImmediatePriceDecrease(client, listing.asking_price, proposed.askingPrice)) {
+        const requiresEmail = await users.isIdVerificationRequired(proposed.askingPrice);
+        if (requiresEmail && !(await users.isEmailVerified(sellerId))) {
+          throw new ForbiddenError('Listing crosses the high-value threshold and cannot be published until the seller email is verified');
+        }
+        const { rows: inserted } = await client.query(
+          `INSERT INTO listing_revisions
+             (listing_id, seller_id, base_content_version, ${columns.join(', ')}, status, reviewed_at)
+           VALUES ($1, $2, $3, ${values.map((_, i) => `$${i + 4}`).join(', ')}, 'approved', now())
+           RETURNING *`,
+          [listingId, sellerId, listing.content_version, ...values]
+        );
+        const revision = inserted[0];
+        for (const item of measurements) {
+          await client.query(
+            'INSERT INTO listing_revision_measurements (revision_id, field_def_id, value) VALUES ($1, $2, $3)',
+            [revision.id, item.fieldDefId, item.value]
+          );
+        }
+        await client.query(
+          `UPDATE listings SET asking_price = $1, requires_id_verification = $2,
+             content_version = content_version + 1, updated_at = now() WHERE id = $3`,
+          [proposed.askingPrice, requiresEmail, listingId]
+        );
+        await eventBus.emitAsync(events.LISTING_REVISION_DECIDED,
+          { listingId, revisionId: revision.id, decision: 'approved' }, { transaction: client });
+        return { ...revision, measurements };
+      }
+
       const { rows: inserted } = await client.query(
         `INSERT INTO listing_revisions (listing_id, seller_id, base_content_version, ${columns.join(', ')})
          VALUES ($1, $2, $3, ${values.map((_, i) => `$${i + 4}`).join(', ')})
