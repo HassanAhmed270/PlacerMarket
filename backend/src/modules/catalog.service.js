@@ -16,6 +16,8 @@ const db = require('../db.service');
 const { NotFoundError, ValidationError } = require('../lib/errors');
 
 const CONDITION_TYPES = Object.freeze(['brand_new', 'pre_owned', 'custom_made', 'replica']); // FR-13
+const MANAGED_ATTRIBUTE_TYPES = Object.freeze(['color', 'fabric', 'brand']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 // ---- FR-11, FR-12: category tree ----
 
@@ -162,8 +164,139 @@ async function setMeasurementFieldDefs(subCategoryId, fieldDefs, adminId, getRef
   });
 }
 
+function assertManagedAttributeType(attributeType) {
+  if (!MANAGED_ATTRIBUTE_TYPES.includes(attributeType)) {
+    throw new ValidationError('attributeType must be color, fabric, or brand');
+  }
+}
+
+function validateManagedAttributeValue(value) {
+  if (typeof value !== 'string' || !value.trim() || value.trim().length > 100) {
+    throw new ValidationError('value is required and must be at most 100 characters');
+  }
+  return value.trim();
+}
+
+/** FR-15b: public catalog choices expose approved values only. */
+async function listManagedAttributeValues(attributeType) {
+  assertManagedAttributeType(attributeType);
+  const { rows } = await db.read(
+    `SELECT id, attribute_type, value
+     FROM managed_catalog_values
+     WHERE attribute_type = $1 AND status = 'approved'
+     ORDER BY normalized_value, id`,
+    [attributeType]
+  );
+  return rows;
+}
+
+/** FR-15b: admins can add approved catalog values without bypassing uniqueness. */
+async function createManagedAttributeValue(attributeType, data, adminId) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new ValidationError('Managed catalog value details are required');
+  }
+  assertManagedAttributeType(attributeType);
+  const normalizedValue = validateManagedAttributeValue(data.value);
+  const { rows } = await db.query(
+    `INSERT INTO managed_catalog_values
+       (attribute_type, value, status, created_by, reviewed_by, reviewed_at)
+     VALUES ($1, $2, 'approved', $3, $3, now())
+     ON CONFLICT (attribute_type, normalized_value) DO UPDATE
+       SET status = 'approved', reviewed_by = EXCLUDED.reviewed_by, reviewed_at = now(),
+           rejection_reason = NULL
+     RETURNING id, attribute_type, value, status`,
+    [attributeType, normalizedValue, adminId]
+  );
+  return rows[0];
+}
+
+/** FR-15b: sellers' custom values enter a deduplicated approval queue. */
+async function resolveListingAttribute(client, attributeType, selectedId, customValue, creatorId = null) {
+  assertManagedAttributeType(attributeType);
+  if (selectedId != null && customValue != null) {
+    throw new ValidationError(`Choose an approved ${attributeType} or provide a custom value, not both`);
+  }
+  if (selectedId != null) {
+    if (typeof selectedId !== 'string' || !UUID.test(selectedId)) {
+      throw new ValidationError(`${attributeType}Id must be a valid UUID`);
+    }
+    const { rows } = await client.query(
+      `SELECT id, value, status FROM managed_catalog_values
+       WHERE id = $1 AND attribute_type = $2 FOR SHARE`,
+      [selectedId, attributeType]
+    );
+    if (!rows[0] || rows[0].status !== 'approved') {
+      throw new ValidationError(`Select an approved ${attributeType} from the catalog`);
+    }
+    return rows[0];
+  }
+  if (customValue == null || customValue === '') return null;
+  const value = validateManagedAttributeValue(customValue);
+  const { rows } = await client.query(
+    `INSERT INTO managed_catalog_values (attribute_type, value, status, created_by)
+     VALUES ($1, $2, 'pending_custom', $3)
+     ON CONFLICT (attribute_type, normalized_value) DO UPDATE
+       SET status = CASE WHEN managed_catalog_values.status = 'rejected'
+                         THEN 'pending_custom' ELSE managed_catalog_values.status END,
+           reviewed_by = CASE WHEN managed_catalog_values.status = 'rejected'
+                              THEN NULL ELSE managed_catalog_values.reviewed_by END,
+           reviewed_at = CASE WHEN managed_catalog_values.status = 'rejected'
+                              THEN NULL ELSE managed_catalog_values.reviewed_at END,
+           rejection_reason = CASE WHEN managed_catalog_values.status = 'rejected'
+                                   THEN NULL ELSE managed_catalog_values.rejection_reason END
+     RETURNING id, value, status`,
+    [attributeType, value, creatorId]
+  );
+  return { ...rows[0], value };
+}
+
+/** FR-15b: return custom values waiting for admin review. */
+async function getManagedAttributeApprovalQueue() {
+  const { rows } = await db.query(
+    `SELECT id, attribute_type, value, status, created_at
+     FROM managed_catalog_values
+     WHERE status = 'pending_custom'
+     ORDER BY created_at, id LIMIT 200`
+  );
+  return rows;
+}
+
+/** FR-15b: approve a custom value so it becomes available to filters. */
+async function approveManagedAttributeValue(valueId, reviewerId) {
+  const { rows } = await db.query(
+    `UPDATE managed_catalog_values
+     SET status = 'approved', reviewed_by = $2, reviewed_at = now(), rejection_reason = NULL
+     WHERE id = $1 AND status = 'pending_custom'
+     RETURNING id, attribute_type, value, status`,
+    [valueId, reviewerId]
+  );
+  if (rows[0]) return rows[0];
+  const { rows: existing } = await db.query('SELECT id FROM managed_catalog_values WHERE id = $1', [valueId]);
+  if (!existing[0]) throw new NotFoundError('managed catalog value', valueId);
+  throw new ValidationError('Only a pending custom value can be approved');
+}
+
+/** FR-15b: rejected values stay out of public choices and may be resubmitted later. */
+async function rejectManagedAttributeValue(valueId, reviewerId, reason) {
+  if (typeof reason !== 'string' || !reason.trim() || reason.trim().length > 500) {
+    throw new ValidationError('A rejection reason of at most 500 characters is required');
+  }
+  const { rows } = await db.query(
+    `UPDATE managed_catalog_values
+     SET status = 'rejected', reviewed_by = $2, reviewed_at = now(), rejection_reason = $3
+     WHERE id = $1 AND status = 'pending_custom'
+     RETURNING id, attribute_type, value, status, rejection_reason`,
+    [valueId, reviewerId, reason.trim()]
+  );
+  if (rows[0]) return rows[0];
+  const { rows: existing } = await db.query('SELECT id FROM managed_catalog_values WHERE id = $1', [valueId]);
+  if (!existing[0]) throw new NotFoundError('managed catalog value', valueId);
+  throw new ValidationError('Only a pending custom value can be rejected');
+}
+
 module.exports = {
   CONDITION_TYPES,
+  MANAGED_ATTRIBUTE_TYPES,
   listMainCategories,
   listSubCategories,
   createMainCategory,
@@ -174,4 +307,10 @@ module.exports = {
   getMeasurementFieldDefs,
   lockSubCategoryForListing,
   setMeasurementFieldDefs,
+  listManagedAttributeValues,
+  createManagedAttributeValue,
+  resolveListingAttribute,
+  getManagedAttributeApprovalQueue,
+  approveManagedAttributeValue,
+  rejectManagedAttributeValue,
 };

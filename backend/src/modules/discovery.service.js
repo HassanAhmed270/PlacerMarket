@@ -10,6 +10,7 @@ const { ValidationError } = require('../lib/errors');
 
 const PUBLIC_LISTING_COLUMNS = `l.id, l.main_category_id, l.sub_category_id, l.condition,
   l.replica_disclosure, l.title, l.description, l.asking_price, l.fabric_material, l.brand, l.color,
+  l.fabric_id, l.brand_id, l.color_id,
   l.embellishment_detail, l.created_at, l.updated_at`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RESERVED_ORDER_STATUSES = [
@@ -92,9 +93,16 @@ async function searchListings(keyword, { limit = 20, offset = 0 } = {}) {
 }
 
 /** FR-24: filter published listings; cityId follows the seller's registered city. */
-async function filterListings({ mainCategoryId, subCategoryId, condition, minPrice, maxPrice, cityId }) {
+async function filterListings({
+  mainCategoryId, subCategoryId, condition, minPrice, maxPrice, cityId, colorId, fabricId, brandId,
+}) {
   if (cityId !== undefined && cityId !== null && (typeof cityId !== 'string' || !UUID.test(cityId))) {
     throw new ValidationError('cityId must be a valid city UUID');
+  }
+  for (const [name, value] of Object.entries({ colorId, fabricId, brandId })) {
+    if (value !== undefined && value !== null && (typeof value !== 'string' || !UUID.test(value))) {
+      throw new ValidationError(`${name} must be a valid catalog UUID`);
+    }
   }
   // cross-module read: users (owned by users.service.js), permitted for this multi-table public listing filter.
   const clauses = ["l.status = 'published'"];
@@ -113,6 +121,18 @@ async function filterListings({ mainCategoryId, subCategoryId, condition, minPri
     params.push(value); clauses.push(`l.asking_price <= $${params.length}`);
   }
   if (cityId) { params.push(cityId); clauses.push(`u.city_id = $${params.length}`); }
+  for (const [type, value] of [
+    ['color', colorId], ['fabric', fabricId], ['brand', brandId],
+  ]) {
+    if (!value) continue;
+    params.push(value);
+    clauses.push(
+      `l.${type}_id = $${params.length} AND EXISTS (
+        SELECT 1 FROM managed_catalog_values attribute
+        WHERE attribute.id = l.${type}_id AND attribute.attribute_type = '${type}' AND attribute.status = 'approved'
+      )`
+    );
+  }
   if (minPrice != null && maxPrice != null && minPrice !== '' && maxPrice !== '' && Number(minPrice) > Number(maxPrice)) {
     throw new ValidationError('minPrice cannot exceed maxPrice');
   }

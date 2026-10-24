@@ -10,9 +10,15 @@ const FIELDS = Object.freeze({
   title: 'proposed_title', condition: 'proposed_condition', replicaDisclosure: 'proposed_replica_disclosure',
   description: 'proposed_description', askingPrice: 'proposed_asking_price',
   fabricMaterial: 'proposed_fabric_material', brand: 'proposed_brand', color: 'proposed_color',
+  fabricId: 'proposed_fabric_id', brandId: 'proposed_brand_id', colorId: 'proposed_color_id',
   embellishmentDetail: 'proposed_embellishment_detail',
 });
 const ALLOWED = new Set(Object.keys(FIELDS).concat('measurements'));
+const MANAGED_ATTRIBUTES = Object.freeze({
+  color: { id: 'colorId', type: 'color', idField: 'colorId', valueField: 'color' },
+  fabric: { id: 'fabricId', type: 'fabric', idField: 'fabricId', valueField: 'fabricMaterial' },
+  brand: { id: 'brandId', type: 'brand', idField: 'brandId', valueField: 'brand' },
+});
 
 function assertEnabled(env = process.env) {
   if (env.NODE_ENV === 'production' && env.LISTING_REVISIONS_ENABLED !== '1') {
@@ -57,8 +63,11 @@ function proposedFromListing(listing) {
     description: listing.description,
     askingPrice: listing.asking_price,
     fabricMaterial: listing.fabric_material,
+    fabricId: listing.fabric_id,
     brand: listing.brand,
+    brandId: listing.brand_id,
     color: listing.color,
+    colorId: listing.color_id,
     embellishmentDetail: listing.embellishment_detail,
   };
 }
@@ -127,6 +136,17 @@ async function submitListingRevision(listingId, sellerId, patch) {
 
       const proposed = proposedFromListing(listing);
       for (const key of Object.keys(FIELDS)) if (Object.hasOwn(patch, key)) proposed[key] = patch[key];
+      for (const attribute of Object.values(MANAGED_ATTRIBUTES)) {
+        if (!Object.hasOwn(patch, attribute.id) && !Object.hasOwn(patch, attribute.valueField)) continue;
+        const resolved = await catalog.resolveListingAttribute(
+          client, attribute.type,
+          Object.hasOwn(patch, attribute.id) ? patch[attribute.id] : undefined,
+          Object.hasOwn(patch, attribute.valueField) ? patch[attribute.valueField] : undefined,
+          sellerId
+        );
+        proposed[attribute.idField] = resolved?.id ?? null;
+        proposed[attribute.valueField] = resolved?.value ?? null;
+      }
       if (typeof proposed.title !== 'string' || !proposed.title.trim() || proposed.title.trim().length > 150) {
         throw new ValidationError('Revision title is required and must be at most 150 characters');
       }
@@ -278,10 +298,12 @@ async function approveListingRevision(revisionId, reviewerId) {
     await client.query(
       `UPDATE listings SET condition = $1, replica_disclosure = $2, title = $3, description = $4,
        asking_price = $5, fabric_material = $6, brand = $7, color = $8, embellishment_detail = $9,
-       requires_id_verification = $10, content_version = content_version + 1, updated_at = now() WHERE id = $11`,
+       fabric_id = $10, brand_id = $11, color_id = $12,
+       requires_id_verification = $13, content_version = content_version + 1, updated_at = now() WHERE id = $14`,
       [revision.proposed_condition, revision.proposed_replica_disclosure, revision.proposed_title,
         revision.proposed_description, revision.proposed_asking_price, revision.proposed_fabric_material,
         revision.proposed_brand, revision.proposed_color, revision.proposed_embellishment_detail,
+        revision.proposed_fabric_id, revision.proposed_brand_id, revision.proposed_color_id,
         requiresEmail, listing.id]
     );
     await client.query('DELETE FROM listing_measurements WHERE listing_id = $1', [listing.id]);

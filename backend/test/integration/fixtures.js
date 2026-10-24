@@ -67,6 +67,7 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
       await db.query('DELETE FROM listing_measurements WHERE listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
       await db.query('DELETE FROM favorites WHERE user_id = $1 OR listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
       await db.query('DELETE FROM listings WHERE seller_id = $1', [userId]);
+      await db.query('DELETE FROM managed_catalog_values WHERE created_by IN ($1, $2) OR reviewed_by IN ($1, $2)', [userId, otherUserId]);
       await db.query('DELETE FROM measurement_field_defs WHERE sub_category_id = $1', [subCategoryRows[0].id]);
       await db.query('DELETE FROM seller_applications WHERE user_id = $1', [userId]);
       await db.query('DELETE FROM seller_profiles WHERE user_id = $1', [userId]);

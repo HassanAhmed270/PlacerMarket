@@ -6,6 +6,10 @@ jest.mock('../../src/modules/catalog.service', () => ({
   assertReplicaDisclosureIfNeeded: jest.fn(),
   getMeasurementFieldDefs: jest.fn(),
   lockSubCategoryForListing: jest.fn(),
+  resolveListingAttribute: jest.fn(async (_client, _type, id, value) => {
+    if (!id && !value) return null;
+    return { id: id || 'attribute-id', value: value || 'Approved value' };
+  }),
   listConditionTypes: jest.fn(() => ['brand_new', 'pre_owned', 'custom_made', 'replica']),
   listSubCategories: jest.fn(),
 }));

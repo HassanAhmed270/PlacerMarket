@@ -36,14 +36,17 @@ const EDITABLE_LISTING_FIELDS = new Map([
   ['replicaDisclosure', 'replica_disclosure'],
   ['askingPrice', 'asking_price'],
   ['description', 'description'],
-  ['fabricMaterial', 'fabric_material'],
-  ['brand', 'brand'],
-  ['color', 'color'],
   ['embellishmentDetail', 'embellishment_detail'],
 ]);
+const MANAGED_ATTRIBUTE_INPUTS = Object.freeze({
+  color: { id: 'colorId', value: 'color', type: 'color' },
+  fabric: { id: 'fabricId', value: 'fabricMaterial', type: 'fabric' },
+  brand: { id: 'brandId', value: 'brand', type: 'brand' },
+});
 const CREATE_LISTING_FIELDS = new Set([
   'title', 'mainCategoryId', 'subCategoryId', 'condition', 'replicaDisclosure',
   'askingPrice', 'description', 'fabricMaterial', 'brand', 'color',
+  'fabricId', 'brandId', 'colorId',
   'embellishmentDetail', 'measurements',
 ]);
 
@@ -116,15 +119,24 @@ async function createListing(sellerId, data) {
 
   return db.withTransaction(async (client) => {
     await catalog.lockSubCategoryForListing(client, input.subCategoryId);
+    const attributes = {};
+    for (const [key, attribute] of Object.entries(MANAGED_ATTRIBUTE_INPUTS)) {
+      attributes[key] = await catalog.resolveListingAttribute(
+        client, attribute.type, input[attribute.id], input[attribute.value], sellerId
+      );
+    }
     const { rows } = await client.query(
       `INSERT INTO listings
          (seller_id, main_category_id, sub_category_id, condition, title, replica_disclosure,
-          asking_price, description, fabric_material, brand, color, embellishment_detail, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'draft') RETURNING *`,
+          asking_price, description, fabric_material, brand, color, fabric_id, brand_id, color_id,
+          embellishment_detail, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'draft') RETURNING *`,
       [
         sellerId, input.mainCategoryId, input.subCategoryId, input.condition, input.title,
-        input.replicaDisclosure, input.askingPrice, input.description, input.fabricMaterial,
-        input.brand, input.color, input.embellishmentDetail,
+        input.replicaDisclosure, input.askingPrice, input.description, attributes.fabric?.value ?? null,
+        attributes.brand?.value ?? null, attributes.color?.value ?? null,
+        attributes.fabric?.id ?? null, attributes.brand?.id ?? null, attributes.color?.id ?? null,
+        input.embellishmentDetail,
       ]
     );
     const listing = rows[0];
@@ -386,7 +398,9 @@ async function updateOwnListing(listingId, sellerId, patch) {
   }
   const keys = Object.keys(patch);
   if (keys.length === 0) throw new ValidationError('Listing patch must include at least one supported field');
-  const unsupported = keys.filter((key) => !EDITABLE_LISTING_FIELDS.has(key));
+  const managedInputKeys = new Set(Object.values(MANAGED_ATTRIBUTE_INPUTS)
+    .flatMap((attribute) => [attribute.id, attribute.value]));
+  const unsupported = keys.filter((key) => !EDITABLE_LISTING_FIELDS.has(key) && !managedInputKeys.has(key));
   if (unsupported.length) throw new ValidationError(`Unsupported listing field: ${unsupported[0]}`);
   const requiredFields = ['title', 'mainCategoryId', 'subCategoryId', 'condition', 'askingPrice'];
   const missingRequired = keys.find((key) => requiredFields.includes(key) && patch[key] == null);
@@ -440,9 +454,25 @@ async function updateOwnListing(listingId, sellerId, patch) {
     const assignments = [];
     const values = [];
     for (const key of keys) {
+      if (Object.values(MANAGED_ATTRIBUTE_INPUTS).some((attribute) =>
+        key === attribute.id || key === attribute.value
+      )) continue;
       const column = EDITABLE_LISTING_FIELDS.get(key);
       values.push(patch[key]);
       assignments.push(`${column} = $${values.length}`);
+    }
+    for (const attribute of Object.values(MANAGED_ATTRIBUTE_INPUTS)) {
+      if (!keys.includes(attribute.id) && !keys.includes(attribute.value)) continue;
+      const resolved = await catalog.resolveListingAttribute(
+        client, attribute.type,
+        Object.hasOwn(patch, attribute.id) ? patch[attribute.id] : undefined,
+        Object.hasOwn(patch, attribute.value) ? patch[attribute.value] : undefined,
+        sellerId
+      );
+      values.push(resolved?.value ?? null);
+      assignments.push(`${attribute.type === 'fabric' ? 'fabric_material' : attribute.type} = $${values.length}`);
+      values.push(resolved?.id ?? null);
+      assignments.push(`${attribute.type}_id = $${values.length}`);
     }
     assignments.push('updated_at = now()');
     values.push(listingId);
