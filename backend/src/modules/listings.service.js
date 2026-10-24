@@ -24,6 +24,7 @@ const catalog = require('./catalog.service');
 const users = require('./users.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
+const listingSearch = require('./listingSearch.service');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
 
 const MIN_LISTING_IMAGES = 3;
@@ -378,10 +379,12 @@ async function approveListing(listingId, reviewerId) {
     }
 
     const { rows: published } = await client.query(
-      `UPDATE listings SET status = 'published', reviewed_by = $1, published_at = now(), updated_at = now()
+      `UPDATE listings SET status = 'published', reviewed_by = $1, published_at = now(),
+       search_version = search_version + 1, updated_at = now()
        WHERE id = $2 AND status = 'pending_review' RETURNING *`,
       [reviewerId, listingId]
     );
+    await listingSearch.enqueueListingSearchSync(client, listingId, published[0].search_version);
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: 'published' }, { transaction: client });
     return published[0];
   });
@@ -489,7 +492,7 @@ async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
     const { rows } = await client.query(
       `UPDATE listings
        SET status = CASE WHEN status = 'published' THEN 'unpublished'::listing_status ELSE 'rejected'::listing_status END,
-           reviewed_by = $1, rejection_reason = $2, updated_at = now()
+           reviewed_by = $1, rejection_reason = $2, search_version = search_version + 1, updated_at = now()
        WHERE id = $3 AND status IN ('pending_review', 'published')
        RETURNING *`,
       [reviewerId, reason, listingId]
@@ -499,6 +502,7 @@ async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
       if (!existing[0]) throw new NotFoundError('listing', listingId);
       throw new ValidationError('Only listings pending review or published can be rejected or unpublished');
     }
+    await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: rows[0].status, reason }, { transaction: client });
     return rows[0];
   });
@@ -516,8 +520,10 @@ async function setOwnListingPaused(listingId, sellerId, paused) {
     }
     const status = paused ? 'paused' : 'published';
     const { rows: updated } = await client.query(
-      'UPDATE listings SET status = $1, updated_at = now() WHERE id = $2 RETURNING *', [status, listingId]
+      'UPDATE listings SET status = $1, search_version = search_version + 1, updated_at = now() WHERE id = $2 RETURNING *',
+      [status, listingId]
     );
+    await listingSearch.enqueueListingSearchSync(client, listingId, updated[0].search_version);
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status }, { transaction: client });
     return updated[0];
   });
@@ -533,8 +539,10 @@ async function removeOwnListing(listingId, sellerId) {
       throw new ValidationError('This listing is already unavailable');
     }
     const { rows: updated } = await client.query(
-      "UPDATE listings SET status = 'removed', updated_at = now() WHERE id = $1 RETURNING *", [listingId]
+      "UPDATE listings SET status = 'removed', search_version = search_version + 1, updated_at = now() WHERE id = $1 RETURNING *",
+      [listingId]
     );
+    await listingSearch.enqueueListingSearchSync(client, listingId, updated[0].search_version);
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: 'removed' }, { transaction: client });
     return updated[0];
   });

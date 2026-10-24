@@ -20,6 +20,8 @@
     "db:migrate:baseline": "node --env-file-if-exists=.env db/migrate.js --baseline-existing",
     "db:generate-schema": "node db/generate-schema-snapshot.js",
     "db:check-schema": "node db/generate-schema-snapshot.js --check",
+    "search:rebuild": "node --env-file-if-exists=.env scripts/rebuild-listing-search.js",
+    "search:reconcile": "node --env-file-if-exists=.env scripts/reconcile-listing-search.js",
     "db:seed": "node --env-file-if-exists=.env db/seed.js",
     "keys:rotate": "node --env-file-if-exists=.env scripts/rotate-payout-keys.js",
     "demo:seed": "node --env-file-if-exists=.env scripts/demo-seed.js",

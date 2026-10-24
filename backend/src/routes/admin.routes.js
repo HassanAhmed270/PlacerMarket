@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const admin = require('../modules/admin.service');
+const listingSearch = require('../modules/listingSearch.service');
 const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ValidationError } = require('../lib/errors');
@@ -11,6 +12,32 @@ router.use(requireAuth);
 // Permission checks live HERE, per route (rules.md Section 5) — admin.service.js
 // does not check roles. Every route below must carry its own requirePermission();
 // test/unit/admin.routes.permissions.test.js fails if one is missing.
+
+function validateSynonymBody(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body) ||
+      Object.keys(body).some((key) => !['sourceTerm', 'targetTerm'].includes(key)) ||
+      typeof body.sourceTerm !== 'string' || typeof body.targetTerm !== 'string') {
+    throw new ValidationError('sourceTerm and targetTerm are required');
+  }
+}
+
+router.get('/listing-search/synonyms', requirePermission('search.synonyms.manage'), async (_req, res) => {
+  res.json(await listingSearch.listSearchSynonyms()); // FR-80a
+});
+
+router.post('/listing-search/synonyms', requirePermission('search.synonyms.manage'), async (req, res) => {
+  validateSynonymBody(req.body);
+  res.status(201).json(await listingSearch.createSearchSynonym(req.body, req.user.id)); // FR-80a
+});
+
+router.patch('/listing-search/synonyms/:id', requirePermission('search.synonyms.manage'), async (req, res) => {
+  validateSynonymBody(req.body);
+  res.json(await listingSearch.updateSearchSynonym(req.params.id, req.body, req.user.id)); // FR-80a
+});
+
+router.delete('/listing-search/synonyms/:id', requirePermission('search.synonyms.manage'), async (req, res) => {
+  res.json(await listingSearch.deleteSearchSynonym(req.params.id)); // FR-80a
+});
 
 router.post('/users/:id/suspend', requirePermission('user.suspend'), async (req, res) => {
   res.json(await admin.suspendUser(req.params.id, { adminId: req.user.id, reason: req.body.reason })); // FR-52

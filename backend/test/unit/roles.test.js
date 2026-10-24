@@ -7,6 +7,7 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.ADMIN, 'listing.approve')).toBe(true);
     expect(hasPermission(ROLES.ADMIN, 'catalog.manage')).toBe(true);
     expect(hasPermission(ROLES.ADMIN, 'catalog.attribute.review')).toBe(true);
+    expect(hasPermission(ROLES.ADMIN, 'search.synonyms.manage')).toBe(true);
     expect(hasPermission(ROLES.ADMIN, 'payout.force_release')).toBe(true);
   });
 
@@ -31,6 +32,7 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.SELLER, 'dispute.resolve')).toBe(false);
     expect(hasPermission(ROLES.MODERATOR, 'catalog.manage')).toBe(false);
     expect(hasPermission(ROLES.MODERATOR, 'catalog.attribute.review')).toBe(false);
+    expect(hasPermission(ROLES.MODERATOR, 'search.synonyms.manage')).toBe(false);
     expect(hasPermission(ROLES.BUYER, 'catalog.manage')).toBe(false);
     expect(hasPermission(ROLES.SELLER, 'catalog.attribute.review')).toBe(false);
     expect(hasPermission(ROLES.BUYER, 'catalog.attribute.review')).toBe(false);

@@ -8,6 +8,7 @@ const { decryptEmailPayload } = require('./src/lib/emailQueuePayload');
 const { createDevEmailOutboxSender } = require('./src/lib/adapters/devEmailOutbox');
 const { keyProviderFromEnv } = require('./src/lib/keyProvider');
 const media = require('./src/modules/media.service');
+const listingSearch = require('./src/modules/listingSearch.service');
 
 async function startWorker({ emailSender, logger = console } = {}) {
   if (process.env.NODE_ENV === 'production') keyProviderFromEnv(process.env);
@@ -44,6 +45,11 @@ async function startWorker({ emailSender, logger = console } = {}) {
       QUEUES.MEDIA,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.MEDIA], transactional: false },
       async ([job]) => media.processListingImage(job.data?.listingImageId)
+    );
+    await queue.boss.work(
+      QUEUES.LISTING_SEARCH,
+      { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.LISTING_SEARCH], transactional: false },
+      async ([job]) => listingSearch.processListingSearchJob(job.data)
     );
     // eslint-disable-next-line no-console
     console.log('Poshaak worker started');

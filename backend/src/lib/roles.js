@@ -44,6 +44,7 @@ const ADMIN_ONLY_ACTIONS = new Set([
   'delivery_partner.configure', // FR-57
   'advertising.manage', // FR-59
   'operations.view', // FR-55
+  'search.synonyms.manage', // FR-80a
 ]);
 
 /**

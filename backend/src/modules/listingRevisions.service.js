@@ -4,6 +4,7 @@ const catalog = require('./catalog.service');
 const users = require('./users.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
+const listingSearch = require('./listingSearch.service');
 const { ValidationError, ForbiddenError, NotFoundError } = require('../lib/errors');
 
 const FIELDS = Object.freeze({
@@ -190,11 +191,13 @@ async function submitListingRevision(listingId, sellerId, patch) {
             [revision.id, item.fieldDefId, item.value]
           );
         }
-        await client.query(
+        const { rows: updatedListings } = await client.query(
           `UPDATE listings SET asking_price = $1, requires_id_verification = $2,
-             content_version = content_version + 1, updated_at = now() WHERE id = $3`,
+             content_version = content_version + 1, search_version = search_version + 1,
+             updated_at = now() WHERE id = $3 RETURNING search_version`,
           [proposed.askingPrice, requiresEmail, listingId]
         );
+        await listingSearch.enqueueListingSearchSync(client, listingId, updatedListings[0].search_version);
         await eventBus.emitAsync(events.LISTING_REVISION_DECIDED,
           { listingId, revisionId: revision.id, decision: 'approved' }, { transaction: client });
         return { ...revision, measurements };
@@ -295,11 +298,13 @@ async function approveListingRevision(revisionId, reviewerId) {
     if (requiresEmail && !(await users.isEmailVerified(revision.seller_id))) {
       throw new ForbiddenError('Listing crosses the high-value threshold and cannot be published until the seller email is verified');
     }
-    await client.query(
+    const { rows: updatedListings } = await client.query(
       `UPDATE listings SET condition = $1, replica_disclosure = $2, title = $3, description = $4,
        asking_price = $5, fabric_material = $6, brand = $7, color = $8, embellishment_detail = $9,
        fabric_id = $10, brand_id = $11, color_id = $12,
-       requires_id_verification = $13, content_version = content_version + 1, updated_at = now() WHERE id = $14`,
+       requires_id_verification = $13, content_version = content_version + 1,
+       search_version = search_version + 1, updated_at = now() WHERE id = $14
+       RETURNING search_version`,
       [revision.proposed_condition, revision.proposed_replica_disclosure, revision.proposed_title,
         revision.proposed_description, revision.proposed_asking_price, revision.proposed_fabric_material,
         revision.proposed_brand, revision.proposed_color, revision.proposed_embellishment_detail,
@@ -311,6 +316,7 @@ async function approveListingRevision(revisionId, reviewerId) {
       await client.query('INSERT INTO listing_measurements (listing_id, field_def_id, value) VALUES ($1, $2, $3)',
         [listing.id, item.fieldDefId, item.value]);
     }
+    await listingSearch.enqueueListingSearchSync(client, listing.id, updatedListings[0].search_version);
     const { rows: decided } = await client.query(
       "UPDATE listing_revisions SET status = 'approved', reviewed_by = $2, reviewed_at = now() WHERE id = $1 RETURNING *",
       [revisionId, reviewerId]

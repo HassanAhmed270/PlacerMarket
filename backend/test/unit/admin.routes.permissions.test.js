@@ -44,6 +44,8 @@ const ADMIN_ONLY_PATHS = [
   '/api/admin/delivery-partners',
   '/api/admin/fees/commission',
   '/api/admin/advertising-overview',
+  '/api/admin/listing-search/synonyms',
+  '/api/admin/listing-search/synonyms/x',
 ];
 
 beforeAll(() => jest.spyOn(console, 'error').mockImplementation(() => {})); // errorHandler logs 5xx

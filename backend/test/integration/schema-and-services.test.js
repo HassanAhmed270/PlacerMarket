@@ -11,7 +11,7 @@ describe('real PostgreSQL baseline', () => {
       const { rows } = await pool.query(
         "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
       );
-      expect(rows[0].count).toBe(40);
+      expect(rows[0].count).toBe(42);
     } finally {
       await pool.end();
     }

@@ -1,17 +1,19 @@
 const { EventEmitter } = require('events');
 
 const mockQueue = {
-  QUEUES: { NOTIFICATIONS: 'notifications', EMAIL: 'email' },
-  WORKER_CONCURRENCY: { notifications: 4, email: 2 },
+  QUEUES: { NOTIFICATIONS: 'notifications', EMAIL: 'email', LISTING_SEARCH: 'listing-search' },
+  WORKER_CONCURRENCY: { notifications: 4, email: 2, 'listing-search': 4 },
   createQueueClient: jest.fn(),
 };
 const mockRedis = { createRedisClient: jest.fn() };
 const mockNotifications = { processNotificationJob: jest.fn() };
+const mockListingSearch = { processListingSearchJob: jest.fn() };
 const { encryptEmailPayload } = require('../../src/lib/emailQueuePayload');
 
 jest.mock('../../src/lib/queue', () => mockQueue);
 jest.mock('../../src/lib/redis', () => mockRedis);
 jest.mock('../../src/modules/notifications.service', () => mockNotifications);
+jest.mock('../../src/modules/listingSearch.service', () => mockListingSearch);
 
 const { startWorker } = require('../../worker');
 
@@ -80,6 +82,11 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
       expect(boss.work).toHaveBeenCalledWith(
         'email',
         { batchSize: 1, localConcurrency: 2, transactional: false },
+        expect.any(Function)
+      );
+      expect(boss.work).toHaveBeenCalledWith(
+        'listing-search',
+        { batchSize: 1, localConcurrency: 4, transactional: false },
         expect.any(Function)
       );
       await worker.shutdown('test');

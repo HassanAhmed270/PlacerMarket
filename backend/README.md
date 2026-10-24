@@ -104,6 +104,12 @@ use `npm run db:check-schema` to verify the snapshot. The initial migration
 preserves the existing schema definition. The runner is a Phase 0 foundation;
 the full FR-79b compatibility and zero-downtime migration gate remains open.
 
+FR-80a builds `listing_search` asynchronously through the PostgreSQL worker
+queue. Admins manage Roman Urdu/spelling mappings at
+`/api/admin/listing-search/synonyms`; no public search endpoint is part of this
+release. Run `npm run search:rebuild` for a locked rebuild, or schedule
+`npm run search:reconcile` to enqueue missing and stale listing rows.
+
 ## Testing
 
 ```bash
