@@ -7,7 +7,7 @@ const router = Router();
 router.get('/outbox', async (req, res) => {
   const limit = req.query.limit === undefined ? 100 : Number(req.query.limit);
   if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new ValidationError('limit must be an integer from 1 to 500.');
-  res.set('Cache-Control', 'no-store').json(await readDevEmailOutbox({ limit }));
+  res.set('Cache-Control', 'private, no-store').json(await readDevEmailOutbox({ limit }));
 });
 
 router.delete('/outbox', async (_req, res) => {

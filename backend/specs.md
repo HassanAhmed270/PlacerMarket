@@ -66,14 +66,14 @@ tests. Frontend UI behavior rows without named tests remain unchecked.
 
 ## 4. Search & Discovery
 - [x] FR-22 Pure browsing (viewing marketplace, listing details, images) is fully public — no login required.
-- [ ] FR-22a Login required the moment a user favorites a listing, messages a seller, or makes an offer.
+- [x] FR-22a Login required the moment a user favorites a listing, messages a seller, or makes an offer.
 - [ ] FR-22b Redirect-and-return login pattern: logged-out user attempting a gated action is sent to /login, then returned to the exact action after successful login (no inline modal).
 - [x] FR-23 Buyers can search listings by keyword.
 - [ ] FR-24 Buyers can filter by main category, sub-category/occasion, condition, price range, and seller registered city. The city filter joins through `users.city_id`.
-- [x] FR-25 Buyers can view full listing details, seller profile summary, images.
-- [ ] FR-26 Buyers can favorite/save listings (requires login).
-- [ ] FR-27 Buyers can share a listing (external link, no login required).
-- [x] FR-27a Seller's public profile card (buyer-facing) shows the seller's `display_alias`, rating, and join date — no sales count, no verified badge, no response-time stats. (Seller's own private dashboard may show richer stats to themselves.) Test: `FR-27a: public seller card includes display alias, rating, and join date only` in `test/integration/known-mismatches.test.js`.
+- [x] FR-25 Buyers can view full listing details, asking price, live availability, images, and a seller card containing only rating and join date. Sold listings return 200 with a sold flag and six newest same-sub-category listings priced within 30%; paused listings return 200 with an unavailable flag; removed listings return 410. The public status endpoint is cacheable for at most 10 seconds.
+- [x] FR-26 Buyers can favorite/save listings (requires login); add/remove are idempotent and the favorites list uses keyset pagination.
+- [x] FR-27 Buyers can share a listing (external link, no login required).
+- [x] FR-27a Seller's public profile card (buyer-facing) shows rating and join date only — no alias, contact details, payout details, verification data, or seller stats. (Seller's own private dashboard may show richer stats to themselves.) Test: `FR-27a: public seller card exposes rating and join date only` in `test/integration/known-mismatches.test.js`.
 - [ ] FR-27b Two-way rating system: after order completion, both buyer and seller can rate each other. Feeds FR-27a.
 
 ## 5. Messaging & Negotiation

@@ -54,6 +54,7 @@ describe('FR-74 private listing media', () => {
       await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
       const publicResponse = await request(app).get(variantPath).expect(200).expect('Content-Type', /image\/webp/);
       expect(publicResponse.headers['cache-control']).toMatch(/immutable/);
+      expect(publicResponse.headers['set-cookie']).toBeUndefined();
       await request(app).get(`/api/media/private?key=${encodeURIComponent(originalKey)}`).expect(404);
       const ownerLink = await request(app).get(`/api/media/images/${uploaded.body.id}/original-url`)
         .set('Authorization', `Bearer ${token}`).expect(200);

@@ -90,7 +90,7 @@ describe('FR-84: login and refresh tokens use the approved transport boundaries'
     const enrollment = await request(app).post('/api/users/me/authenticator/enroll')
       .set('Authorization', `Bearer ${token}`).send({});
     expect(enrollment.status).toBe(200);
-    expect(enrollment.headers['cache-control']).toBe('no-store');
+    expect(enrollment.headers['cache-control']).toBe('private, no-store');
     expect(enrollment.body).toEqual({ secret: 'TESTSECRET', otpauthUri: 'otpauth://test' });
 
     const confirmation = await request(app).post('/api/users/me/authenticator/confirm')
@@ -107,7 +107,7 @@ describe('FR-84: login and refresh tokens use the approved transport boundaries'
     const valid = await request(app).post('/api/users/auth/step-up')
       .set('Authorization', `Bearer ${token}`).send({ action: 'payout.update', code: '123456' });
     expect(valid.status).toBe(200);
-    expect(valid.headers['cache-control']).toBe('no-store');
+    expect(valid.headers['cache-control']).toBe('private, no-store');
     expect(valid.body).toEqual({ grant: 'g'.repeat(43), expiresIn: 300 });
     expect(users.createStepUpGrant).toHaveBeenCalledWith(userId, sessionId, 'payout.update', '123456');
   });
@@ -139,7 +139,7 @@ describe('FR-84: login and refresh tokens use the approved transport boundaries'
     expect(rotated.body).toEqual({ accessToken: session.accessToken, tokenType: 'Bearer', expiresIn: 900 });
     expect(rotated.headers['set-cookie'][0]).toContain('HttpOnly; Secure; SameSite=Strict');
     expect(rotated.headers['set-cookie'][0]).toContain('Path=/api/users/auth/refresh');
-    expect(rotated.headers['cache-control']).toBe('no-store');
+    expect(rotated.headers['cache-control']).toBe('private, no-store');
     expect(users.refreshSession).toHaveBeenCalledWith(session.refreshToken);
   });
 

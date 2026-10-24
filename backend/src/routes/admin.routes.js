@@ -21,7 +21,7 @@ router.get('/seller-applications', requirePermission('seller_application.approve
 });
 
 router.get('/payouts', requirePermission('payout.review'), limiters.security, async (_req, res) => {
-  res.set('Cache-Control', 'no-store').json(await admin.getSellerPayoutQueue()); // FR-09a / SEC-35
+  res.set('Cache-Control', 'private, no-store').json(await admin.getSellerPayoutQueue()); // FR-09a / SEC-35
 });
 
 router.post('/payouts/:sellerId/hold', requirePermission('payout.hold'), limiters.security, async (req, res) => {
@@ -29,7 +29,7 @@ router.post('/payouts/:sellerId/hold', requirePermission('payout.hold'), limiter
       !req.body.reason.trim() || req.body.reason.trim().length > 500) {
     throw new ValidationError('A short payout-hold reason is required.');
   }
-  res.set('Cache-Control', 'no-store').json(await admin.setSellerPayoutHold(req.params.sellerId, { adminId: req.user.id, reason: req.body.reason.trim() })); // FR-83l
+  res.set('Cache-Control', 'private, no-store').json(await admin.setSellerPayoutHold(req.params.sellerId, { adminId: req.user.id, reason: req.body.reason.trim() })); // FR-83l
 });
 
 router.post('/payouts/:sellerId/hold/clear', requirePermission('payout.hold'), limiters.security, async (req, res) => {
@@ -37,7 +37,7 @@ router.post('/payouts/:sellerId/hold/clear', requirePermission('payout.hold'), l
       !req.body.reason.trim() || req.body.reason.trim().length > 500) {
     throw new ValidationError('A short payout-hold release reason is required.');
   }
-  res.set('Cache-Control', 'no-store').json(await admin.clearSellerPayoutHold(req.params.sellerId, { adminId: req.user.id, reason: req.body.reason.trim() })); // FR-83l
+  res.set('Cache-Control', 'private, no-store').json(await admin.clearSellerPayoutHold(req.params.sellerId, { adminId: req.user.id, reason: req.body.reason.trim() })); // FR-83l
 });
 
 router.post('/sellers/:id/identity-verification', requirePermission('seller_identity.verify'), async (req, res) => {

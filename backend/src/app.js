@@ -11,6 +11,7 @@ const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 const requestId = require('./middleware/requestId');
 const { createCorsMiddleware } = require('./middleware/cors');
+const { cachePolicy } = require('./middleware/cachePolicy');
 const { NotFoundError } = require('./lib/errors');
 
 // modules/notifications.service.js registers its eventBus listeners as a
@@ -22,6 +23,7 @@ require('./modules/notifications.service');
 const app = express();
 app.use(requestId);
 app.use(helmet());
+app.use('/api', cachePolicy);
 app.use(createCorsMiddleware());
 app.use(express.json({ limit: '1mb' }));
 app.use('/api/media/listings', express.raw({ type: 'application/octet-stream', limit: '5mb' }));

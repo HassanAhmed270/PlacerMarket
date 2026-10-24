@@ -16,11 +16,24 @@ router.get('/filter', async (req, res) => {
 router.get('/listings/:id', async (req, res) => {
   const detail = await discovery.getListingDetail(req.params.id); // FR-25
   if (!detail) return res.status(404).json({ error: 'Listing not found' });
+  if (detail.removed) return res.status(410).json({ error: 'Listing is no longer available' });
+  if (detail.sold || detail.unavailable) res.set('X-Robots-Tag', 'noindex');
   res.json(detail);
+});
+
+router.get('/listings/:id/status', async (req, res) => {
+  const status = await discovery.getListingStatus(req.params.id);
+  if (!status) return res.status(404).json({ error: 'Listing not found' });
+  if (status.removed) return res.status(410).json({ error: 'Listing is no longer available' });
+  res.json(status);
 });
 
 router.get('/listings/:id/share-url', (req, res) => {
   res.json({ url: discovery.buildShareUrl(req.params.id) }); // FR-27, public
+});
+
+router.get('/favorites', requireAuth, async (req, res) => {
+  res.json(await discovery.getFavorites(req.user.id, req.query));
 });
 
 // FR-22a: login required the moment a user favorites — gated here.

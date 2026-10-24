@@ -27,7 +27,7 @@ function setRefreshCookie(res, refreshToken, maxAgeSeconds) {
     httpOnly: true, secure: true, sameSite: 'strict', path: REFRESH_COOKIE_PATH,
     maxAge: Math.max(0, maxAgeSeconds) * 1000,
   });
-  res.set('Cache-Control', 'no-store');
+  res.set('Cache-Control', 'private, no-store');
 }
 
 function clearRefreshCookie(res) {
@@ -128,7 +128,7 @@ router.post('/auth/refresh', async (req, res) => {
   const session = token ? await users.refreshSession(token) : null;
   if (!session) {
     clearRefreshCookie(res);
-    return res.status(401).set('Cache-Control', 'no-store').json({ error: 'Refresh session is invalid or expired.' });
+    return res.status(401).set('Cache-Control', 'private, no-store').json({ error: 'Refresh session is invalid or expired.' });
   }
   return sendSession(res, session);
 });
@@ -179,28 +179,28 @@ router.get('/me/seller-application', requireAuth, async (req, res) => {
 });
 
 router.get('/me/seller-profile', requireAuth, async (req, res) => {
-  res.set('Cache-Control', 'no-store').json(await users.getSellerProfile(req.user.id)); // FR-09
+  res.set('Cache-Control', 'private, no-store').json(await users.getSellerProfile(req.user.id)); // FR-09
 });
 
 router.patch('/me/payout-method', requireAuth, limiters.security, async (req, res) => {
-  res.set('Cache-Control', 'no-store').json(await users.updateSellerPayoutMethod(req.user.id, { ...req.body, sessionId: req.authSessionId })); // FR-09a / SEC-35
+  res.set('Cache-Control', 'private, no-store').json(await users.updateSellerPayoutMethod(req.user.id, { ...req.body, sessionId: req.authSessionId })); // FR-09a / SEC-35
 });
 
 router.get('/me/payout', requireAuth, limiters.security, async (req, res) => {
-  res.set('Cache-Control', 'no-store').json(await users.getSellerPayoutSummary(req.user.id)); // FR-09a
+  res.set('Cache-Control', 'private, no-store').json(await users.getSellerPayoutSummary(req.user.id)); // FR-09a
 });
 
 router.post('/me/authenticator/enroll', requireAuth, limiters.security, async (req, res) => {
   if (!req.enrollmentOnly) throw new ValidationError('Please sign in again to set up your authenticator.');
   if (Object.keys(req.body).length) throw new ValidationError('Enrollment takes no request fields.');
-  res.set('Cache-Control', 'no-store').json(await users.beginSellerAuthenticatorEnrollment(req.user.id));
+  res.set('Cache-Control', 'private, no-store').json(await users.beginSellerAuthenticatorEnrollment(req.user.id));
 });
 
 router.post('/me/authenticator/confirm', requireAuth, limiters.security, async (req, res) => {
   if (Object.keys(req.body).some((key) => key !== 'code') || typeof req.body.code !== 'string' || !/^\d{6}$/.test(req.body.code)) {
     throw new ValidationError('A six-digit authenticator code is required.');
   }
-  res.set('Cache-Control', 'no-store').json(await users.confirmSellerAuthenticatorEnrollment(req.user.id, req.authSessionId, req.body.code));
+  res.set('Cache-Control', 'private, no-store').json(await users.confirmSellerAuthenticatorEnrollment(req.user.id, req.authSessionId, req.body.code));
 });
 
 router.post('/auth/step-up', requireAuth, limiters.security, async (req, res) => {
@@ -209,7 +209,7 @@ router.post('/auth/step-up', requireAuth, limiters.security, async (req, res) =>
     throw new ValidationError('A supported action and authenticator code are required.');
   }
   const result = await users.createStepUpGrant(req.user.id, req.authSessionId, req.body.action, req.body.code);
-  res.set('Cache-Control', 'no-store').json(result);
+  res.set('Cache-Control', 'private, no-store').json(result);
 });
 
 router.post('/me/authenticator/disable', requireAuth, limiters.security, async (req, res) => {
