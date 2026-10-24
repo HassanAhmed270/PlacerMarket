@@ -44,6 +44,7 @@ function deterministicJobId(queue, idempotencyKey) {
 
 function asQueueDatabase(transaction) {
   if (!transaction) return undefined;
+  if (typeof transaction.executeSql === 'function') return transaction;
   const client = typeof transaction.query === 'function' ? transaction : transaction.client;
   if (!client || typeof client.query !== 'function') {
     throw new TypeError('Queue transactions require a pg client or transaction client.');
@@ -159,7 +160,7 @@ function createQueueClient({
   }
 
   /** FR-77a: persist a job, optionally in the caller's business transaction. */
-  async function enqueue(queue, data, { idempotencyKey, orderingKey, transaction } = {}) {
+  async function enqueue(queue, data, { idempotencyKey, orderingKey, transaction, startAfter } = {}) {
     if (!QUEUE_NAMES.includes(queue)) throw new TypeError(`Unsupported queue: ${queue}`);
     validatePayload(data);
     const traceId = requestContext.getRequestId();
@@ -170,11 +171,13 @@ function createQueueClient({
     }
     if (!started) throw new Error('The PostgreSQL queue has not been started.');
 
-    return boss.send(queue, jobData, {
+    const options = {
       id: deterministicJobId(queue, idempotencyKey),
       singletonKey: orderingKey,
       db: asQueueDatabase(transaction),
-    });
+    };
+    if (startAfter !== undefined) options.startAfter = startAfter;
+    return boss.send(queue, jobData, options);
   }
 
   /** FR-77a: expose a bounded, non-claiming dead-letter listing to admin routes. */

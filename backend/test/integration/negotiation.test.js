@@ -65,7 +65,7 @@ describe('PostgreSQL messaging rules', () => {
     const { rows: messages } = await db.query('SELECT body FROM messages WHERE conversation_id = $1', [conversation.id]);
     expect(messages.map(({ body }) => body)).toEqual(['PKR 85,000', '85000', 'chest 40 length 42']);
     const { rows: attempts } = await db.query(
-      'SELECT attempt_count FROM contact_info_block_attempts WHERE user_id = $1',
+      'SELECT attempt_count::int AS attempt_count FROM contact_info_block_attempts WHERE user_id = $1',
       [ids.buyer]
     );
     expect(attempts[0].attempt_count).toBe(4);

@@ -13,6 +13,7 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.MODERATOR, 'listing.review')).toBe(true);
     expect(hasPermission(ROLES.MODERATOR, 'listing.approve')).toBe(true);
     expect(hasPermission(ROLES.MODERATOR, 'dispute.resolve')).toBe(true);
+    expect(hasPermission(ROLES.MODERATOR, 'conversation.staff_read')).toBe(true);
     expect(hasPermission(ROLES.MODERATOR, 'seller_application.approve')).toBe(true);
   });
 
@@ -20,6 +21,7 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.MODERATOR, 'fee.configure')).toBe(false);
     expect(hasPermission(ROLES.MODERATOR, 'user.suspend')).toBe(false);
     expect(hasPermission(ROLES.MODERATOR, 'operations.view')).toBe(false);
+    expect(hasPermission(ROLES.MODERATOR, 'conversation.read')).toBe(false);
     expect(hasPermission(ROLES.MODERATOR, 'payout.force_release')).toBe(false);
   });
 

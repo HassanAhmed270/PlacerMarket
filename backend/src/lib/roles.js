@@ -24,6 +24,7 @@ const MODERATOR_ALLOWED_ACTIONS = new Set([
   'listing.grant_verified_badge',
   'dispute.review', // FR-56
   'dispute.resolve',
+  'conversation.staff_read',
   'seller_application.approve', // FR-07, FR-53
   'seller_application.reject',
 ]);

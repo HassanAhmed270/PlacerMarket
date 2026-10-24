@@ -100,21 +100,202 @@ async function sendMessage(conversationId, senderId, body) {
        VALUES ($1, $2, $3) RETURNING *`,
       [conversationId, senderId, body]
     );
+    await eventBus.emitAsync(events.MESSAGE_SENT, {
+      conversationId,
+      senderId,
+      messageId: rows[0].id,
+    }, { transaction: client });
     return { message: rows[0] };
   });
   if (result.blocked) {
     throw new ValidationError('Messages cannot contain phone numbers, email addresses, or links.');
   }
-  eventBus.emit(events.MESSAGE_SENT, { conversationId, senderId });
   return result.message;
+}
+
+/** FR-28: return a participant's conversations with keyset pagination and unread counts. */
+async function getInbox(userId, { limit = 20, beforeActivityAt, beforeId } = {}) {
+  const values = [userId];
+  let cursorClause = '';
+  if (beforeActivityAt && beforeId) {
+    values.push(beforeActivityAt, beforeId);
+    cursorClause = `AND (COALESCE(last_message.created_at, c.created_at), c.id) < ($2::timestamptz, $3::uuid)`;
+  }
+  values.push(limit + 1);
+  const limitIndex = values.length;
+  const { rows } = await db.query(
+    `SELECT c.id, c.listing_id, c.buyer_id, c.seller_id, c.created_at,
+            to_char(
+              COALESCE(last_message.created_at, c.created_at) AT TIME ZONE 'UTC',
+              'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+            ) AS last_activity_at,
+            last_message.id AS last_message_id, last_message.sender_id AS last_sender_id,
+            last_message.body AS last_message_body,
+            COUNT(unread.id)::int AS unread_count
+     FROM conversations c
+     LEFT JOIN LATERAL (
+       SELECT m.id, m.sender_id, m.body, m.created_at
+       FROM messages m
+       WHERE m.conversation_id = c.id
+       ORDER BY m.created_at DESC, m.id DESC
+       LIMIT 1
+     ) last_message ON true
+     LEFT JOIN messages unread
+       ON unread.conversation_id = c.id
+      AND unread.sender_id <> $1
+      AND unread.read_at IS NULL
+     WHERE (c.buyer_id = $1 OR c.seller_id = $1)
+       ${cursorClause}
+     GROUP BY c.id, last_message.id, last_message.sender_id, last_message.body, last_message.created_at
+     ORDER BY COALESCE(last_message.created_at, c.created_at) DESC, c.id DESC
+     LIMIT $${limitIndex}`,
+    values
+  );
+  const hasMore = rows.length > limit;
+  const conversations = hasMore ? rows.slice(0, limit) : rows;
+  const last = conversations[conversations.length - 1];
+  return {
+    conversations,
+    nextCursor: hasMore && last
+      ? { beforeActivityAt: last.last_activity_at, beforeId: last.id }
+      : null,
+  };
+}
+
+/** FR-28: read messages only after confirming the caller is a conversation participant. */
+async function getConversationMessages(conversationId, userId, { limit = 50, beforeCreatedAt, beforeId } = {}) {
+  const { rows: conversations } = await db.query(
+    'SELECT id FROM conversations WHERE id = $1 AND (buyer_id = $2 OR seller_id = $2)',
+    [conversationId, userId]
+  );
+  if (!conversations[0]) throw new NotFoundError('conversation', conversationId);
+
+  const values = [conversationId, userId];
+  let cursorClause = '';
+  if (beforeCreatedAt && beforeId) {
+    values.push(beforeCreatedAt, beforeId);
+    cursorClause = `AND (m.created_at, m.id) < ($3::timestamptz, $4::uuid)`;
+  }
+  values.push(limit + 1);
+  const limitIndex = values.length;
+  const { rows } = await db.query(
+    `SELECT m.*,
+            to_char(m.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cursor_created_at
+     FROM conversations c
+     JOIN messages m ON m.conversation_id = c.id
+     WHERE c.id = $1
+       AND (c.buyer_id = $2 OR c.seller_id = $2)
+       ${cursorClause}
+     ORDER BY m.created_at DESC, m.id DESC
+     LIMIT $${limitIndex}`,
+    values
+  );
+  const hasMore = rows.length > limit;
+  const messages = hasMore ? rows.slice(0, limit) : rows;
+  const last = messages[messages.length - 1];
+  return {
+    messages,
+    nextCursor: hasMore && last
+      ? { beforeCreatedAt: last.cursor_created_at, beforeId: last.id }
+      : null,
+  };
+}
+
+/** FR-28: only the conversation participant can mark messages received by them as read. */
+async function markConversationRead(conversationId, userId) {
+  return db.withTransaction(async (client) => {
+    const { rows: conversations } = await client.query(
+      'SELECT id FROM conversations WHERE id = $1 AND (buyer_id = $2 OR seller_id = $2) FOR SHARE',
+      [conversationId, userId]
+    );
+    if (!conversations[0]) throw new NotFoundError('conversation', conversationId);
+    const { rowCount } = await client.query(
+      `UPDATE messages SET read_at = now()
+       WHERE conversation_id = $1 AND sender_id <> $2 AND read_at IS NULL`,
+      [conversationId, userId]
+    );
+    return { markedRead: rowCount };
+  });
+}
+
+/** FR-28: confirm participant access before conversation-scoped route middleware continues. */
+async function assertConversationParticipant(conversationId, userId) {
+  const { rows } = await db.query(
+    'SELECT id FROM conversations WHERE id = $1 AND (buyer_id = $2 OR seller_id = $2)',
+    [conversationId, userId]
+  );
+  if (!rows[0]) throw new NotFoundError('conversation', conversationId);
+}
+
+/** FR-29: confirm offer access before offer-scoped route middleware continues. */
+async function assertOfferParticipant(offerId, userId) {
+  const { rows } = await db.query(
+    `SELECT o.id FROM offers o JOIN conversations c ON c.id = o.conversation_id
+     WHERE o.id = $1 AND (c.buyer_id = $2 OR c.seller_id = $2)`,
+    [offerId, userId]
+  );
+  if (!rows[0]) throw new NotFoundError('offer', offerId);
+}
+
+/** FR-28, SEC-12: staff reads require a reference and are recorded in the same transaction as the read. */
+async function getStaffConversationMessages(conversationId, staffUserId, { referenceType, referenceId, limit = 50 } = {}) {
+  if (!['dispute', 'report'].includes(referenceType) ||
+      typeof referenceId !== 'string' || !referenceId.trim() || referenceId.length > 100) {
+    throw new ValidationError('A dispute or report reference is required.');
+  }
+  return db.withTransaction(async (client) => {
+    const { rows: conversations } = await client.query(
+      'SELECT id, listing_id, buyer_id, seller_id FROM conversations WHERE id = $1 FOR SHARE',
+      [conversationId]
+    );
+    if (!conversations[0]) throw new NotFoundError('conversation', conversationId);
+
+    if (referenceType === 'dispute') {
+      const { rows: disputes } = await client.query(
+        `SELECT d.id FROM disputes d
+         JOIN orders o ON o.id = d.order_id
+         WHERE d.id::text = $1
+           AND o.listing_id = $2
+           AND o.buyer_id = $3
+           AND o.seller_id = $4`,
+        [
+          referenceId,
+          conversations[0].listing_id,
+          conversations[0].buyer_id,
+          conversations[0].seller_id,
+        ]
+      );
+      if (!disputes[0]) throw new NotFoundError('dispute reference', referenceId);
+    }
+
+    await client.query(
+      `INSERT INTO conversation_staff_read_audit
+        (conversation_id, staff_user_id, reference_type, reference_id)
+       VALUES ($1, $2, $3, $4)`,
+      [conversationId, staffUserId, referenceType, referenceId.trim()]
+    );
+    const { rows: messages } = await client.query(
+      `SELECT * FROM messages WHERE conversation_id = $1
+       ORDER BY created_at DESC, id DESC LIMIT $2`,
+      [conversationId, limit]
+    );
+    return messages;
+  });
 }
 
 // ---- FR-29, FR-31: negotiation (offer / counter / accept) ----
 
 /** FR-29: no fixed Buy Now path — this is the only way a sale starts. */
 async function makeOffer(conversationId, listingId, buyerId, amount) {
-  assertOffersEnabled();
   return db.withTransaction(async (client) => {
+    const { rows: conversations } = await client.query(
+      `SELECT id FROM conversations
+       WHERE id = $1 AND listing_id = $2 AND (buyer_id = $3 OR seller_id = $3)
+       FOR SHARE`,
+      [conversationId, listingId, buyerId]
+    );
+    if (!conversations[0]) throw new NotFoundError('conversation', conversationId);
+    assertOffersEnabled();
     const { rows } = await client.query(
       `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status)
        VALUES ($1, $2, $3, $4, 'pending') RETURNING *`,
@@ -127,22 +308,27 @@ async function makeOffer(conversationId, listingId, buyerId, amount) {
 
 /** FR-29: either party can counter; chained via parent_offer_id. */
 async function counterOffer(parentOfferId, proposedBy, amount) {
-  assertOffersEnabled();
-  const { rows: parentRows } = await db.query('SELECT * FROM offers WHERE id = $1', [parentOfferId]);
-  const parent = parentRows[0];
-  if (!parent) throw new NotFoundError('offer', parentOfferId);
-  if (parent.status !== 'pending') {
-    throw new ValidationError('Only a pending offer can be countered');
-  }
-  await db.query(`UPDATE offers SET status = 'countered' WHERE id = $1`, [parentOfferId]);
-
-  const { rows } = await db.query(
-    `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status, parent_offer_id)
-     VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING *`,
-    [parent.conversation_id, parent.listing_id, proposedBy, amount, parentOfferId]
-  );
-  eventBus.emit(events.OFFER_COUNTERED, { offerId: rows[0].id, parentOfferId });
-  return rows[0];
+  const counter = await db.withTransaction(async (client) => {
+    const { rows: parentRows } = await client.query(
+      `SELECT o.* FROM offers o JOIN conversations c ON c.id = o.conversation_id
+       WHERE o.id = $1 AND (c.buyer_id = $2 OR c.seller_id = $2)
+       FOR UPDATE OF o, c`,
+      [parentOfferId, proposedBy]
+    );
+    const parent = parentRows[0];
+    if (!parent) throw new NotFoundError('offer', parentOfferId);
+    assertOffersEnabled();
+    if (parent.status !== 'pending') throw new ValidationError('Only a pending offer can be countered');
+    await client.query(`UPDATE offers SET status = 'countered' WHERE id = $1`, [parentOfferId]);
+    const { rows } = await client.query(
+      `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status, parent_offer_id)
+       VALUES ($1, $2, $3, $4, 'pending', $5) RETURNING *`,
+      [parent.conversation_id, parent.listing_id, proposedBy, amount, parentOfferId]
+    );
+    return rows[0];
+  });
+  eventBus.emit(events.OFFER_COUNTERED, { offerId: counter.id, parentOfferId });
+  return counter;
 }
 
 /**
@@ -151,10 +337,22 @@ async function counterOffer(parentOfferId, proposedBy, amount) {
  * touch the `orders` table directly.
  */
 async function acceptOffer(offerId, acceptedBy) {
+  const { rows: participantOffers } = await db.query(
+    `SELECT o.id FROM offers o JOIN conversations c ON c.id = o.conversation_id
+     WHERE o.id = $1 AND (c.buyer_id = $2 OR c.seller_id = $2)`,
+    [offerId, acceptedBy]
+  );
+  if (!participantOffers[0]) throw new NotFoundError('offer', offerId);
   assertOffersEnabled();
   const { rows } = await db.query(
-    `UPDATE offers SET status = 'accepted' WHERE id = $1 AND status = 'pending' RETURNING *`,
-    [offerId]
+    `UPDATE offers o SET status = 'accepted'
+     WHERE o.id = $1 AND o.status = 'pending'
+       AND EXISTS (
+         SELECT 1 FROM conversations c
+         WHERE c.id = o.conversation_id AND (c.buyer_id = $2 OR c.seller_id = $2)
+       )
+     RETURNING o.*`,
+    [offerId, acceptedBy]
   );
   const offer = rows[0];
   if (!offer) throw new ValidationError('Offer is not in a pending state and cannot be accepted');
@@ -186,6 +384,12 @@ async function getNegotiationHistory(listingId, userId) {
 module.exports = {
   startConversation,
   sendMessage,
+  getInbox,
+  getConversationMessages,
+  markConversationRead,
+  assertConversationParticipant,
+  assertOfferParticipant,
+  getStaffConversationMessages,
   containsContactInfo,
   makeOffer,
   counterOffer,

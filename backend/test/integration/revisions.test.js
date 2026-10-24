@@ -1,3 +1,10 @@
+jest.mock('../../src/middleware/rateLimit', () => ({
+  createConfiguredRateLimiters: () => new Proxy({}, {
+    get: () => (_req, _res, next) => next(),
+  }),
+  createRateLimiter: () => (_req, _res, next) => next(),
+}));
+
 const db = require('../../src/db.service');
 const request = require('supertest');
 const app = require('../../src/app');
@@ -78,22 +85,32 @@ describe('FR-73 moderated listing revisions', () => {
   test('FR-29: offers are disabled by default and accepting one never creates a bag entry', async () => {
     const previousFlag = process.env.OFFERS_ENABLED;
     delete process.env.OFFERS_ENABLED;
+    const conversation = await negotiation.startConversation(fixture.listingId, fixture.otherUserId);
+    const { rows: offerRows } = await db.query(
+      `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status)
+       VALUES ($1, $2, $3, 50, 'pending') RETURNING id`,
+      [conversation.id, fixture.listingId, fixture.otherUserId]
+    );
+    const offerId = offerRows[0].id;
+    const token = signAccessToken(fixture.otherUserId, { secret: process.env.JWT_ACCESS_SECRET });
     const createBagEntry = jest.spyOn(orders, 'createBagEntry');
     try {
       for (const [path, body] of [
-        ['/api/negotiation/conversations/00000000-0000-4000-8000-000000000001/offers', { listingId: fixture.listingId, amount: 50 }],
-        ['/api/negotiation/offers/00000000-0000-4000-8000-000000000001/counter', { amount: 50 }],
-        ['/api/negotiation/offers/00000000-0000-4000-8000-000000000001/accept', {}],
+        [`/api/negotiation/conversations/${conversation.id}/offers`, { listingId: fixture.listingId, amount: 50 }],
+        [`/api/negotiation/offers/${offerId}/counter`, { amount: 50 }],
+        [`/api/negotiation/offers/${offerId}/accept`, {}],
       ]) {
-        const response = await request(app).post(path).send(body);
+        const response = await request(app).post(path).set('Authorization', `Bearer ${token}`).send(body);
         expect(response.status).toBe(503);
         expect(response.body).toEqual({ error: 'Offers are disabled' });
       }
-      await expect(negotiation.acceptOffer('00000000-0000-4000-8000-000000000001', fixture.userId))
+      await expect(negotiation.acceptOffer(offerId, fixture.otherUserId))
         .rejects.toThrow('Offers are disabled');
       expect(createBagEntry).not.toHaveBeenCalled();
     } finally {
       createBagEntry.mockRestore();
+      await db.query('DELETE FROM offers WHERE id = $1', [offerId]);
+      await db.query('DELETE FROM conversations WHERE id = $1', [conversation.id]);
       if (previousFlag === undefined) delete process.env.OFFERS_ENABLED;
       else process.env.OFFERS_ENABLED = previousFlag;
     }

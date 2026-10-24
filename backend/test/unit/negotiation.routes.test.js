@@ -4,6 +4,10 @@ const request = require('supertest');
 jest.mock('../../src/modules/negotiation.service', () => ({
   startConversation: jest.fn(),
   sendMessage: jest.fn(),
+  getInbox: jest.fn(),
+  getConversationMessages: jest.fn(),
+  markConversationRead: jest.fn(),
+  getStaffConversationMessages: jest.fn(),
   makeOffer: jest.fn(),
   counterOffer: jest.fn(),
   acceptOffer: jest.fn(),
@@ -11,6 +15,7 @@ jest.mock('../../src/modules/negotiation.service', () => ({
 }));
 jest.mock('../../src/middleware/auth', () => ({
   requireAuth: (req, _res, next) => { req.user = { id: '11111111-1111-4111-8111-111111111111' }; next(); },
+  requirePermission: () => (_req, _res, next) => next(),
 }));
 jest.mock('../../src/middleware/rateLimit', () => ({
   createConfiguredRateLimiters: () => ({
@@ -58,5 +63,34 @@ describe('negotiation route validation', () => {
     const response = await request(app).post(`/negotiation/conversations/${conversationId}/messages`).send({ body });
     expect(response.status).toBe(201);
     expect(negotiation.sendMessage).toHaveBeenCalledWith(conversationId, '11111111-1111-4111-8111-111111111111', body);
+  });
+
+  test('serves inbox, paginated messages, read state, and referenced staff reads', async () => {
+    negotiation.getInbox.mockResolvedValue({ conversations: [], nextCursor: null });
+    negotiation.getConversationMessages.mockResolvedValue({ messages: [], nextCursor: null });
+    negotiation.markConversationRead.mockResolvedValue({ markedRead: 1 });
+    negotiation.getStaffConversationMessages.mockResolvedValue([]);
+
+    expect((await request(app).get('/negotiation/conversations')).status).toBe(200);
+    expect((await request(app).get(`/negotiation/conversations/${conversationId}/messages`)).status).toBe(200);
+    expect((await request(app).patch(`/negotiation/conversations/${conversationId}/read`)).status).toBe(200);
+    const staff = await request(app).get(`/negotiation/conversations/${conversationId}/staff/messages`)
+      .query({ referenceType: 'report', referenceId: 'report-123' });
+    expect(staff.status).toBe(200);
+    expect(negotiation.getInbox).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111', {
+      limit: 20, beforeActivityAt: undefined, beforeCreatedAt: undefined, beforeId: undefined,
+    });
+    expect(negotiation.getStaffConversationMessages).toHaveBeenCalledWith(
+      conversationId,
+      '11111111-1111-4111-8111-111111111111',
+      { referenceType: 'report', referenceId: 'report-123', limit: 50 }
+    );
+  });
+
+  test('requires paired keyset cursor values and valid page limits', async () => {
+    const unpaired = await request(app).get('/negotiation/conversations').query({ beforeId: conversationId });
+    const invalidLimit = await request(app).get('/negotiation/conversations').query({ limit: '101' });
+    expect([unpaired.status, invalidLimit.status]).toEqual([400, 400]);
+    expect(negotiation.getInbox).not.toHaveBeenCalled();
   });
 });

@@ -7,6 +7,7 @@ const db = require('../db.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const queue = require('../lib/queue');
+const { encryptEmailPayload } = require('../lib/emailQueuePayload');
 
 const NOTIFICATION_EVENTS = Object.freeze([
   events.SELLER_APPLICATION_STATUS_CHANGED,
@@ -16,9 +17,19 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.ORDER_STATUS_CHANGED,
   events.DELIVERY_STATUS_CHANGED,
   events.DISPUTE_RESOLVED,
+  events.MESSAGE_SENT,
 ]);
 
 function jobKeys(eventName, payload) {
+  if (eventName === events.MESSAGE_SENT) {
+    if (!payload.messageId || !payload.conversationId) {
+      throw new TypeError('Message notification event is missing its message or conversation ID.');
+    }
+    return {
+      idempotencyKey: `message:${payload.messageId}`,
+      orderingKey: `conversation:${payload.conversationId}`,
+    };
+  }
   const entityByEvent = {
     [events.SELLER_APPLICATION_STATUS_CHANGED]: ['seller-application', payload.applicationId],
     [events.LISTING_STATUS_CHANGED]: ['listing', payload.listingId],
@@ -40,12 +51,15 @@ function jobKeys(eventName, payload) {
 }
 
 /** FR-51: create an in-app notification row. */
-async function createNotification(userId, eventType, payload) {
+async function createNotification(userId, eventType, payload, dedupeKey = null) {
   const { rows } = await db.query(
-    `INSERT INTO notifications (user_id, event_type, payload) VALUES ($1, $2, $3) RETURNING *`,
-    [userId, eventType, JSON.stringify(payload)]
+    `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING
+     RETURNING *`,
+    [userId, eventType, JSON.stringify(payload), dedupeKey]
   );
-  return rows[0];
+  return rows[0] || null;
 }
 
 /** FR-51: a user's notifications, optionally unread only. */
@@ -60,14 +74,101 @@ async function getUserNotifications(userId, { unreadOnly = false } = {}) {
 }
 
 /** FR-51: mark a notification read. */
-async function markRead(notificationId) {
-  await db.query('UPDATE notifications SET is_read = true WHERE id = $1', [notificationId]);
+async function markRead(notificationId, userId) {
+  const { rowCount } = await db.query(
+    'UPDATE notifications SET is_read = true WHERE id = $1 AND user_id = $2',
+    [notificationId, userId]
+  );
+  return rowCount > 0;
 }
 
 /** FR-51 and FR-77d: resolve recipients and write rows in the worker's job transaction. */
 async function processNotificationJob(job, transactionDb) {
-  if (!job || !NOTIFICATION_EVENTS.includes(job.eventName) || !job.payload || typeof job.payload !== 'object') {
+  const messageEmailCheck = job?.eventName === 'conversation.message_email_check';
+  if (!job || (!NOTIFICATION_EVENTS.includes(job.eventName) && !messageEmailCheck) ||
+      !job.payload || typeof job.payload !== 'object') {
     throw new TypeError('Unsupported notification job payload.');
+  }
+
+  if (job.eventName === events.MESSAGE_SENT) {
+    const { rows: conversations } = await transactionDb.executeSql(
+      `SELECT buyer_id, seller_id FROM conversations WHERE id = $1`,
+      [job.payload.conversationId]
+    );
+    const conversation = conversations[0];
+    if (!conversation) return;
+    const { rows: messages } = await transactionDb.executeSql(
+      `SELECT id, sender_id FROM messages
+       WHERE id = $1 AND conversation_id = $2`,
+      [job.payload.messageId, job.payload.conversationId]
+    );
+    const message = messages[0];
+    if (!message) return;
+    if (message.sender_id !== conversation.buyer_id && message.sender_id !== conversation.seller_id) {
+      throw new TypeError('Message sender is not a conversation participant.');
+    }
+    const recipientId = message.sender_id === conversation.buyer_id
+      ? conversation.seller_id
+      : conversation.buyer_id;
+    await transactionDb.executeSql(
+      `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
+       VALUES ($1, 'new_message', $2, $3)
+       ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+      [
+        recipientId,
+        JSON.stringify({ conversationId: job.payload.conversationId }),
+        `message:${message.id}`,
+      ]
+    );
+    await queue.enqueue(queue.QUEUES.NOTIFICATIONS, {
+      eventName: 'conversation.message_email_check',
+      payload: { conversationId: job.payload.conversationId, messageId: message.id },
+    }, {
+      idempotencyKey: `message-email-check:${message.id}`,
+      orderingKey: `conversation-email:${job.payload.conversationId}`,
+      transaction: transactionDb,
+      startAfter: '15 minutes',
+    });
+    return;
+  }
+
+  if (messageEmailCheck) {
+    const { rows: eligibleMessages } = await transactionDb.executeSql(
+      `SELECT m.id AS message_id, c.id AS conversation_id,
+              CASE WHEN m.sender_id = c.buyer_id THEN c.seller_id ELSE c.buyer_id END AS recipient_id,
+              u.email
+       FROM messages m
+       JOIN conversations c ON c.id = m.conversation_id
+       JOIN users u ON u.id = CASE WHEN m.sender_id = c.buyer_id THEN c.seller_id ELSE c.buyer_id END
+       WHERE c.id = $1 AND m.id = $2 AND m.read_at IS NULL
+         AND m.sender_id IN (c.buyer_id, c.seller_id)
+         AND m.created_at <= now() - interval '15 minutes'`,
+      [job.payload.conversationId, job.payload.messageId]
+    );
+    const eligible = eligibleMessages[0];
+    if (!eligible?.email) return;
+    const { rows: throttleRows } = await transactionDb.executeSql(
+      `INSERT INTO conversation_email_throttles (conversation_id, last_queued_at, last_message_id)
+       VALUES ($1, now(), $2)
+       ON CONFLICT (conversation_id) DO UPDATE
+       SET last_queued_at = EXCLUDED.last_queued_at,
+           last_message_id = EXCLUDED.last_message_id
+       WHERE conversation_email_throttles.last_queued_at <= now() - interval '1 hour'
+       RETURNING conversation_id`,
+      [eligible.conversation_id, eligible.message_id]
+    );
+    if (!throttleRows[0]) return;
+    const encryptedPayload = encryptEmailPayload({
+      to: eligible.email,
+      subject: 'You have an unread Poshaak message',
+      text: 'You have an unread message on Poshaak. Sign in to view your conversation.',
+    });
+    await queue.enqueue(queue.QUEUES.EMAIL, { encryptedPayload }, {
+      idempotencyKey: `conversation-unread:${eligible.conversation_id}:${eligible.message_id}`,
+      orderingKey: `conversation-email-delivery:${eligible.conversation_id}`,
+      transaction: transactionDb,
+    });
+    return;
   }
 
   let recipients;
