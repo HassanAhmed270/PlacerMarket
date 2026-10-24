@@ -2,7 +2,7 @@ const { randomUUID } = require('node:crypto');
 const express = require('express');
 const request = require('supertest');
 const { createClient } = require('redis');
-const { createRateLimiter } = require('../../src/middleware/rateLimit');
+const { createRateLimiter, createAccountRateLimiter } = require('../../src/middleware/rateLimit');
 const { reserveAddressSend } = require('../../src/lib/emailCodeDelivery');
 
 const redisUrl = process.env.TEST_REDIS_URL;
@@ -43,6 +43,58 @@ suite('SEC-08: real Redis request-limit counters', () => {
     expect(responses.filter((response) => response.status === 204)).toHaveLength(3);
     expect(responses.filter((response) => response.status === 429)).toHaveLength(5);
     expect(responses.every((response) => [204, 429].includes(response.status))).toBe(true);
+  });
+
+  test('conversation Redis limits allow exactly 10 per hour and 30 per day per account', async () => {
+    async function exercise(name, windows, count, allowed) {
+      const limitedApp = express();
+      const userId = randomUUID();
+      limitedApp.use((req, _res, next) => { req.user = { id: userId }; next(); });
+      limitedApp.post('/limited', createAccountRateLimiter({
+        category: `conversation-${name}-${randomUUID()}`,
+        windows,
+        clientProvider: () => client,
+      }), (_req, res) => res.status(204).end());
+      const responses = await Promise.all(Array.from({ length: count }, (_, index) =>
+        request(limitedApp).post('/limited').set('x-forwarded-for', `198.51.100.${index + 1}`)));
+      expect(responses.filter((response) => response.status === 204)).toHaveLength(allowed);
+      expect(responses.filter((response) => response.status === 429)).toHaveLength(count - allowed);
+    }
+
+    await exercise('hour', [
+      { name: 'hour', max: 10, windowSeconds: 3600 },
+      { name: 'day', max: 30, windowSeconds: 86400 },
+    ], 11, 10);
+    await exercise('day', [
+      { name: 'hour', max: 100, windowSeconds: 3600 },
+      { name: 'day', max: 30, windowSeconds: 86400 },
+    ], 31, 30);
+  });
+
+  test('message Redis limits allow exactly 10 per minute and 60 per hour per account', async () => {
+    async function exercise(name, windows, count, allowed) {
+      const limitedApp = express();
+      const userId = randomUUID();
+      limitedApp.use((req, _res, next) => { req.user = { id: userId }; next(); });
+      limitedApp.post('/limited', createAccountRateLimiter({
+        category: `message-${name}-${randomUUID()}`,
+        windows,
+        clientProvider: () => client,
+      }), (_req, res) => res.status(204).end());
+      const responses = await Promise.all(Array.from({ length: count }, (_, index) =>
+        request(limitedApp).post('/limited').set('x-forwarded-for', `203.0.113.${index + 1}`)));
+      expect(responses.filter((response) => response.status === 204)).toHaveLength(allowed);
+      expect(responses.filter((response) => response.status === 429)).toHaveLength(count - allowed);
+    }
+
+    await exercise('minute', [
+      { name: 'minute', max: 10, windowSeconds: 60 },
+      { name: 'hour', max: 60, windowSeconds: 3600 },
+    ], 11, 10);
+    await exercise('hour', [
+      { name: 'minute', max: 100, windowSeconds: 60 },
+      { name: 'hour', max: 60, windowSeconds: 3600 },
+    ], 61, 60);
   });
 
   test('FR-83f: concurrent authenticator and step-up requests share the security action limit', async () => {

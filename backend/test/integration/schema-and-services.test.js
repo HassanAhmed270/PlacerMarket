@@ -5,13 +5,13 @@ const settlement = require('../../src/modules/settlement.service');
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
 describe('real PostgreSQL baseline', () => {
-  test('schema.sql creates exactly the 36 tables through listing revisions', async () => {
+  test('schema.sql creates exactly the 37 tables through messaging rules', async () => {
     const pool = new Pool({ connectionString: testDatabaseUrl });
     try {
       const { rows } = await pool.query(
         "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
       );
-      expect(rows[0].count).toBe(36);
+      expect(rows[0].count).toBe(37);
     } finally {
       await pool.end();
     }
