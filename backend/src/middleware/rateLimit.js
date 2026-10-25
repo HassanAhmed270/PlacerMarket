@@ -136,6 +136,7 @@ function createConfiguredRateLimiters(env = process.env, clientProvider = getSha
     signup: make('signup', 'SIGNUP'),
     reset: make('reset', 'RESET'),
     offer: make('offer', 'OFFER'),
+    search: make('search', 'SEARCH'),
     conversation: createAccountRateLimiter({
       category: 'conversation',
       windows: [

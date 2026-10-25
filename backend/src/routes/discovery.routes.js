@@ -1,16 +1,43 @@
 const { Router } = require('express');
 const discovery = require('../modules/discovery.service');
 const { requireAuth } = require('../middleware/auth');
+const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
+const limiters = createConfiguredRateLimiters();
 const router = Router();
 
 // FR-22: pure browsing — fully public, no requireAuth on these three.
-router.get('/search', async (req, res) => {
-  res.json(await discovery.searchListings(req.query.q)); // FR-23
+router.get('/search', limiters.search, async (req, res) => {
+  const result = await discovery.searchListings({
+    q: req.query.q ?? req.query.query,
+    sort: req.query.sort,
+    limit: req.query.limit,
+    cursor: req.query.cursor,
+    mainCategoryId: req.query.mainCategoryId,
+    subCategoryId: req.query.subCategoryId,
+    condition: req.query.condition,
+    minPrice: req.query.minPrice,
+    maxPrice: req.query.maxPrice,
+    cityId: req.query.cityId ?? req.query.city,
+    brandId: req.query.brandId ?? req.query.brand,
+    colorId: req.query.colorId ?? req.query.color,
+    fabricId: req.query.fabricId ?? req.query.fabric,
+  });
+  res.json(result);
 });
 
 router.get('/filter', async (req, res) => {
   res.json(await discovery.filterListings(req.query)); // FR-24
+});
+
+router.get('/suggestions', async (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json(await discovery.getSearchVocabulary());
+});
+
+router.get('/vocabulary', async (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=60');
+  res.json(await discovery.getSearchVocabulary());
 });
 
 router.get('/listings/:id', async (req, res) => {

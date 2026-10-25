@@ -1,4 +1,4 @@
-const { pool } = require('./db.service');
+const { pool, searchPool } = require('./db.service');
 const queue = require('./lib/queue');
 const { createRedisClient } = require('./lib/redis');
 const { getJwtConfig } = require('./lib/jwt');
@@ -56,6 +56,7 @@ async function startServer({
         await redis.stop();
         await hashPool.close();
         await dbPool.end();
+        await searchPool.end();
       })();
       return shuttingDown;
     }
@@ -72,6 +73,7 @@ async function startServer({
     if (queueStartAttempted) await queueClient.stopProducer().catch(() => {});
     if (redis) await redis.stop().catch(() => {});
     await dbPool.end().catch(() => {});
+    await searchPool.end().catch(() => {});
     const configurationMessage = stage === 'configuration' ? safeConfigurationMessage(error) : null;
     if (configurationMessage) logger.error(configurationMessage);
     else if (stage === 'redis') logger.error(`Redis unavailable (${error?.code || 'unknown'})`);

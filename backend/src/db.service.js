@@ -24,9 +24,23 @@ const pool = new Pool({
   lock_timeout: positiveInteger('DB_LOCK_TIMEOUT_MS', 1000),
 });
 
+const searchPool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: positiveInteger('SEARCH_DB_POOL_MAX', 2),
+  connectionTimeoutMillis: positiveInteger('SEARCH_DB_CONNECTION_TIMEOUT_MS', 1000),
+  idleTimeoutMillis: positiveInteger('SEARCH_DB_IDLE_TIMEOUT_MS', 30000),
+  statement_timeout: positiveInteger('SEARCH_DB_STATEMENT_TIMEOUT_MS', 1500),
+  idle_in_transaction_session_timeout: positiveInteger('SEARCH_DB_IDLE_TRANSACTION_TIMEOUT_MS', 5000),
+  lock_timeout: positiveInteger('SEARCH_DB_LOCK_TIMEOUT_MS', 500),
+});
+
 pool.on('error', (err) => {
   // eslint-disable-next-line no-console
   console.error('Unexpected error on idle Postgres client', err);
+});
+searchPool.on('error', (err) => {
+  // eslint-disable-next-line no-console
+  console.error('Unexpected error on idle search Postgres client', err);
 });
 
 function mapAcquireError(error) {
@@ -46,9 +60,21 @@ async function write(text, params = []) {
   try { return await pool.query(text, params); } catch (error) { throw mapAcquireError(error); }
 }
 
+async function searchRead(text, params = []) {
+  try { return await searchPool.query(text, params); } catch (error) { throw mapAcquireError(error); }
+}
+
+async function searchWrite(text, params = []) {
+  try { return await searchPool.query(text, params); } catch (error) { throw mapAcquireError(error); }
+}
+
 /** Compatibility entry point for existing services; new code should use read/write. */
 async function query(text, params = []) {
   return read(text, params);
+}
+
+async function searchQuery(text, params = []) {
+  return searchRead(text, params);
 }
 
 async function many(text, params = []) {
@@ -87,4 +113,4 @@ async function withTransaction(callback) {
   }
 }
 
-module.exports = { read, write, query, many, one, withTransaction, pool };
+module.exports = { read, write, query, many, one, withTransaction, pool, searchPool, searchQuery, searchRead, searchWrite };
