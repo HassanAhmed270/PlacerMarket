@@ -3,10 +3,12 @@
 Phase 3 is **not closed**. This report maps the Phase 3 scope in `Phases.md`
 and the 2026-10-22 owner decisions to current evidence. A test file existing is
 not the same as a passing test. A prior guarded integration run is recorded
-below. In the latest S15 attempt, Jest stopped in `globalSetup` because
-`TEST_DATABASE_URL` was absent from the command's process environment; no
-integration tests ran in that attempt. Do not treat the prior run as a passing
-result for the S15 rerun.
+below. The first S15 invocation stopped in `globalSetup` because
+`TEST_DATABASE_URL` was absent from that command process. A rerun loaded the
+documented local test environment, verified the loopback `testing_only`
+database guard, and ran the suite; two suites failed, with eight failed tests
+and no skipped tests. Redis at `127.0.0.1:6379` refused connections during the
+rate-limit suite.
 
 The 2026-10-22 owner decisions supersede the former negotiation-only Buy flow.
 Fixed-price Buy is the early-site path; Phase 3 only routes a signed-in buyer to
@@ -118,7 +120,7 @@ listing or charges payment.
 | SEO titles/descriptions, structured data, URLs, canonicals and indexability | Done (with evidence) | The owner decisions are documented; implementation/test status is separately mapped under FR-81/82 above. |
 | CDN provider selection and production snapshot-serving/purge model | Live-check pending | No provider is selected. Verify production routing, no-cloaking behavior, cache freshness and purge delivery in `LIVE_CHECKS.md`. |
 | Production cache freshness and deployed CDN behavior | Live-check pending | Verify the approved 10-second detail/status and 60-second search/category freshness limits against the deployed origin/CDN. |
-| Integration test rerun with approved `TEST_DATABASE_URL` (and `TEST_REDIS_URL` where required) | Open | Prior run: 11 suites passed, 2 failed; 122 tests passed, 3 failed; no tests skipped. Latest S15 attempt did not reach Jest test collection: global setup failed because `TEST_DATABASE_URL` was empty in the command process. No per-test names or skip results exist for the latest attempt. |
+| Integration test rerun with approved `TEST_DATABASE_URL` (and `TEST_REDIS_URL` where required) | Open | Latest guarded S15 rerun: 11 suites passed, 2 failed; 117 tests passed, 8 failed; no skipped tests. Six rate-limit tests failed because Redis refused connections, and the FR-22 and FR-23 tests failed for the reasons listed below. |
 | Offers, counters, offer acceptance/history, Urdu script/RTL, popularity, trending, “did you mean”, real-time chat, video and voice | Deferred | Owner decisions and deferred scope are recorded in `open-questions.md` and `END_OF_PHASES_REVIEW.md`. Video and voice remain FR-75–FR-76a deferrals. |
 
 ## Prior integration run and verification record (2026-10-25)
@@ -153,19 +155,40 @@ or production-readiness claim is made.
 ## S15 verification attempt (2026-10-25)
 
 The backend unit result below was supplied as a terminal transcript by the
-operator; the other commands were run from their respective package folders in
-the S15 command terminal.
+operator. The initial S15 integration invocation stopped before collection
+because the command process lacked `TEST_DATABASE_URL`. For the rerun, the
+documented local environment was loaded without printing its values, the
+database was verified as loopback `testing_only`, and Redis DB 15 was selected.
+Jest then executed the integration tests. Other commands were run from their
+respective package folders.
 
 - Backend unit: `npm.cmd test -- --runInBand` — operator-provided transcript:
   - `Test Suites: 46 passed, 46 total`
   - `Tests:       569 passed, 569 total`
   - `Snapshots:   0 total`
-- Backend integration: `npm.cmd run test:integration -- --runInBand` — failed
-  before test collection in Jest `globalSetup`:
-  - `Error: Jest: Got error running globalSetup - ...\test\integration\global-setup.js, reason: TEST_DATABASE_URL is required and cannot be empty.`
-  - No integration test ran or was skipped by this attempt, so there are no
-    individual failing/skipped test names to report. The S15 integration
-    requirement remains open.
+- Backend integration: `npm.cmd run test:integration -- --runInBand`:
+  - `Test Suites: 2 failed, 11 passed, 13 total`
+  - `Tests:       8 failed, 117 passed, 125 total`
+  - `Snapshots:   0 total`
+  - No tests were skipped. Failures:
+    - `FR-23: keyword search matches title or description on published listings only` —
+      `TypeError: descriptionResults.map is not a function`.
+    - `FR-22: public listing-detail route serves published listing photos without authentication` —
+      its public search request expected HTTP 200 and received HTTP 503.
+    - `SEC-08: concurrent requests share atomic per-IP and per-account limits` —
+      `connect ECONNREFUSED 127.0.0.1:6379`.
+    - `conversation Redis limits allow exactly 10 per hour and 30 per day per account` —
+      `connect ECONNREFUSED 127.0.0.1:6379`.
+    - `message Redis limits allow exactly 10 per minute and 60 per hour per account` —
+      `connect ECONNREFUSED 127.0.0.1:6379`.
+    - `FR-83f: concurrent authenticator and step-up requests share the security action limit` —
+      `connect ECONNREFUSED 127.0.0.1:6379`.
+    - `SEC-08, FR-83d: concurrent email-code sends with a cooldown allow exactly one burst send` —
+      `connect ECONNREFUSED 127.0.0.1:6379`.
+    - `SEC-08, FR-83d: sequential email-code sends enforce the per-address cap after cooldowns` —
+      `connect ECONNREFUSED 127.0.0.1:6379`.
+  - The `afterAll` cleanup hook in `test/integration/rate-limit.test.js` also
+    exceeded its 20-second timeout after Redis connection failures.
 - Backend schema: `npm.cmd run db:check-schema` — exit 0.
 - Backend production dependency audit: `npm.cmd audit --omit=dev` — exit 1;
   `1 high severity vulnerability`, `body-parser` 2.0.0–2.3.0,
@@ -181,5 +204,5 @@ the S15 command terminal.
   `75.1 KB gzip (budget: 200 KB)`.
 
 No `specs.md` or `security.md` checkbox was changed: the latest integration
-attempt did not execute a test, and the existing checkboxes remain governed by
-the named-test rule and same-commit hook. No push was made.
+run had failures, and the existing checkboxes remain governed by the named-test
+rule and same-commit hook. No push was made.
