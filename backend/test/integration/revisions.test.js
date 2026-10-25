@@ -84,17 +84,22 @@ describe('FR-73 moderated listing revisions', () => {
 
   test('FR-29: offers are disabled by default and accepting one never creates a bag entry', async () => {
     const previousFlag = process.env.OFFERS_ENABLED;
+    const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
     delete process.env.OFFERS_ENABLED;
-    const conversation = await negotiation.startConversation(fixture.listingId, fixture.otherUserId);
-    const { rows: offerRows } = await db.query(
-      `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status)
-       VALUES ($1, $2, $3, 50, 'pending') RETURNING id`,
-      [conversation.id, fixture.listingId, fixture.otherUserId]
-    );
-    const offerId = offerRows[0].id;
-    const token = signAccessToken(fixture.otherUserId, { secret: process.env.JWT_ACCESS_SECRET });
-    const createBagEntry = jest.spyOn(orders, 'createBagEntry');
+    process.env.JWT_ACCESS_SECRET = 'integration-offers-disabled-jwt-secret-at-least-32-bytes';
+    let conversation;
+    let offerId;
+    let createBagEntry;
     try {
+      conversation = await negotiation.startConversation(fixture.listingId, fixture.otherUserId);
+      const { rows: offerRows } = await db.query(
+        `INSERT INTO offers (conversation_id, listing_id, proposed_by, amount, status)
+         VALUES ($1, $2, $3, 50, 'pending') RETURNING id`,
+        [conversation.id, fixture.listingId, fixture.otherUserId]
+      );
+      offerId = offerRows[0].id;
+      const token = signAccessToken(fixture.otherUserId, { secret: process.env.JWT_ACCESS_SECRET });
+      createBagEntry = jest.spyOn(orders, 'createBagEntry');
       for (const [path, body] of [
         [`/api/negotiation/conversations/${conversation.id}/offers`, { listingId: fixture.listingId, amount: 50 }],
         [`/api/negotiation/offers/${offerId}/counter`, { amount: 50 }],
@@ -108,11 +113,13 @@ describe('FR-73 moderated listing revisions', () => {
         .rejects.toThrow('Offers are disabled');
       expect(createBagEntry).not.toHaveBeenCalled();
     } finally {
-      createBagEntry.mockRestore();
-      await db.query('DELETE FROM offers WHERE id = $1', [offerId]);
-      await db.query('DELETE FROM conversations WHERE id = $1', [conversation.id]);
+      if (createBagEntry) createBagEntry.mockRestore();
+      if (offerId) await db.query('DELETE FROM offers WHERE id = $1', [offerId]);
+      if (conversation) await db.query('DELETE FROM conversations WHERE id = $1', [conversation.id]);
       if (previousFlag === undefined) delete process.env.OFFERS_ENABLED;
       else process.env.OFFERS_ENABLED = previousFlag;
+      if (previousJwtSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
+      else process.env.JWT_ACCESS_SECRET = previousJwtSecret;
     }
   });
 

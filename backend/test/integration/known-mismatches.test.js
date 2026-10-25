@@ -11,6 +11,7 @@ const { signAccessToken } = require('../../src/lib/jwt');
 const { passwordHashPool } = require('../../src/lib/passwordHashPool');
 const { hashCode, addressDigest } = require('../../src/lib/emailCodeDelivery');
 const { getSharedRedisClient, setSharedRedisClient } = require('../../src/lib/redis');
+const listingSearch = require('../../src/modules/listingSearch.service');
 const { hashPassword } = require('../../src/lib/passwordHashPool');
 const { generateTotpSecret, generateTotpCode, encryptStaffTotpSecret } = require('../../src/lib/totp');
 
@@ -1270,16 +1271,21 @@ describe('known schema and service mismatches', () => {
 
   test('FR-23: keyword search matches title or description on published listings only', async () => {
     await db.query("UPDATE listings SET status = 'published', description = 'searchable probe phrase' WHERE id = $1", [fixture.listingId]);
+    const { rows: [listing] } = await db.query('SELECT search_version FROM listings WHERE id = $1', [fixture.listingId]);
+    await listingSearch.processListingSearchJob({
+      listingId: fixture.listingId,
+      searchVersion: listing.search_version,
+    });
     const { rows: hidden } = await db.query(
       `INSERT INTO listings (seller_id, main_category_id, sub_category_id, condition, title, description, asking_price, status)
        VALUES ($1, $2, $3, 'brand_new', 'Hidden match', 'searchable probe phrase', 10, 'pending_review') RETURNING id`,
       [fixture.userId, fixture.categoryId, fixture.subCategoryId]
     );
     const descriptionResults = await discovery.searchListings('searchable probe phrase');
-    expect(descriptionResults.map((row) => row.id)).toContain(fixture.listingId);
-    expect(descriptionResults.map((row) => row.id)).not.toContain(hidden[0].id);
+    expect(descriptionResults.items.map((row) => row.id)).toContain(fixture.listingId);
+    expect(descriptionResults.items.map((row) => row.id)).not.toContain(hidden[0].id);
     const titleResults = await discovery.searchListings('Fixture listing');
-    expect(titleResults.map((row) => row.id)).toContain(fixture.listingId);
+    expect(titleResults.items.map((row) => row.id)).toContain(fixture.listingId);
   });
 
   test('FR-24: category, condition, and inclusive price filters include zero minimum', async () => {
@@ -1332,22 +1338,32 @@ describe('known schema and service mismatches', () => {
   });
 
   test('FR-22: public listing-detail route serves published listing photos without authentication', async () => {
-    await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
-    await db.query(
-      'INSERT INTO listing_images (listing_id, image_url, display_order) VALUES ($1, $2, 0)',
-      [fixture.listingId, 'https://images.invalid/public.jpg']
-    );
-    const response = await request(app).get(`/api/discovery/listings/${fixture.listingId}`).expect(200);
-    expect(response.headers['cache-control']).toBe('public, max-age=10');
-    expect(response.headers['set-cookie']).toBeUndefined();
-    expect(response.body.images).toEqual([
-      expect.objectContaining({ image_url: 'https://images.invalid/public.jpg', display_order: 0 }),
-    ]);
-    const search = await request(app).get('/api/discovery/search?q=Fixture').expect(200).expect('Cache-Control', 'public, max-age=60');
-    const filter = await request(app).get(`/api/discovery/filter?mainCategoryId=${fixture.categoryId}`)
-      .expect(200).expect('Cache-Control', 'public, max-age=60');
-    expect(search.headers['set-cookie']).toBeUndefined();
-    expect(filter.headers['set-cookie']).toBeUndefined();
+    const previousRedis = getSharedRedisClient();
+    setSharedRedisClient({
+      isOpen: true,
+      eval: async () => [1, 1],
+    });
+    try {
+      await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
+      await db.query(
+        'INSERT INTO listing_images (listing_id, image_url, display_order) VALUES ($1, $2, 0)',
+        [fixture.listingId, 'https://images.invalid/public.jpg']
+      );
+      const response = await request(app).get(`/api/discovery/listings/${fixture.listingId}`).expect(200);
+      expect(response.headers['cache-control']).toBe('public, max-age=10');
+      expect(response.headers['set-cookie']).toBeUndefined();
+      expect(response.body.images).toEqual([
+        expect.objectContaining({ image_url: 'https://images.invalid/public.jpg', display_order: 0 }),
+      ]);
+      const search = await request(app).get('/api/discovery/search?q=Fixture').expect(200)
+        .expect('Cache-Control', 'public, max-age=60');
+      const filter = await request(app).get(`/api/discovery/filter?mainCategoryId=${fixture.categoryId}`)
+        .expect(200).expect('Cache-Control', 'public, max-age=60');
+      expect(search.headers['set-cookie']).toBeUndefined();
+      expect(filter.headers['set-cookie']).toBeUndefined();
+    } finally {
+      setSharedRedisClient(previousRedis);
+    }
   });
 
   test('FR-23: search rejects an empty keyword instead of returning every public listing', async () => {

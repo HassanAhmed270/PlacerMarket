@@ -3,7 +3,7 @@ const express = require('express');
 const request = require('supertest');
 const { createClient } = require('redis');
 const { createRateLimiter, createAccountRateLimiter } = require('../../src/middleware/rateLimit');
-const { reserveAddressSend } = require('../../src/lib/emailCodeDelivery');
+const { addressDigest, reserveAddressSend } = require('../../src/lib/emailCodeDelivery');
 
 const redisUrl = process.env.TEST_REDIS_URL;
 const suite = redisUrl ? describe : describe.skip;
@@ -142,6 +142,7 @@ suite('SEC-08: real Redis request-limit counters', () => {
     const previousJwtSecret = process.env.JWT_ACCESS_SECRET;
     process.env.JWT_ACCESS_SECRET = 'integration-test-secret-material-at-least-32-bytes';
     const email = `redis-${randomUUID()}@example.test`;
+    const cooldownKey = `pm:email-code:{${addressDigest(email)}}:cooldown`;
     const limits = {
       EMAIL_CODE_ADDRESS_HOURLY_MAX: 3,
       EMAIL_CODE_ADDRESS_DAILY_MAX: 10,
@@ -154,7 +155,13 @@ suite('SEC-08: real Redis request-limit counters', () => {
       for (let index = 0; index < 4; index += 1) {
         try { await reserveAddressSend(email, client, limits); results.push('ok'); }
         catch { results.push('refused'); }
-        if (index < 3) await new Promise((resolve) => setTimeout(resolve, 1100));
+        if (index < 3) {
+          const deadline = Date.now() + 5000;
+          while (await client.exists(cooldownKey) && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          expect(await client.exists(cooldownKey)).toBe(0);
+        }
       }
       expect(results).toEqual(['ok', 'ok', 'ok', 'refused']);
     } finally {
