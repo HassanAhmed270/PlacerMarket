@@ -3,10 +3,10 @@
 Phase 1 security implementation evidence and outstanding live checks are
 summarized in `PHASE1_GATE_REPORT.md` and `LIVE_CHECKS.md`; Phase 3 evidence is
 in `PHASE3_GATE_REPORT.md`. On 2026-10-25 the backend unit/smoke suite passed
-46 suites/581 tests. The guarded integration suite did not start because
-`TEST_DATABASE_URL` was unset. Only checked rows have complete, current
-implementation/test evidence; local test results do not close deployment or
-integration gates.
+46 suites/569 tests. The guarded integration suite ran: 11 suites passed, 2
+failed; 122 tests passed, 3 failed, and none were skipped. Only checked rows
+have complete, current implementation/test evidence; local test results do
+not close deployment or integration gates.
 
 Read alongside `rules.md` (Section 9 makes this binding). Same convention as
 `specs.md`: **every row has a checkbox**, ticked only when that job is done.
@@ -73,7 +73,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [ ] **SEC-11 Every non-public route is permission-checked on the server** (`requireAuth` + `requirePermission`); hiding a button client-side is never a control.
   *Enforced by:* test · *Today:* **PARTIAL** — the admin router is fully gated and tested. `payments` (`expected-amount`, `confirm-collection`, `reconcile`) and delivery `POST /orders/:id/status` need only a login. No courier/ops role exists in `lib/roles.js`; decided 2026-10-13: only an admin marks Delivered, through a new `order.mark_delivered` permission, and the COD payment routes are replaced in Phase 4.
 - [ ] **SEC-12 Object-level authorization (BOLA).** Every handler that takes an id (order, offer, dispute, notification, conversation, listing, …) verifies the caller is a party to it or holds a permission. Test pattern: user A cannot read or change user B's object, on every `:id` route.
-  *Enforced by:* named tests `SEC-12: every conversation/message ID route denies a stranger`, `SEC-12: inbox and message keyset pages are participant-scoped and report unread counts`, and `SEC-12: staff conversation reads require the new permission and an audited reference` in `test/integration/conversation-security.test.js`; photo and listing-revision ownership tests are in `test/integration/known-mismatches.test.js` and `test/integration/revisions.test.js`. **Partial, unchecked:** these PostgreSQL tests could not run in the 2026-10-25 refresh because `TEST_DATABASE_URL` was unset, and the full set of object-ID routes is not demonstrated by this subset. Offers are disabled by default per the 2026-10-22 owner decision.
+  *Enforced by:* named tests `SEC-12: every conversation/message ID route denies a stranger`, `SEC-12: inbox and message keyset pages are participant-scoped and report unread counts`, and `SEC-12: staff conversation reads require the new permission and an audited reference` in `test/integration/conversation-security.test.js`; photo and listing-revision ownership tests are in `test/integration/known-mismatches.test.js` and `test/integration/revisions.test.js`. **Partial, unchecked:** the named conversation, photo and listing-revision tests passed in the 2026-10-25 integration run, but the full set of object-ID routes is not demonstrated by this subset. Offers are disabled by default per the 2026-10-22 owner decision.
 - [ ] **SEC-13 No mass assignment.** Handlers pick named fields from `req.body`; the client can never set `role`, `status`, `seller_id`, `buyer_id`, prices after agreement, or any column list. `role` changes only through admin paths.
   *Enforced by:* review · *Today:* needs an audit — services destructure named fields, but several routes spread `...req.body` into service arguments.
 - [ ] **SEC-14 Row-level security (Postgres RLS).** Evaluated, **not adopted**: one DB role plus a modular monolith means RLS needs a per-request context on every query. Revisit if app-layer ownership tests (SEC-12) prove hard to keep complete. Awaiting your confirmation.
@@ -103,7 +103,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [x] **SEC-23 Security headers.** `helmet` with a real CSP.
   *Enforced by:* `test/smoke/app.test.js` — SEC-23 asserts Helmet security headers and CSP.
 - [ ] **SEC-24 Rate limiting.** Global limit, stricter on auth, messaging, offers and dispute filing; correct `trust proxy` setting behind a proxy.
-  *Enforced by:* `test/unit/rate-limit.test.js` covers concurrent account/IP limits, fail-closed behavior, soft challenge, and the approved conversation/message caps; `test/integration/rate-limit.test.js` requires `TEST_REDIS_URL`. **Partial, unchecked:** current unit tests pass but do not name SEC-24 in their test titles; the guarded integration suite did not start without `TEST_DATABASE_URL`, and global/dispute coverage plus deployed proxy forwarding remain pending.
+  *Enforced by:* `test/unit/rate-limit.test.js` covers concurrent account/IP limits, fail-closed behavior, soft challenge, and the approved conversation/message caps; `test/integration/rate-limit.test.js` requires `TEST_REDIS_URL`. **Partial, unchecked:** the unit tests and integration rate-limit suite passed, but their test titles do not name SEC-24; global/dispute coverage and deployed proxy forwarding remain pending.
 - [x] **SEC-25 Explicit request-size limit** *(added)*. `express.json({ limit })` set deliberately.
   *Enforced by:* `test/smoke/app.test.js` — SEC-25 rejects bodies over the explicit one-megabyte limit.
 

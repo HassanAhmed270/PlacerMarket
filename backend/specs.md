@@ -8,9 +8,11 @@ Phase 1, Phase 2, and Phase 3 evidence and residual gate work are mapped in
 `PHASE1_GATE_REPORT.md`, `PHASE2_GATE_REPORT.md`, and `PHASE3_GATE_REPORT.md`.
 Checkboxes are retained only when a passing test title names the requirement
 and asserts its current wording. Phase 3's current backend unit/smoke run passed
-46 suites/581 tests and the frontend suite passed 16/16 on 2026-10-25. The
-guarded integration rerun did not start because `TEST_DATABASE_URL` was unset;
-integration-only checks are not treated as passing in this refresh.
+46 suites/569 tests and the frontend suite passed 16/16 on 2026-10-25. The
+guarded integration suite ran: 11 suites passed, 2 failed; 122 tests passed,
+3 failed, and none were skipped. See `PHASE3_GATE_REPORT.md` for the named
+failures and per-requirement evidence; no checklist boxes were ticked in this
+refresh.
 
 **Phase 3 decision refresh (2026-10-25):** the 2026-10-22 owner decisions
 supersede negotiation-only Buy, broaden the approved seller card to include
@@ -71,14 +73,14 @@ tests. Frontend UI behavior rows without named tests remain unchecked.
 - [ ] FR-21a Rejected listings can be resubmitted after edits; reviewed case-by-case, no automatic cooldown.
 
 ## 4. Search & Discovery
-- [ ] FR-22 Pure browsing (viewing marketplace, listing details, images) is fully public — no login required. Test: `FR-22: public listing-detail route serves published listing photos without authentication` in `test/integration/known-mismatches.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
-- [ ] FR-22a Login required for favorites and messaging. Offers are dormant behind `OFFERS_ENABLED` (default off) and deferred; see the 2026-10-22 owner decision. Test: `FR-22a, FR-26: favorites require login, add/remove idempotently, and paginate by keyset` in `test/integration/discovery.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
+- [ ] FR-22 Pure browsing (viewing marketplace, listing details, images) is fully public — no login required. Test: `FR-22: public listing-detail route serves published listing photos without authentication` in `test/integration/known-mismatches.test.js` (failed: its public search request returned HTTP 503 instead of 200).
+- [ ] FR-22a Login required for favorites and messaging. Offers are dormant behind `OFFERS_ENABLED` (default off) and deferred; see the 2026-10-22 owner decision. Test: `FR-22a, FR-26: favorites require login, add/remove idempotently, and paginate by keyset` in `test/integration/discovery.test.js` (passed).
 - [ ] FR-22b Redirect-and-return login pattern: logged-out user attempting a gated action is sent to /login, then returned to the exact action after successful login (no inline modal).
-- [ ] FR-23 Buyers can search listings by keyword. Test: `FR-23: keyword search matches title or description on published listings only` in `test/integration/known-mismatches.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
-- [ ] FR-24 Buyers can filter by main category, sub-category/occasion, condition, price range, and seller registered city. The city filter joins through `users.city_id`. Tests: the two `FR-24`-named filter tests in `test/integration/known-mismatches.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
-- [ ] FR-25 Buyers can view full listing details, asking price, live availability, images, and a seller card containing the seller's display alias, rating, and join date. Sold listings return 200 with a sold flag and six newest same-sub-category listings priced within 30%; paused listings return 200 with an unavailable flag; removed listings return 410. Listing status/detail staleness is at most 10 seconds. The current `FR-25` unit test asserts the old card shape without `display_alias`; the PostgreSQL coverage was not rerun, so this row is unchecked.
+- [ ] FR-23 Buyers can search listings by keyword. Test: `FR-23: keyword search matches title or description on published listings only` in `test/integration/known-mismatches.test.js` (failed: `descriptionResults.map is not a function`).
+- [ ] FR-24 Buyers can filter by main category, sub-category/occasion, condition, price range, and seller registered city. The city filter joins through `users.city_id`. Tests: the two `FR-24`-named filter tests in `test/integration/known-mismatches.test.js` (both passed).
+- [ ] FR-25 Buyers can view full listing details, asking price, live availability, images, and a seller card containing the seller's display alias, rating, and join date. Sold listings return 200 with a sold flag and six newest same-sub-category listings priced within 30%; paused listings return 200 with an unavailable flag; removed listings return 410. Listing status/detail staleness is at most 10 seconds. The PostgreSQL status/detail test passed, but the seller-card tests still do not verify the owner-approved `display_alias`; this row remains unchecked.
 - [x] FR-26 Buyers can favorite/save listings (requires login); add/remove are idempotent and the favorites list uses keyset pagination. Tests: `FR-26: add/remove are safe to repeat and keyset pages use a deterministic cursor` and `FR-26: malformed cursors and zero-size pages are rejected` in `test/unit/discovery.service.test.js`.
-- [ ] FR-27 Buyers can share a listing (external link, no login required). Test: `FR-27: public share URL is available without login and does not set cookies` in `test/integration/discovery.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
+- [ ] FR-27 Buyers can share a listing (external link, no login required). Test: `FR-27: public share URL is available without login and does not set cookies` in `test/integration/discovery.test.js` (passed).
 - [ ] FR-27a Seller's public profile card (buyer-facing) shows display alias, rating and join date only — no contact details, payout details, verification data, or seller stats. (Seller's own private dashboard may show richer stats.) Owner decision: 2026-10-22. The existing `FR-27a` unit/integration test asserts the superseded no-alias shape; update implementation and test before checking this row.
 - [ ] FR-27b Two-way rating system: after order completion, both buyer and seller can rate each other. Feeds FR-27a.
 
@@ -226,7 +228,7 @@ tests. Frontend UI behavior rows without named tests remain unchecked.
 - [ ] FR-80c Suggestions use a worker-built versioned vocabulary of categories, brands, fabrics, colors and synonyms, matched in the browser, plus browser-only recent searches. Trending, popular-search mining and “did you mean” are out of scope (owner decision, 2026-10-22).
 - [ ] FR-80d Search load protection: CDN → Redis (30–60 s) → Postgres; single-flight merging; a separate small search connection pool with a 1–2 s statement timeout; a concurrency cap with graceful degradation; bounded query length/terms/filters and result depth; per-IP rate limits.
 - [ ] FR-80e Sort set: newest, price low→high, price high→low, relevance (only when there is a text query). Popularity sort comes later **(DEFERRED)**.
-- [ ] FR-80f Sold items are hidden from search results; reserved items show a badge. **Owner-approved 2026-10-22.** PostgreSQL behavior test exists but was not rerun because `TEST_DATABASE_URL` is unset.
+- [ ] FR-80f Sold items are hidden from search results; reserved items show a badge. **Owner-approved 2026-10-22.** The FR-80a PostgreSQL suite passed its reservation/sold index test; complete search visibility and reserved-badge behavior remains unproven.
 
 ## 19. Frontend delivery & SEO  (scale program, Point 8)
 - [ ] FR-81 Keep React + Vite; NO Next.js migration.
