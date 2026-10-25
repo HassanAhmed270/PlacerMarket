@@ -2,13 +2,9 @@
 
 Phase 3 is **not closed**. This report maps the Phase 3 scope in `Phases.md`
 and the 2026-10-22 owner decisions to current evidence. A test file existing is
-not the same as a passing test. A prior guarded integration run is recorded
-below. The first S15 invocation stopped in `globalSetup` because
-`TEST_DATABASE_URL` was absent from that command process. A rerun loaded the
-documented local test environment, verified the loopback `testing_only`
-database guard, and ran the suite; two suites failed, with eight failed tests
-and no skipped tests. Redis at `127.0.0.1:6379` refused connections during the
-rate-limit suite.
+not the same as a passing test. The latest guarded integration run passed all
+13 suites and 125 tests with no skips. Earlier S15 attempts and their resolved
+failures are recorded below.
 
 The 2026-10-22 owner decisions supersede the former negotiation-only Buy flow.
 Fixed-price Buy is the early-site path; Phase 3 only routes a signed-in buyer to
@@ -24,16 +20,16 @@ listing or charges payment.
 | SEC-16 | Still unproven as a full integration requirement. The passing `SEC-16` tests are selected smoke/unit route-boundary checks, not comprehensive integration coverage. |
 | SEC-24 | Still unproven. The integration rate-limit suite passed, including `conversation Redis limits allow exactly 10 per hour and 30 per day per account` and `message Redis limits allow exactly 10 per minute and 60 per hour per account`; those test titles do not name SEC-24, and the complete SEC-24 scope is not covered. |
 | SEC-36 | Still unproven. `test/unit/route-cache-policy.test.js` passed, but the full requirement has no passing integration test naming SEC-36 and the money-data access path remains unverified. |
-| FR-22 | Passed: `FR-22, FR-25: listing status/detail distinguish available, paused, sold, reserved and removed states`. Failed: `FR-22: public listing-detail route serves published listing photos without authentication` — its public search request expected HTTP 200 and received HTTP 503. |
+| FR-22 | Passed: `FR-22, FR-25: listing status/detail distinguish available, paused, sold, reserved and removed states`; `FR-22: public listing-detail route serves published listing photos without authentication` (public detail, search and filter work without authentication or cookies). |
 | FR-22a | Passed: `FR-22a, FR-26: favorites require login, add/remove idempotently, and paginate by keyset`. |
-| FR-23 | Failed: `FR-23: keyword search matches title or description on published listings only` — `TypeError: descriptionResults.map is not a function`. `FR-23: search rejects an empty keyword instead of returning every public listing` passed. Overall FR-23 remains unproven. |
+| FR-23 | Passed: `FR-23: keyword search matches title or description on published listings only` and `FR-23: search rejects an empty keyword instead of returning every public listing`. The search fixture is indexed before asserting title/description matches and excludes unpublished listings. |
 | FR-24 | Passed: `FR-24: category, condition, and inclusive price filters include zero minimum`; `FR-24: city filter uses the seller registered city`. |
 | FR-25 | Passed: `FR-22, FR-25: listing status/detail distinguish available, paused, sold, reserved and removed states`. The separate seller-card test passes but asserts the superseded no-alias shape; the approved `display_alias` requirement remains unproven. |
 | FR-26 | Passed: `FR-22a, FR-26: favorites require login, add/remove idempotently, and paginate by keyset`. |
 | FR-27 | Passed: `FR-27: public share URL is available without login and does not set cookies`. |
 | FR-27a | Still unproven against the owner decision: `FR-27a: public seller card exposes rating and join date only` does not verify the required `display_alias`. |
 | FR-28 | Still unproven as a complete requirement. SEC-12 conversation authorization tests passed, but there is no passing integration test title naming FR-28 and covering the full messaging behavior. |
-| FR-29 | Failed: `FR-29: offers are disabled by default and accepting one never creates a bag entry` — token signing threw `TypeError: Signing requires at least 32 bytes of key material.` Cleanup also reported a listing/conversation foreign-key violation. FR-29 is superseded by the fixed-price Buy decision; offers remain deferred. |
+| FR-29 | The test `FR-29: offers are disabled by default and accepting one never creates a bag entry` passes after using a valid test-only JWT key and guaranteeing cleanup. FR-29 is superseded by the fixed-price Buy decision; offers remain deferred. |
 | FR-30 | Still unproven as a backend integration requirement. The frontend test `contact-detail block is shown as a clear, actionable message` passed, but no passing integration test title names FR-30. |
 | FR-31 | Still unproven by a passing named test; offer history is deferred by the owner decision. |
 | FR-80 | Still unproven as a complete requirement. The `FR-80a listing search indexing on PostgreSQL` integration suite passed; that does not establish the complete search and filter scope. |
@@ -57,9 +53,9 @@ listing or charges payment.
 
 | Phase 3 item | State | Evidence / remaining work |
 |---|---|---|
-| Public listing browse and details (FR-22) | Parked | The status/detail integration test passed; `FR-22: public listing-detail route serves published listing photos without authentication` failed because the included public search request returned HTTP 503 instead of 200. |
+| Public listing browse and details (FR-22) | Done (with evidence) | `FR-22, FR-25: listing status/detail distinguish available, paused, sold, reserved and removed states` and `FR-22: public listing-detail route serves published listing photos without authentication` passed in the latest guarded integration run. The public detail, search and filter requests are unauthenticated and assert no cookies. |
 | Login gates for favorites and messaging (FR-22a) | Parked | `FR-22a, FR-26: favorites require login, add/remove idempotently, and paginate by keyset` passed. Offers are disabled by owner decision and are not an active gate. |
-| Keyword search (FR-23) | Parked | The title/description search integration test failed with `TypeError: descriptionResults.map is not a function`; the empty-keyword rejection test passed. |
+| Keyword search (FR-23) | Done (with evidence) | `FR-23: keyword search matches title or description on published listings only` passed after the test indexes its published fixture and asserts matching title/description results while excluding an unpublished listing. The named empty-keyword rejection test also passed. |
 | Category, condition, price and seller-city filters (FR-24) | Parked | Both named `FR-24` integration tests passed. The product decision is resolved: city comes from `users.city_id`, not a listing city. |
 | Listing detail, status, sold suggestions and seller card (FR-25) | Parked | `FR-22, FR-25: listing status/detail distinguish available, paused, sold, reserved and removed states` passed. The seller-card assertion still omits the approved `display_alias`; the full requirement is unproven. |
 | Favorite add/remove and keyset pagination (FR-26) | Done (with evidence) | Unit tests and `FR-22a, FR-26: favorites require login, add/remove idempotently, and paginate by keyset` passed. End-to-end coverage is available; broader checklist ticking is still subject to the same-commit hook rule. |
@@ -120,7 +116,7 @@ listing or charges payment.
 | SEO titles/descriptions, structured data, URLs, canonicals and indexability | Done (with evidence) | The owner decisions are documented; implementation/test status is separately mapped under FR-81/82 above. |
 | CDN provider selection and production snapshot-serving/purge model | Live-check pending | No provider is selected. Verify production routing, no-cloaking behavior, cache freshness and purge delivery in `LIVE_CHECKS.md`. |
 | Production cache freshness and deployed CDN behavior | Live-check pending | Verify the approved 10-second detail/status and 60-second search/category freshness limits against the deployed origin/CDN. |
-| Integration test rerun with approved `TEST_DATABASE_URL` (and `TEST_REDIS_URL` where required) | Open | Latest guarded S15 rerun: 11 suites passed, 2 failed; 117 tests passed, 8 failed; no skipped tests. Six rate-limit tests failed because Redis refused connections, and the FR-22 and FR-23 tests failed for the reasons listed below. |
+| Integration test rerun with approved `TEST_DATABASE_URL` (and `TEST_REDIS_URL` where required) | Done (with evidence) | Latest guarded run: 13 suites passed, 125 tests passed, none failed or skipped. Earlier failures and fixes are documented in the S15 verification record below. |
 | Offers, counters, offer acceptance/history, Urdu script/RTL, popularity, trending, “did you mean”, real-time chat, video and voice | Deferred | Owner decisions and deferred scope are recorded in `open-questions.md` and `END_OF_PHASES_REVIEW.md`. Video and voice remain FR-75–FR-76a deferrals. |
 
 ## Prior integration run and verification record (2026-10-25)
@@ -154,45 +150,33 @@ or production-readiness claim is made.
 
 ## S15 verification attempt (2026-10-25)
 
-The backend unit result below was supplied as a terminal transcript by the
-operator. The initial S15 integration invocation stopped before collection
-because the command process lacked `TEST_DATABASE_URL`. For the rerun, the
-documented local environment was loaded without printing its values, the
-database was verified as loopback `testing_only`, and Redis DB 15 was selected.
-Jest then executed the integration tests. Other commands were run from their
-respective package folders.
+The initial S15 integration invocation stopped before collection because the
+command process lacked `TEST_DATABASE_URL`. For subsequent runs, the documented
+local environment was loaded without printing its values, the database was
+verified as loopback `testing_only`, and Redis DB 15 was selected. The pasted
+operator run initially exposed three test failures; after fixing them, the full
+guarded suite passed. The backend unit result below was supplied as a terminal
+transcript; a fresh unit run also passed after the dependency fix.
 
 - Backend unit: `npm.cmd test -- --runInBand` — operator-provided transcript:
   - `Test Suites: 46 passed, 46 total`
   - `Tests:       569 passed, 569 total`
   - `Snapshots:   0 total`
-- Backend integration: `npm.cmd run test:integration -- --runInBand`:
-  - `Test Suites: 2 failed, 11 passed, 13 total`
-  - `Tests:       8 failed, 117 passed, 125 total`
+- Backend integration: `npm.cmd run test:integration -- --runInBand` — latest run:
+  - `Test Suites: 13 passed, 13 total`
+  - `Tests:       125 passed, 125 total`
   - `Snapshots:   0 total`
-  - No tests were skipped. Failures:
-    - `FR-23: keyword search matches title or description on published listings only` —
-      `TypeError: descriptionResults.map is not a function`.
-    - `FR-22: public listing-detail route serves published listing photos without authentication` —
-      its public search request expected HTTP 200 and received HTTP 503.
-    - `SEC-08: concurrent requests share atomic per-IP and per-account limits` —
-      `connect ECONNREFUSED 127.0.0.1:6379`.
-    - `conversation Redis limits allow exactly 10 per hour and 30 per day per account` —
-      `connect ECONNREFUSED 127.0.0.1:6379`.
-    - `message Redis limits allow exactly 10 per minute and 60 per hour per account` —
-      `connect ECONNREFUSED 127.0.0.1:6379`.
-    - `FR-83f: concurrent authenticator and step-up requests share the security action limit` —
-      `connect ECONNREFUSED 127.0.0.1:6379`.
-    - `SEC-08, FR-83d: concurrent email-code sends with a cooldown allow exactly one burst send` —
-      `connect ECONNREFUSED 127.0.0.1:6379`.
-    - `SEC-08, FR-83d: sequential email-code sends enforce the per-address cap after cooldowns` —
-      `connect ECONNREFUSED 127.0.0.1:6379`.
-  - The `afterAll` cleanup hook in `test/integration/rate-limit.test.js` also
-    exceeded its 20-second timeout after Redis connection failures.
+  - No tests were failed or skipped. Fixes: the keyword test now checks the
+    paginated `{ items }` contract and indexes its fixture; the public route
+    test provides a deterministic shared Redis limiter client; the FR-29 test
+    sets a valid test-only JWT key before signing and always cleans up; and the
+    sequential Redis email cooldown test waits for the actual cooldown key to
+    expire instead of assuming a fixed sleep is sufficient.
 - Backend schema: `npm.cmd run db:check-schema` — exit 0.
-- Backend production dependency audit: `npm.cmd audit --omit=dev` — exit 1;
-  `1 high severity vulnerability`, `body-parser` 2.0.0–2.3.0,
-  `GHSA-27r3-jxmh-p828`.
+- Backend dependency fix: `npm.cmd audit fix` updated `body-parser` to 2.4.0
+  and `qs` to 6.16.1 in `package-lock.json`.
+- Backend production dependency audit: `npm.cmd audit --omit=dev` — exit 0;
+  `found 0 vulnerabilities`.
 - Frontend production dependency audit: `npm.cmd audit --omit=dev` — exit 0;
   `found 0 vulnerabilities`.
 - Frontend lint: `npm.cmd run lint` — exit 0.
@@ -203,6 +187,7 @@ respective package folders.
 - Public bundle: `npm.cmd run check:bundle` — exit 0; largest public route
   `75.1 KB gzip (budget: 200 KB)`.
 
-No `specs.md` or `security.md` checkbox was changed: the latest integration
-run had failures, and the existing checkboxes remain governed by the named-test
-rule and same-commit hook. No push was made.
+`specs.md` FR-22 and FR-23 are checked based on their passing named integration
+tests, staged with those test changes to comply with the same-commit hook.
+Security rows remain unchecked where the passing tests do not cover their full
+scope. No push was made as part of this follow-up.
