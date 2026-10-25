@@ -1,6 +1,6 @@
 /** FR-77: the separate worker process consumes durable PostgreSQL jobs. */
 
-const { createQueueClient, QUEUES, WORKER_CONCURRENCY } = require('./src/lib/queue');
+const { createQueueClient, startProducer, stopProducer, QUEUES, WORKER_CONCURRENCY } = require('./src/lib/queue');
 const { createRedisClient } = require('./src/lib/redis');
 const notifications = require('./src/modules/notifications.service');
 const { createEmailSender } = require('./src/lib/adapters/emailSender');
@@ -35,6 +35,7 @@ async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
   try {
     await redis.start();
     await queue.start();
+    await startProducer();
     await queue.boss.work(
       QUEUES.NOTIFICATIONS,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.NOTIFICATIONS], transactional: true },
@@ -80,6 +81,7 @@ async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
         // eslint-disable-next-line no-console
         console.log(`Poshaak worker shutting down (${signal})`);
         await queue.stop();
+        await stopProducer();
         await redis.stop();
       })();
       return shuttingDown;
@@ -95,6 +97,7 @@ async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
     return { queue, shutdown };
   } catch (error) {
     await queue.stop().catch(() => {});
+    await stopProducer().catch(() => {});
     await redis.stop().catch(() => {});
     throw error;
   }

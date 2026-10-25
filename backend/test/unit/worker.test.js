@@ -4,6 +4,8 @@ const mockQueue = {
   QUEUES: { NOTIFICATIONS: 'notifications', EMAIL: 'email', LISTING_SEARCH: 'listing-search', PAGE_SNAPSHOTS: 'page-snapshots' },
   WORKER_CONCURRENCY: { notifications: 4, email: 2, 'listing-search': 4, 'page-snapshots': 1 },
   createQueueClient: jest.fn(),
+  startProducer: jest.fn().mockResolvedValue(undefined),
+  stopProducer: jest.fn().mockResolvedValue(undefined),
 };
 const mockRedis = { createRedisClient: jest.fn() };
 const mockNotifications = { processNotificationJob: jest.fn() };
@@ -71,6 +73,7 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
       const worker = await startWorker({ emailSender, cdnPurger: purger });
       expect(redis.start).toHaveBeenCalledTimes(1);
       expect(queue.start).toHaveBeenCalledTimes(1);
+      expect(mockQueue.startProducer).toHaveBeenCalledTimes(1);
       expect(mockQueue.createQueueClient).toHaveBeenCalledWith({
         connectionString: 'postgres://worker/db', worker: true,
       });
@@ -105,6 +108,7 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
       expect(purger.purge).toHaveBeenCalledWith(['/']);
       await worker.shutdown('test');
       expect(queue.stop).toHaveBeenCalledTimes(1);
+      expect(mockQueue.stopProducer).toHaveBeenCalledTimes(1);
       expect(redis.stop).toHaveBeenCalledTimes(1);
     } finally {
       for (const listener of process.listeners('SIGINT')) {
