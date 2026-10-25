@@ -74,11 +74,31 @@ export function createApiClient({
     return URL.createObjectURL(await response.blob())
   }
 
+  function queryString(values) {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(values || {})) {
+      if (value !== undefined && value !== null && value !== '') params.set(key, String(value))
+    }
+    const encoded = params.toString()
+    return encoded ? `?${encoded.replace(/\+/g, '%20')}` : ''
+  }
+
   return {
     setAccessToken(token) { accessTokenInMemory = token || null },
     clearAccessToken() { accessTokenInMemory = null },
+    isAuthenticated() { return Boolean(accessTokenInMemory) },
     getMainCategories: () => get('catalog/main-categories'),
     getSubCategories: (id) => get(`catalog/main-categories/${encodeURIComponent(id)}/sub-categories`),
+    getManagedAttributes: (type) => get(`catalog/attributes/${encodeURIComponent(type)}`),
+    getCities: () => get('users/cities'),
+    getSearchVocabulary: () => get('discovery/vocabulary'),
+    getFilteredListings: (filters = {}) => get(`discovery/filter${queryString(filters)}`),
+    getShareUrl: (id) => get(`discovery/listings/${encodeURIComponent(id)}/share-url`),
+    addFavorite: (id) => post(`discovery/listings/${encodeURIComponent(id)}/favorite`, {}, { authenticated: true }),
+    removeFavorite: (id) => send('DELETE', `discovery/listings/${encodeURIComponent(id)}/favorite`, undefined, { authenticated: true }),
+    startConversation: (listingId) => post('negotiation/conversations', { listingId }, { authenticated: true }),
+    getConversationMessages: (id) => get(`negotiation/conversations/${encodeURIComponent(id)}/messages`, { authenticated: true }),
+    sendConversationMessage: (id, body) => post(`negotiation/conversations/${encodeURIComponent(id)}/messages`, { body }, { authenticated: true }),
     getConditionTypes: () => get('catalog/condition-types'),
     getMeasurementFields: (id) => get(`catalog/sub-categories/${encodeURIComponent(id)}/measurement-fields`),
     getSeoRecommendation: (input) => post('listings/seo-recommendation', input, { authenticated: true }),
@@ -98,7 +118,10 @@ export function createApiClient({
     approveListingRevision: (id) => post(`listings/revisions/${encodeURIComponent(id)}/approve`, {}, { authenticated: true }),
     rejectListingRevision: (id, reason) => post(`listings/revisions/${encodeURIComponent(id)}/reject`, { reason }, { authenticated: true }),
     getPublicListing: (id) => get(`discovery/listings/${encodeURIComponent(id)}`),
-    searchListings: (query) => get(`discovery/search?q=${encodeURIComponent(query)}`),
+    searchListings: (input = {}) => {
+      const values = typeof input === 'string' ? { q: input } : input
+      return get(`discovery/search${queryString(values)}`)
+    },
     getAuthenticatedImage,
     login: (input) => post('users/login', input),
     staffLogin: (input) => post('users/login/totp', input),

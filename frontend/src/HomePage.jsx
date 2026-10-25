@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react'
+import { BrowseState, ListingGrid } from './BrowseComponents.jsx'
 import { api } from './lib/api.js'
 
 function HomePage() {
   const [categories, setCategories] = useState([])
   const [categoryState, setCategoryState] = useState('loading')
+  const [listings, setListings] = useState([])
+  const [listingState, setListingState] = useState('loading')
+  const [listingError, setListingError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -15,6 +19,17 @@ function HomePage() {
       })
       .catch(() => {
         if (active) setCategoryState('unavailable')
+      })
+    api.getFilteredListings()
+      .then((result) => {
+        if (!active) return
+        setListings(result.slice(0, 8))
+        setListingState('ready')
+      })
+      .catch((cause) => {
+        if (!active) return
+        setListingError(cause.message)
+        setListingState('error')
       })
 
     return () => { active = false }
@@ -32,6 +47,7 @@ function HomePage() {
           <a className="button button-primary" href="#categories">
             Explore categories <span aria-hidden="true">↗</span>
           </a>
+          <a className="hero-search-link" href="/search">Search all styles</a>
           <p className="preview-note">Thoughtful finds, shared with care</p>
         </div>
         <div className="hero-art" aria-hidden="true">
@@ -53,7 +69,7 @@ function HomePage() {
             <p className="eyebrow">Start somewhere lovely</p>
             <h2 id="categories-title">Explore categories</h2>
           </div>
-          <span className="section-index">01 / Browse</span>
+          <a className="section-index" href="/categories">View all categories ↗</a>
         </div>
         {categoryState === 'loading' && <p className="category-message" role="status">Loading categories…</p>}
         {categoryState === 'unavailable' && (
@@ -67,14 +83,28 @@ function HomePage() {
         {categoryState === 'ready' && categories.length > 0 && (
           <ul className="category-list">
             {categories.map((category, index) => (
-              <li className="category-card" key={category.id}>
+              <li key={category.id}>
+                <a className="category-card" href={`/category/${encodeURIComponent(category.id)}`}>
                 <span className="category-number" aria-hidden="true">{String(index + 1).padStart(2, '0')}</span>
                 <span>{category.name}</span>
                 <span className="category-arrow" aria-hidden="true">↗</span>
+                </a>
               </li>
             ))}
           </ul>
         )}
+      </section>
+
+      <section className="category-section newest-section" aria-labelledby="newest-title">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Freshly published</p>
+            <h2 id="newest-title">Newest finds</h2>
+          </div>
+          <a className="section-index" href="/search">Explore all listings ↗</a>
+        </div>
+        <BrowseState state={listingState} error={listingError} />
+        {listingState === 'ready' && <ListingGrid listings={listings} />}
       </section>
 
       <section className="about-section" id="about" aria-labelledby="about-title">

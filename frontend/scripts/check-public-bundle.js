@@ -9,6 +9,9 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 const publicRoutes = {
   '/': 'src/HomePage.jsx',
   '/search': 'src/SearchPage.jsx',
+  '/categories': 'src/CategoryPage.jsx',
+  '/category/:id': 'src/CategoryPage.jsx',
+  '/checkout/soon': null,
   '/login': 'src/AuthScreen.jsx',
   '/listing/:id': 'src/PublicListingDetail.jsx',
 }
@@ -55,7 +58,7 @@ function gzipBytes(entries) {
 
 let largestRoute = 0
 for (const [route, source] of Object.entries(publicRoutes)) {
-  const entries = collectStaticGraph([appEntry, findEntry(source)])
+  const entries = collectStaticGraph(source ? [appEntry, findEntry(source)] : [appEntry])
   const includedSources = [...entries].map((key) => manifest[key].src).filter(Boolean)
   const leakedPrivateModule = includedSources.find((module) => privateModules.has(module))
   if (leakedPrivateModule) {

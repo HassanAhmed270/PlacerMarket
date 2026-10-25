@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { api } from './lib/api.js'
+import { getLoginReturnTo } from './lib/browse.js'
 
 const AccountWorkspace = lazy(() => import('./AccountWorkspace.jsx'))
 
@@ -18,8 +19,7 @@ function AuthScreen() {
   useEffect(() => {
     if (path !== '/login' && path !== '/account') return undefined
     api.refresh().then((result) => {
-      api.setAccessToken(result.accessToken)
-      setAccessToken(result.accessToken)
+      acceptAccessToken(result.accessToken)
     }).catch(() => {})
     return undefined
   }, [path])
@@ -44,11 +44,14 @@ function AuthScreen() {
   function acceptAccessToken(token) {
     api.setAccessToken(token)
     setAccessToken(token)
-    window.history.pushState({}, '', '/account')
-    setPath('/account')
+    const destination = getLoginReturnTo(window.location.search)
+    window.history.replaceState({}, '', destination)
+    if (destination === '/account') setPath('/account')
+    else window.dispatchEvent(new PopStateEvent('popstate'))
   }
 
   if (accessToken) {
+    if (path !== '/account') return null
     return (
       <Suspense fallback={<main className="auth-shell" role="status">Loading your account…</main>}>
         <AccountWorkspace onSignOut={() => {
