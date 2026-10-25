@@ -1,3 +1,5 @@
 *.docx
 ~$*
 backend/.demo.env
+private-media/
+dump.rdb
