@@ -4,6 +4,7 @@ jest.mock('../../src/db.service', () => ({
 }));
 jest.mock('../../src/modules/users.service', () => ({
   getSellerProfile: jest.fn(),
+  getSellerCityName: jest.fn(),
 }));
 jest.mock('../../src/modules/orders.service', () => ({
   getSellerRatingSummary: jest.fn(),
@@ -11,11 +12,15 @@ jest.mock('../../src/modules/orders.service', () => ({
 jest.mock('../../src/modules/listings.service', () => ({
   getListingImages: jest.fn(),
 }));
+jest.mock('../../src/modules/catalog.service', () => ({
+  getSubCategoryName: jest.fn(async () => 'Sub-category'),
+}));
 
 const db = require('../../src/db.service');
 const users = require('../../src/modules/users.service');
 const orders = require('../../src/modules/orders.service');
 const listings = require('../../src/modules/listings.service');
+const catalog = require('../../src/modules/catalog.service');
 const discovery = require('../../src/modules/discovery.service');
 
 const listingId = '123e4567-e89b-42d3-a456-426614174000';
@@ -24,6 +29,8 @@ const sellerId = '123e4567-e89b-42d3-a456-426614174001';
 describe('discovery.service public listings and favorites', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    catalog.getSubCategoryName.mockResolvedValue('Sub-category');
+    users.getSellerCityName.mockResolvedValue('City');
   });
 
   test('FR-25, FR-27a: published detail includes price, live status, and only rating and join date for seller', async () => {

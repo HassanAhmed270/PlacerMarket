@@ -36,6 +36,12 @@ async function listSubCategories(mainCategoryId) {
   return rows;
 }
 
+/** FR-82: return a sub-category name for structured listing metadata. */
+async function getSubCategoryName(subCategoryId) {
+  const { rows } = await db.query('SELECT name FROM sub_categories WHERE id = $1', [subCategoryId]);
+  return rows[0]?.name || '';
+}
+
 /** FR-12: admin adds/edits/removes main categories independently. */
 async function createMainCategory({ name }, adminId) {
   const { rows } = await db.query('INSERT INTO main_categories (name) VALUES ($1) RETURNING *', [name]);
@@ -299,6 +305,7 @@ module.exports = {
   MANAGED_ATTRIBUTE_TYPES,
   listMainCategories,
   listSubCategories,
+  getSubCategoryName,
   createMainCategory,
   createSubCategory,
   listConditionTypes,

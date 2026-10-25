@@ -25,6 +25,8 @@ const users = require('./users.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
+const { validateSeoChoice, buildSeoPayload, generateSeoRecommendation } = require('../lib/listingSeo');
+const { canonicalListingUrl } = require('../lib/listingUrls');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
 
 const MIN_LISTING_IMAGES = 3;
@@ -38,6 +40,9 @@ const EDITABLE_LISTING_FIELDS = new Map([
   ['askingPrice', 'asking_price'],
   ['description', 'description'],
   ['embellishmentDetail', 'embellishment_detail'],
+  ['seoChoice', 'seo_choice'],
+  ['seoTitle', 'seo_title'],
+  ['seoDescription', 'seo_description'],
 ]);
 const MANAGED_ATTRIBUTE_INPUTS = Object.freeze({
   color: { id: 'colorId', value: 'color', type: 'color' },
@@ -47,6 +52,7 @@ const MANAGED_ATTRIBUTE_INPUTS = Object.freeze({
 const CREATE_LISTING_FIELDS = new Set([
   'title', 'mainCategoryId', 'subCategoryId', 'condition', 'replicaDisclosure',
   'askingPrice', 'description', 'fabricMaterial', 'brand', 'color',
+  'seoChoice', 'seoTitle', 'seoDescription',
   'fabricId', 'brandId', 'colorId',
   'embellishmentDetail', 'measurements',
 ]);
@@ -117,8 +123,13 @@ async function createListing(sellerId, data) {
     throw new ValidationError('title is required and must be at most 150 characters');
   }
   const input = { ...data, title: data.title.trim() };
+  const seo = validateSeoChoice(input, input.condition);
+  const [subCategory, city] = await Promise.all([
+    catalog.getSubCategoryName(input.subCategoryId),
+    users.getSellerCityName(sellerId),
+  ]);
 
-  return db.withTransaction(async (client) => {
+  const listing = await db.withTransaction(async (client) => {
     await catalog.lockSubCategoryForListing(client, input.subCategoryId);
     const attributes = {};
     for (const [key, attribute] of Object.entries(MANAGED_ATTRIBUTE_INPUTS)) {
@@ -130,20 +141,61 @@ async function createListing(sellerId, data) {
       `INSERT INTO listings
          (seller_id, main_category_id, sub_category_id, condition, title, replica_disclosure,
           asking_price, description, fabric_material, brand, color, fabric_id, brand_id, color_id,
-          embellishment_detail, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'draft') RETURNING *`,
+          embellishment_detail, status, seo_choice, seo_title, seo_description)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'draft',$16,$17,$18) RETURNING *`,
       [
         sellerId, input.mainCategoryId, input.subCategoryId, input.condition, input.title,
         input.replicaDisclosure, input.askingPrice, input.description, attributes.fabric?.value ?? null,
         attributes.brand?.value ?? null, attributes.color?.value ?? null,
         attributes.fabric?.id ?? null, attributes.brand?.id ?? null, attributes.color?.id ?? null,
-        input.embellishmentDetail,
+        input.embellishmentDetail, seo.seoChoice, seo.seoTitle, seo.seoDescription,
       ]
     );
     const listing = rows[0];
 
     await saveListingMeasurements(client, listing.id, input.subCategoryId, input.measurements); // FR-15a
     return listing;
+  });
+  return {
+    ...listing,
+    canonicalUrl: canonicalListingUrl(listing),
+    seo: buildSeoPayload(listing, {
+      condition: listing.condition, subCategory, color: listing.color,
+      fabricMaterial: listing.fabric_material, brand: listing.brand, city,
+    }),
+  };
+}
+
+/** FR-82: preview recommended SEO text from validated structured listing fields. */
+async function getSeoRecommendation(sellerId, details) {
+  await assertApprovedSeller(sellerId);
+  if (!details || typeof details !== 'object' || Array.isArray(details)) {
+    throw new ValidationError('Structured listing details are required');
+  }
+  const supportedFields = new Set([
+    'condition', 'subCategoryId', 'color', 'fabricMaterial', 'brand',
+  ]);
+  const unsupported = Object.keys(details).find((key) => !supportedFields.has(key));
+  if (unsupported) throw new ValidationError(`Unsupported SEO recommendation field: ${unsupported}`);
+  if (!catalog.listConditionTypes().includes(details.condition)) {
+    throw new ValidationError('A valid listing condition is required');
+  }
+  if (typeof details.subCategoryId !== 'string' || !details.subCategoryId) {
+    throw new ValidationError('A sub-category is required for an SEO recommendation');
+  }
+  for (const [field, limit] of [['color', 50], ['fabricMaterial', 100], ['brand', 100]]) {
+    const value = details[field];
+    if (value !== undefined && value !== null &&
+        (typeof value !== 'string' || value.length > limit)) {
+      throw new ValidationError(`${field} must be text up to ${limit} characters`);
+    }
+  }
+  const subCategory = await catalog.getSubCategoryName(details.subCategoryId);
+  if (!subCategory) throw new ValidationError('The selected sub-category does not exist');
+  const city = await users.getSellerCityName(sellerId);
+  return buildSeoPayload({ seo_choice: 'recommended' }, {
+    condition: details.condition, subCategory, city,
+    color: details.color, fabricMaterial: details.fabricMaterial, brand: details.brand,
   });
 }
 
@@ -244,14 +296,37 @@ async function getListingImages(listingId) {
 
 /** FR-20: seller workspace list with status and safe image processing metadata. */
 async function getOwnListings(sellerId) {
+  // cross-module read: sub_categories (owned by catalog.service.js)
+  // cross-module read: users and cities (owned by users.service.js)
   const { rows } = await db.query(
     `SELECT l.id, l.title, l.status, l.asking_price, l.created_at, l.updated_at, l.published_at, l.content_version,
+            l.slug, l.short_id, l.seo_choice, l.seo_title, l.seo_description, l.condition,
+            l.color, l.fabric_material, l.brand, sc.name AS sub_category_name, c.name AS seller_city,
        coalesce((SELECT jsonb_agg(jsonb_build_object('id', i.id, 'slot', i.slot,
          'processingState', i.processing_state, 'imageUrl', CASE WHEN i.processing_state = 'ready' THEN i.image_url ELSE NULL END)
          ORDER BY i.display_order) FROM listing_images i WHERE i.listing_id = l.id), '[]'::jsonb) AS photos
-     FROM listings l WHERE l.seller_id = $1 ORDER BY l.updated_at DESC, l.id DESC LIMIT 100`, [sellerId]
+     FROM listings l
+     JOIN sub_categories sc ON sc.id = l.sub_category_id
+     JOIN users u ON u.id = l.seller_id
+     LEFT JOIN cities c ON c.id = u.city_id
+     WHERE l.seller_id = $1 ORDER BY l.updated_at DESC, l.id DESC LIMIT 100`, [sellerId]
   );
-  return rows;
+  return rows.map((listing) => ({
+    ...listing,
+    canonicalUrl: canonicalListingUrl(listing),
+    seo: buildSeoPayload(listing, {
+      condition: listing.condition, subCategory: listing.sub_category_name,
+      color: listing.color, fabricMaterial: listing.fabric_material, brand: listing.brand,
+      city: listing.seller_city,
+    }),
+  }));
+}
+
+/** FR-82c: return the canonical URL components for a listing. */
+async function getListingUrlData(listingId) {
+  const { rows } = await db.query('SELECT id, slug, short_id FROM listings WHERE id = $1', [listingId]);
+  if (!rows[0]) throw new NotFoundError('listing', listingId);
+  return rows[0];
 }
 
 /** FR-19: sellers explicitly submit a draft after completing its required photos. */
@@ -436,6 +511,15 @@ async function updateOwnListing(listingId, sellerId, patch) {
       throw new ValidationError('Unsupported listing condition');
     }
     catalog.assertReplicaDisclosureIfNeeded(merged);
+    const seo = validateSeoChoice({
+      seoChoice: patch.seoChoice ?? (
+        Object.hasOwn(patch, 'seoTitle') || Object.hasOwn(patch, 'seoDescription')
+          ? 'custom'
+          : listing.seo_choice ?? 'recommended'
+      ),
+      seoTitle: Object.hasOwn(patch, 'seoTitle') ? patch.seoTitle : listing.seo_title,
+      seoDescription: Object.hasOwn(patch, 'seoDescription') ? patch.seoDescription : listing.seo_description,
+    }, merged.condition);
 
     const nextMainCategoryId = patch.mainCategoryId ?? listing.main_category_id;
     const nextSubCategoryId = patch.subCategoryId ?? listing.sub_category_id;
@@ -460,9 +544,16 @@ async function updateOwnListing(listingId, sellerId, patch) {
       if (Object.values(MANAGED_ATTRIBUTE_INPUTS).some((attribute) =>
         key === attribute.id || key === attribute.value
       )) continue;
+      if (key === 'seoChoice' || key === 'seoTitle' || key === 'seoDescription') continue;
       const column = EDITABLE_LISTING_FIELDS.get(key);
       values.push(patch[key]);
       assignments.push(`${column} = $${values.length}`);
+    }
+    if (keys.some((key) => ['seoChoice', 'seoTitle', 'seoDescription'].includes(key))) {
+      for (const key of ['seoChoice', 'seoTitle', 'seoDescription']) {
+        values.push(seo[key]);
+        assignments.push(`${EDITABLE_LISTING_FIELDS.get(key)} = $${values.length}`);
+      }
     }
     for (const attribute of Object.values(MANAGED_ATTRIBUTE_INPUTS)) {
       if (!keys.includes(attribute.id) && !keys.includes(attribute.value)) continue;
@@ -555,10 +646,12 @@ async function resubmitListing(listingId, sellerId) {
 
 module.exports = {
   createListing,
+  getSeoRecommendation,
   getReferencedMeasurementDefinitionIds,
   addListingImages,
   getListingImages,
   getOwnListings,
+  getListingUrlData,
   submitListingForReview,
   submitAuthenticityEvidence,
   setVerifiedBadge,

@@ -14,6 +14,7 @@ const db = require('../db.service');
 const orders = require('./orders.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
+const { containsContactInfo } = require('../lib/contactInfo');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
 
 function assertOffersEnabled() {
@@ -22,19 +23,6 @@ function assertOffersEnabled() {
     error.statusCode = 503;
     throw error;
   }
-}
-
-const PHONE_PATTERN = /(?:^|[^\w])\+?\d[\d ().-]*\d(?:$|[^\w])/g;
-const EMAIL_PATTERN = /\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/i;
-const LINK_PATTERN = /\b(?:https?:\/\/|www\.)[^\s]+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s]*)?/i;
-
-/** FR-30: detect phone numbers, email addresses, and links without blocking prices or measurements. */
-function containsContactInfo(body) {
-  if (EMAIL_PATTERN.test(body) || LINK_PATTERN.test(body)) return true;
-  for (const match of body.matchAll(PHONE_PATTERN)) {
-    if ((match[0].match(/\d/g) || []).length >= 10) return true;
-  }
-  return false;
 }
 
 // ---- FR-28: messaging ----

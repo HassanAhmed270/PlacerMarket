@@ -5,6 +5,10 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 
 const router = Router();
 
+router.post('/seo-recommendation', requireAuth, async (req, res) => {
+  res.json(await listings.getSeoRecommendation(req.user.id, req.body)); // FR-82
+});
+
 router.post('/', requireAuth, async (req, res) => {
   res.status(201).json(await listings.createListing(req.user.id, req.body)); // FR-15
 });

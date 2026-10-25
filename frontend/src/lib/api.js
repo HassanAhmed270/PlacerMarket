@@ -81,6 +81,7 @@ export function createApiClient({
     getSubCategories: (id) => get(`catalog/main-categories/${encodeURIComponent(id)}/sub-categories`),
     getConditionTypes: () => get('catalog/condition-types'),
     getMeasurementFields: (id) => get(`catalog/sub-categories/${encodeURIComponent(id)}/measurement-fields`),
+    getSeoRecommendation: (input) => post('listings/seo-recommendation', input, { authenticated: true }),
     createListing: (input) => post('listings', input, { authenticated: true }),
     getMyListings: () => get('listings/mine', { authenticated: true }),
     uploadListingImage: (id, slot, file) => upload(`media/listings/${encodeURIComponent(id)}/images?slot=${encodeURIComponent(slot)}`, file),

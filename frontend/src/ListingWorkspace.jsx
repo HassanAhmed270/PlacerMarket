@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, DEV_FAKES_BANNER } from './lib/api.js'
 
 const SLOT_LABELS = [
@@ -60,6 +60,8 @@ function SellerListings({ onSignOut }) {
   const [busy, setBusy] = useState(false)
   const [uploadState, setUploadState] = useState('')
   const [selectedListing, setSelectedListing] = useState('')
+  const [seoPreview, setSeoPreview] = useState(null)
+  const seoPreviewRequest = useRef(0)
 
   async function refresh() {
     const result = await api.getMyListings()
@@ -104,6 +106,7 @@ function SellerListings({ onSignOut }) {
       const value = String(form.get(`measurement:${field.id}`) || '').trim()
       return value ? [{ fieldDefId: field.id, value: Number(value) }] : []
     })
+    const seoChoice = form.get('seoChoice') || 'recommended'
     const input = {
       title: form.get('title'), mainCategoryId: form.get('mainCategoryId'), subCategoryId: form.get('subCategoryId'),
       condition: form.get('condition'), askingPrice: Number(form.get('askingPrice')),
@@ -111,10 +114,16 @@ function SellerListings({ onSignOut }) {
       replicaDisclosure: form.get('replicaDisclosure') || undefined,
       fabricMaterial: form.get('fabricMaterial') || undefined, brand: form.get('brand') || undefined,
       color: form.get('color') || undefined, embellishmentDetail: form.get('embellishmentDetail') || undefined,
+      seoChoice,
+      ...(seoChoice === 'custom' ? {
+        seoTitle: form.get('seoTitle'),
+        seoDescription: form.get('seoDescription'),
+      } : {}),
       measurements,
     }
     try {
       const listing = await api.createListing(input)
+      setSeoPreview(listing.seo)
       for (const [slot, label] of SLOT_LABELS) {
         const file = form.get(`photo:${slot}`)
         if (!(file instanceof File) || !file.size) continue
@@ -139,16 +148,41 @@ function SellerListings({ onSignOut }) {
     } finally { setBusy(false); setUploadState('') }
   }
 
+  async function previewSeo(formElement) {
+    const requestId = ++seoPreviewRequest.current
+    const form = new FormData(formElement)
+    const details = {
+      condition: form.get('condition'),
+      subCategoryId: form.get('subCategoryId'),
+      color: form.get('color') || undefined,
+      fabricMaterial: form.get('fabricMaterial') || undefined,
+      brand: form.get('brand') || undefined,
+    }
+    setError('')
+    try {
+      const result = await api.getSeoRecommendation(details)
+      if (requestId === seoPreviewRequest.current) setSeoPreview(result)
+    } catch (cause) {
+      if (requestId === seoPreviewRequest.current) setError(cause.payload?.error || cause.message)
+    }
+  }
+
   async function createRevision(event) {
     event.preventDefault()
     const formElement = event.currentTarget
     setBusy(true); setError(''); setMessage('')
     const form = new FormData(formElement)
     try {
+      const seoChoice = form.get('revisionSeoChoice')
       const result = await api.submitListingRevision(selectedListing, {
         title: form.get('revisionTitle') || undefined,
         description: form.get('revisionDescription') || undefined,
         askingPrice: form.get('revisionPrice') ? Number(form.get('revisionPrice')) : undefined,
+        seoChoice,
+        ...(seoChoice === 'custom' ? {
+          seoTitle: form.get('revisionSeoTitle'),
+          seoDescription: form.get('revisionSeoDescription'),
+        } : {}),
       })
       setMessage(`Revision ${result.id} is awaiting moderation.`)
       formElement.reset()
@@ -180,6 +214,15 @@ function SellerListings({ onSignOut }) {
           <label>Fabric / material<input name="fabricMaterial" /></label><label>Brand<input name="brand" /></label>
           <label>Color<input name="color" /></label><label>Embellishment detail<input name="embellishmentDetail" /></label>
           <label>Replica disclosure<textarea name="replicaDisclosure" rows="2" /></label>
+          <fieldset><legend>Search title and description</legend>
+            <p>Preview a recommendation based on your listing details, or provide your own text for moderation.</p>
+            <button className="text-button" type="button" onClick={(event) => previewSeo(event.currentTarget.form)}>Preview recommendation</button>
+            {seoPreview && <div role="status"><strong>Recommendation</strong><p>{seoPreview.recommendation.title}</p><p>{seoPreview.recommendation.description}</p><small>{seoPreview.note}</small></div>}
+            <label><input type="radio" name="seoChoice" value="recommended" defaultChecked /> Use recommendation</label>
+            <label><input type="radio" name="seoChoice" value="custom" /> Write my own text</label>
+            <label>My SEO title<input name="seoTitle" maxLength="60" /></label>
+            <label>My SEO description<textarea name="seoDescription" maxLength="155" rows="2" /></label>
+          </fieldset>
           {fields.length > 0 && <fieldset><legend>Measurements</legend>{fields.map((field) => <label key={field.id}>{field.field_name}{field.required ? ' *' : ''}{field.unit ? ` (${field.unit})` : ''}<input name={`measurement:${field.id}`} type="number" min="0" step="0.01" required={field.required} /></label>)}</fieldset>}
           <fieldset><legend>Photos</legend>{SLOT_LABELS.map(([slot, label]) => <label key={slot}>{label}<input name={`photo:${slot}`} type="file" accept="image/jpeg,image/png" required={!slot.startsWith('optional')} /></label>)}</fieldset>
           <button className="button button-primary" disabled={busy}>{busy ? 'Working…' : 'Create and submit'}</button>
@@ -196,7 +239,14 @@ function SellerListings({ onSignOut }) {
             {pending && <button className="text-button" type="button" disabled={busy} onClick={() => withdraw(pending.id)}>Withdraw pending revision</button>}
           </li>
         })}</ul>}
-        {selectedListing && <form className="listing-form" onSubmit={createRevision}><h3>Change listing details</h3><label>New title<input name="revisionTitle" /></label><label>New price (optional)<input name="revisionPrice" type="number" min="0.01" step="0.01" /></label><label>New description<textarea name="revisionDescription" /></label><button className="button button-primary" disabled={busy}>Submit change</button><button className="text-button" type="button" onClick={() => setSelectedListing('')}>Cancel</button></form>}
+        {selectedListing && (() => {
+          const selected = listings.find((item) => item.id === selectedListing)
+          return <form className="listing-form" onSubmit={createRevision}><h3>Change listing details</h3><label>New title<input name="revisionTitle" /></label><label>New price (optional)<input name="revisionPrice" type="number" min="0.01" step="0.01" /></label><label>New description<textarea name="revisionDescription" /></label>
+            <label>SEO text choice<select name="revisionSeoChoice" defaultValue={selected?.seo_choice || 'recommended'}><option value="recommended">Use recommendation</option><option value="custom">My own text</option></select></label>
+            <label>My SEO title<input name="revisionSeoTitle" maxLength="60" defaultValue={selected?.seo_title || ''} /></label>
+            <label>My SEO description<textarea name="revisionSeoDescription" maxLength="155" defaultValue={selected?.seo_description || ''} rows="2" /></label>
+            <button className="button button-primary" disabled={busy}>Submit change</button><button className="text-button" type="button" onClick={() => setSelectedListing('')}>Cancel</button></form>
+        })()}
       </section>
     </WorkspaceFrame>
   )
@@ -249,6 +299,7 @@ function ModerationWorkspace({ onSignOut }) {
       <button className="text-button" type="button" onClick={() => refresh().catch((cause) => setError(cause.message))}>Refresh queues</button>
       <section className="listing-panel"><h2>Listings and photos</h2>
         {listings.map((listing) => <article className="moderation-card" key={listing.id}><h3>{listing.title}</h3><p>PKR {listing.asking_price} · {listing.is_high_value ? 'High value' : 'Standard review'}</p>
+          {listing.seo_choice === 'custom' && <p><strong>Seller SEO title:</strong> {listing.seo_title}<br /><strong>Seller SEO description:</strong> {listing.seo_description}</p>}
           <div className="moderation-photos">{(listing.photos || []).map((photo) => <div key={photo.id}><ModeratorImage src={photo.imageUrl} /><strong>{photo.slot || 'unlabeled'}</strong>
             {photo.labelConfirmedAt ? <span>Confirmed</span> : <><button className="text-button" type="button" onClick={() => run(() => api.confirmListingPhoto(photo.id), 'Photo label confirmed.')}>Confirm label</button><label>Rejection reason<input value={reasons[photo.id] || ''} onChange={(event) => setReasons({ ...reasons, [photo.id]: event.target.value })} /></label><button className="text-button" type="button" disabled={!reasons[photo.id]} onClick={() => run(() => api.rejectListingPhoto(photo.id, reasons[photo.id]), 'Photo rejected with reason.')}>Reject photo</button></>}
           </div>)}</div>
@@ -259,6 +310,7 @@ function ModerationWorkspace({ onSignOut }) {
       </section>
       <section className="listing-panel"><h2>Content revisions</h2>
         {revisions.map((revision) => <article className="moderation-card" key={revision.id}><h3>{revision.proposed_title}</h3><p>PKR {revision.proposed_asking_price} · {revision.current_title}</p>
+          {revision.proposed_seo_choice === 'custom' && <p><strong>Seller SEO title:</strong> {revision.proposed_seo_title}<br /><strong>Seller SEO description:</strong> {revision.proposed_seo_description}</p>}
           <button className="button button-primary" type="button" onClick={() => run(() => api.approveListingRevision(revision.id), 'Revision approved and published.')}>Approve revision</button>
           <label>Rejection reason<input value={reasons[revision.id] || ''} onChange={(event) => setReasons({ ...reasons, [revision.id]: event.target.value })} /></label>
           <button className="text-button" type="button" disabled={!reasons[revision.id]} onClick={() => run(() => api.rejectListingRevision(revision.id, reasons[revision.id]), 'Revision rejected.')}>Reject revision</button>
@@ -272,7 +324,49 @@ function ModerationWorkspace({ onSignOut }) {
 export function PublicListingDetail({ id }) {
   const [listing, setListing] = useState(null)
   const [error, setError] = useState('')
-  useEffect(() => { api.getPublicListing(id).then(setListing).catch((cause) => setError(cause.payload?.error || cause.message)) }, [id])
+  useEffect(() => {
+    let active = true
+    const originalTitle = document.title
+    const description = document.querySelector('meta[name="description"]')
+    const originalDescription = description?.getAttribute('content')
+    const canonical = document.querySelector('link[rel="canonical"]')
+    const originalCanonical = canonical?.getAttribute('href')
+    const meta = description || document.createElement('meta')
+    const link = canonical || document.createElement('link')
+    if (!description) {
+      meta.name = 'description'
+      document.head.append(meta)
+    }
+    if (!canonical) {
+      link.rel = 'canonical'
+      document.head.append(link)
+    }
+    api.getPublicListing(id).then((result) => {
+      if (!active) return
+      const canonicalPath = `/listing/${result.canonicalKey}`
+      if (window.location.pathname !== canonicalPath) {
+        window.history.replaceState({}, '', canonicalPath)
+      }
+      document.title = result.seo.choice.title
+      meta.content = result.seo.choice.description
+      link.href = new URL(result.canonicalUrl, window.location.origin).href
+      setListing(result)
+    }).catch((cause) => {
+      if (active) setError(cause.payload?.error || cause.message)
+    })
+    return () => {
+      active = false
+      document.title = originalTitle
+      if (description) {
+        if (originalDescription === null) description.removeAttribute('content')
+        else description.content = originalDescription
+      } else meta.remove()
+      if (canonical) {
+        if (originalCanonical === null) canonical.removeAttribute('href')
+        else canonical.href = originalCanonical
+      } else link.remove()
+    }
+  }, [id])
   if (error) return <main className="account-shell"><a href="/">Poshaak</a><h1>Listing unavailable</h1><ErrorMessage>{error}</ErrorMessage></main>
   if (!listing) return <main className="account-shell"><p role="status">Loading listing…</p></main>
   return <main className="account-shell listing-workspace"><a href="/">Poshaak</a><article className="listing-panel"><h1>{listing.title}</h1><p>PKR {listing.asking_price}</p><p>{listing.description}</p><div className="moderation-photos">{(listing.images || []).map((image) => <img key={image.id} className="moderation-photo" src={image.image_url} alt={`${listing.title} listing photo`} />)}</div></article></main>

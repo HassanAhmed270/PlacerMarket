@@ -176,6 +176,50 @@ describe('FR-73 moderated listing revisions', () => {
     expect(rows[0]).toMatchObject({ title: 'Public title', content_version: '1' });
   });
 
+  test('FR-82: custom SEO text remains pending until its listing revision is approved', async () => {
+    const revision = await revisions.submitListingRevision(fixture.listingId, fixture.userId, {
+      seoChoice: 'custom',
+      seoTitle: 'Navy festive attire',
+      seoDescription: 'A pre-owned navy outfit for celebrations.',
+    });
+    expect(revision).toMatchObject({
+      status: 'pending_review',
+      proposed_seo_choice: 'custom',
+      proposed_seo_title: 'Navy festive attire',
+    });
+
+    const { rows: pendingListing } = await db.query(
+      'SELECT seo_choice, seo_title, seo_description FROM listings WHERE id = $1',
+      [fixture.listingId]
+    );
+    expect(pendingListing[0]).toMatchObject({
+      seo_choice: 'recommended',
+      seo_title: null,
+      seo_description: null,
+    });
+
+    await revisions.approveListingRevision(revision.id, fixture.otherUserId);
+    const { rows: approvedListing } = await db.query(
+      'SELECT seo_choice, seo_title, seo_description FROM listings WHERE id = $1',
+      [fixture.listingId]
+    );
+    expect(approvedListing[0]).toEqual({
+      seo_choice: 'custom',
+      seo_title: 'Navy festive attire',
+      seo_description: 'A pre-owned navy outfit for celebrations.',
+    });
+    const detail = await discovery.getListingDetail(fixture.listingId);
+    expect(detail.seo).toMatchObject({
+      recommendation: { title: expect.any(String), description: expect.any(String) },
+      choice: {
+        type: 'custom',
+        title: 'Navy festive attire',
+        description: 'A pre-owned navy outfit for celebrations.',
+      },
+      note: expect.stringMatching(/recommendation based on the seller's details/i),
+    });
+  });
+
   test('FR-73: concurrent moderator approve/reject decisions produce exactly one transition', async () => {
     const revision = await revisions.submitListingRevision(fixture.listingId, fixture.userId, { title: 'One decision' });
     const results = await Promise.allSettled([

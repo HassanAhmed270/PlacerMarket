@@ -43,6 +43,37 @@ function authenticateAsFixtureSeller() {
 }
 
 describe('FR-22 through FR-27 public discovery', () => {
+  test('FR-82c: canonical listing detail redirects an old slug and returns SEO recommendation and choice', async () => {
+    process.env.PUBLIC_BASE_URL = 'https://market.example';
+    await db.query(
+      "UPDATE listings SET status = 'published', title = 'Current Navy Dress' WHERE id = $1",
+      [fixture.listingId]
+    );
+    const { rows } = await db.query(
+      'SELECT slug, short_id FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    const oldKey = `previous-title-${rows[0].short_id}`;
+    const currentKey = `${rows[0].slug}-${rows[0].short_id}`;
+
+    const redirect = await request(app)
+      .get(`/api/discovery/listings/${oldKey}`)
+      .redirects(0)
+      .expect(301);
+    expect(redirect.headers.location).toBe(`/api/discovery/listings/${currentKey}`);
+
+    const detail = await request(app).get(redirect.headers.location).expect(200);
+    expect(detail.body).toMatchObject({
+      canonicalKey: currentKey,
+      canonicalUrl: `https://market.example/listing/${currentKey}`,
+      seo: {
+        recommendation: { title: expect.any(String), description: expect.any(String) },
+        choice: { type: 'recommended' },
+        note: expect.stringMatching(/recommendation based on the seller's details/i),
+      },
+    });
+    expect(detail.body.seo.choice.description).not.toMatch(/PKR|Rs\.?/i);
+  });
+
   test('FR-22, FR-25: listing status/detail distinguish available, paused, sold, reserved and removed states', async () => {
     await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
 
@@ -166,10 +197,13 @@ describe('FR-22 through FR-27 public discovery', () => {
 
   test('FR-27: public share URL is available without login and does not set cookies', async () => {
     process.env.PUBLIC_BASE_URL = 'https://market.example/';
+    const { rows } = await db.query(
+      'SELECT slug, short_id FROM listings WHERE id = $1', [fixture.listingId]
+    );
     const response = await request(app)
       .get(`/api/discovery/listings/${fixture.listingId}/share-url`)
       .expect(200);
-    expect(response.body.url).toBe(`https://market.example/listing/${fixture.listingId}`);
+    expect(response.body.url).toBe(`https://market.example/listing/${rows[0].slug}-${rows[0].short_id}`);
     expect(response.headers['set-cookie']).toBeUndefined();
     expect(response.headers['cache-control']).toBe('public, max-age=10');
   });

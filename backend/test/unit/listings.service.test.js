@@ -6,6 +6,7 @@ jest.mock('../../src/modules/catalog.service', () => ({
   assertReplicaDisclosureIfNeeded: jest.fn(),
   getMeasurementFieldDefs: jest.fn(),
   lockSubCategoryForListing: jest.fn(),
+  getSubCategoryName: jest.fn(async () => 'Sub-category'),
   resolveListingAttribute: jest.fn(async (_client, _type, id, value) => {
     if (!id && !value) return null;
     return { id: id || 'attribute-id', value: value || 'Approved value' };
@@ -17,6 +18,7 @@ jest.mock('../../src/modules/users.service', () => ({
   isIdVerificationRequired: jest.fn(),
   isIdVerified: jest.fn(),
   isApprovedSeller: jest.fn(),
+  getSellerCityName: jest.fn(async () => 'City'),
 }));
 
 const db = require('../../src/db.service');
@@ -76,6 +78,50 @@ describe('listings.service submission flow', () => {
       listingType: 'sale',
     })).rejects.toThrow('Unsupported or retired listing field: listingType');
     expect(db.withTransaction).not.toHaveBeenCalled();
+  });
+
+  test('FR-82: listing creation stores the seller SEO choice and returns both recommendation and choice', async () => {
+    catalog.getMeasurementFieldDefs.mockResolvedValue([]);
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [{
+        id: 'listing-1', condition: 'brand_new', sub_category_id: 'sub',
+        title: 'Festive suit', seo_choice: 'custom',
+        seo_title: 'Navy festive suit', seo_description: 'A navy silk outfit for celebrations.',
+      }] }),
+    };
+    db.withTransaction.mockImplementation((callback) => callback(client));
+
+    const result = await listings.createListing('seller-1', {
+      title: 'Festive suit', mainCategoryId: 'main', subCategoryId: 'sub',
+      condition: 'brand_new', askingPrice: 100,
+      seoChoice: 'custom', seoTitle: 'Navy festive suit',
+      seoDescription: 'A navy silk outfit for celebrations.',
+    });
+
+    expect(client.query.mock.calls[0][0]).toContain('seo_choice, seo_title, seo_description');
+    expect(client.query.mock.calls[0][1].slice(-3)).toEqual([
+      'custom', 'Navy festive suit', 'A navy silk outfit for celebrations.',
+    ]);
+    expect(result.seo).toMatchObject({
+      recommendation: { title: expect.any(String), description: expect.any(String) },
+      choice: {
+        type: 'custom',
+        title: 'Navy festive suit',
+        description: 'A navy silk outfit for celebrations.',
+      },
+      note: expect.stringMatching(/recommendation based on the seller's details/i),
+    });
+  });
+
+  test('FR-82: seller SEO preview includes the recommendation and seller-details note', async () => {
+    const preview = await listings.getSeoRecommendation('seller-1', {
+      condition: 'replica', subCategoryId: 'sub', color: 'Black',
+    });
+
+    expect(preview.recommendation.title).toMatch(/^Replica\b/);
+    expect(preview.choice).toMatchObject({ type: 'recommended' });
+    expect(preview.note).toMatch(/recommendation based on the seller's details/i);
+    expect(users.getSellerCityName).toHaveBeenCalledWith('seller-1');
   });
 
   test('FR-15a: createListing resolves either field name or definition ID and rejects ambiguous selectors', async () => {

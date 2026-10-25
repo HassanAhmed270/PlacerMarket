@@ -2,6 +2,7 @@ const { Router } = require('express');
 const discovery = require('../modules/discovery.service');
 const { requireAuth } = require('../middleware/auth');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
+const { parseListingUrlKey } = require('../lib/listingUrls');
 
 const limiters = createConfiguredRateLimiters();
 const router = Router();
@@ -44,6 +45,9 @@ router.get('/listings/:id', async (req, res) => {
   const detail = await discovery.getListingDetail(req.params.id); // FR-25
   if (!detail) return res.status(404).json({ error: 'Listing not found' });
   if (detail.removed) return res.status(410).json({ error: 'Listing is no longer available' });
+  if (!parseListingUrlKey(req.params.id)?.listingId && req.params.id !== detail.canonicalKey) {
+    return res.redirect(301, `/api/discovery/listings/${encodeURIComponent(detail.canonicalKey)}`);
+  }
   if (detail.sold || detail.unavailable) res.set('X-Robots-Tag', 'noindex');
   res.json(detail);
 });
@@ -55,8 +59,8 @@ router.get('/listings/:id/status', async (req, res) => {
   res.json(status);
 });
 
-router.get('/listings/:id/share-url', (req, res) => {
-  res.json({ url: discovery.buildShareUrl(req.params.id) }); // FR-27, public
+router.get('/listings/:id/share-url', async (req, res) => {
+  res.json({ url: await discovery.buildShareUrl(req.params.id) }); // FR-27, public
 });
 
 router.get('/favorites', requireAuth, async (req, res) => {

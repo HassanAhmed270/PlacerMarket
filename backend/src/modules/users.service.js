@@ -855,6 +855,15 @@ async function getSellerProfile(userId) {
   return rows[0];
 }
 
+/** FR-82: return the seller's profile city for structured SEO recommendations. */
+async function getSellerCityName(userId) {
+  const { rows } = await db.query(
+    'SELECT c.name FROM users u LEFT JOIN cities c ON c.id = u.city_id WHERE u.id = $1',
+    [userId]
+  );
+  return rows[0]?.name || '';
+}
+
 function normalizePayoutInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ValidationError('Payout details are required.');
   const method = input.method;
@@ -1082,6 +1091,7 @@ module.exports = {
   isEmailVerified,
   verifySellerIdentity,
   getSellerProfile,
+  getSellerCityName,
   updateSellerPayoutMethod,
   getSellerPayoutSummary,
   getSellerPayoutAdminQueue,

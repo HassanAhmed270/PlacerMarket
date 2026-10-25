@@ -7,12 +7,15 @@ const db = require('../db.service');
 const users = require('./users.service');
 const orders = require('./orders.service');
 const listings = require('./listings.service');
+const catalog = require('./catalog.service');
 const { getSharedRedisClient } = require('../lib/redis');
+const { buildSeoPayload } = require('../lib/listingSeo');
+const { canonicalListingUrl, listingUrlKey, parseListingUrlKey } = require('../lib/listingUrls');
 const { ValidationError } = require('../lib/errors');
 
 const PUBLIC_LISTING_COLUMNS = `l.id, l.main_category_id, l.sub_category_id, l.condition,
   l.replica_disclosure, l.title, l.description, l.asking_price, l.fabric_material, l.brand, l.color,
-  l.fabric_id, l.brand_id, l.color_id,
+  l.fabric_id, l.brand_id, l.color_id, l.slug, l.short_id,
   l.embellishment_detail, l.created_at, l.updated_at`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const RESERVED_ORDER_STATUSES = [
@@ -409,6 +412,7 @@ async function searchListings(keywordOrFilters, options = {}) {
   return result;
 }
 
+/** FR-80c: return the current worker-built search suggestion vocabulary. */
 async function getSearchVocabulary() {
   const [categories, brands, fabrics, colors, synonyms] = await Promise.all([
     db.query("SELECT id, name AS value FROM main_categories WHERE is_active = TRUE ORDER BY name"),
@@ -488,13 +492,18 @@ async function filterListings({
 }
 
 /** FR-25: return published listing details, approved photos, and the permitted seller summary. */
-async function getListingDetail(listingId) {
+async function getListingDetail(listingKey) {
+  const parsedKey = parseListingUrlKey(listingKey);
+  if (!parsedKey) return null;
+  const keyColumn = parsedKey.listingId ? 'l.id' : 'l.short_id';
+  const keyValue = parsedKey.listingId || parsedKey.shortId;
   const { rows } = await db.read(
     `SELECT ${PUBLIC_LISTING_COLUMNS}, l.seller_id, l.status,
+            l.seo_choice, l.seo_title, l.seo_description,
             ${orderExistsSql(2)} AS has_reservation,
             EXISTS (SELECT 1 FROM orders o WHERE o.listing_id = l.id AND o.status = 'completed') AS has_completed_order
-       FROM listings l WHERE l.id = $1`,
-    [listingId, RESERVED_ORDER_STATUSES]
+       FROM listings l WHERE ${keyColumn} = $1`,
+    [keyValue, RESERVED_ORDER_STATUSES]
   );
   if (!rows[0]) return null;
   const row = rows[0];
@@ -507,9 +516,25 @@ async function getListingDetail(listingId) {
   } = row;
   const [seller, images] = await Promise.all([
     getSellerPublicCard(sellerId),
-    listings.getListingImages(listingId),
+    listings.getListingImages(row.id),
   ]);
-  const detail = { ...listing, ...liveStatusFields(liveStatus), seller, images };
+  const [subCategory, city] = await Promise.all([
+    catalog.getSubCategoryName(row.sub_category_id),
+    users.getSellerCityName(sellerId),
+  ]);
+  const canonicalKey = listingUrlKey(row);
+  const detail = {
+    ...listing,
+    canonicalKey,
+    canonicalUrl: canonicalListingUrl(row),
+    seo: buildSeoPayload(row, {
+      condition: row.condition, subCategory, color: row.color,
+      fabricMaterial: row.fabric_material, brand: row.brand, city,
+    }),
+    ...liveStatusFields(liveStatus),
+    seller,
+    images,
+  };
   if (liveStatus === 'sold') {
     detail.similarItems = await getSimilarListings(row);
   }
@@ -538,12 +563,16 @@ async function getSimilarListings(listing) {
 
 /** FR-27: return the current public availability of a listing. */
 async function getListingStatus(listingId) {
+  const parsedKey = parseListingUrlKey(listingId);
+  if (!parsedKey) return null;
+  const keyColumn = parsedKey.listingId ? 'l.id' : 'l.short_id';
+  const keyValue = parsedKey.listingId || parsedKey.shortId;
   const { rows } = await db.read(
     `SELECT l.status,
             ${orderExistsSql(2)} AS has_reservation,
             EXISTS (SELECT 1 FROM orders o WHERE o.listing_id = l.id AND o.status = 'completed') AS has_completed_order
-       FROM listings l WHERE l.id = $1`,
-    [listingId, RESERVED_ORDER_STATUSES]
+       FROM listings l WHERE ${keyColumn} = $1`,
+    [keyValue, RESERVED_ORDER_STATUSES]
   );
   if (!rows[0]) return null;
   const liveStatus = getLiveStatus(rows[0]);
@@ -605,10 +634,10 @@ async function getFavorites(userId, { limit = 20, cursor } = {}) {
   };
 }
 
-/** FR-27: public share link for a listing, no login needed. */
-function buildShareUrl(listingId) {
-  const baseUrl = (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, '');
-  return `${baseUrl}/listing/${encodeURIComponent(listingId)}`;
+/** FR-27, FR-82c: public canonical share link for a listing, no login needed. */
+async function buildShareUrl(listingId) {
+  const listing = await listings.getListingUrlData(listingId);
+  return canonicalListingUrl(listing);
 }
 
 /** FR-27a: buyer-facing seller summary contains rating and join date only. */

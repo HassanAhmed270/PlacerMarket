@@ -5,6 +5,7 @@ const users = require('./users.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
+const { validateSeoChoice } = require('../lib/listingSeo');
 const { ValidationError, ForbiddenError, NotFoundError } = require('../lib/errors');
 
 const FIELDS = Object.freeze({
@@ -13,6 +14,8 @@ const FIELDS = Object.freeze({
   fabricMaterial: 'proposed_fabric_material', brand: 'proposed_brand', color: 'proposed_color',
   fabricId: 'proposed_fabric_id', brandId: 'proposed_brand_id', colorId: 'proposed_color_id',
   embellishmentDetail: 'proposed_embellishment_detail',
+  seoChoice: 'proposed_seo_choice', seoTitle: 'proposed_seo_title',
+  seoDescription: 'proposed_seo_description',
 });
 const ALLOWED = new Set(Object.keys(FIELDS).concat('measurements'));
 const MANAGED_ATTRIBUTES = Object.freeze({
@@ -70,6 +73,9 @@ function proposedFromListing(listing) {
     color: listing.color,
     colorId: listing.color_id,
     embellishmentDetail: listing.embellishment_detail,
+    seoChoice: listing.seo_choice,
+    seoTitle: listing.seo_title,
+    seoDescription: listing.seo_description,
   };
 }
 
@@ -89,6 +95,14 @@ function validateProposedFields(proposed) {
       (proposed.embellishmentDetail?.length || 0) > 5000) {
     throw new ValidationError('Revision text exceeds its supported length');
   }
+  const seo = validateSeoChoice({
+    seoChoice: proposed.seoChoice,
+    seoTitle: proposed.seoTitle,
+    seoDescription: proposed.seoDescription,
+  }, proposed.condition);
+  proposed.seoChoice = seo.seoChoice;
+  proposed.seoTitle = seo.seoTitle;
+  proposed.seoDescription = seo.seoDescription;
 }
 
 async function isImmediatePriceDecrease(client, currentPrice, proposedPrice) {
@@ -302,13 +316,15 @@ async function approveListingRevision(revisionId, reviewerId) {
       `UPDATE listings SET condition = $1, replica_disclosure = $2, title = $3, description = $4,
        asking_price = $5, fabric_material = $6, brand = $7, color = $8, embellishment_detail = $9,
        fabric_id = $10, brand_id = $11, color_id = $12,
-       requires_id_verification = $13, content_version = content_version + 1,
-       search_version = search_version + 1, updated_at = now() WHERE id = $14
+       seo_choice = $13, seo_title = $14, seo_description = $15,
+       requires_id_verification = $16, content_version = content_version + 1,
+       search_version = search_version + 1, updated_at = now() WHERE id = $17
        RETURNING search_version`,
       [revision.proposed_condition, revision.proposed_replica_disclosure, revision.proposed_title,
         revision.proposed_description, revision.proposed_asking_price, revision.proposed_fabric_material,
         revision.proposed_brand, revision.proposed_color, revision.proposed_embellishment_detail,
         revision.proposed_fabric_id, revision.proposed_brand_id, revision.proposed_color_id,
+        revision.proposed_seo_choice, revision.proposed_seo_title, revision.proposed_seo_description,
         requiresEmail, listing.id]
     );
     await client.query('DELETE FROM listing_measurements WHERE listing_id = $1', [listing.id]);

@@ -110,6 +110,13 @@ queue. Admins manage Roman Urdu/spelling mappings at
 release. Run `npm run search:rebuild` for a locked rebuild, or schedule
 `npm run search:reconcile` to enqueue missing and stale listing rows.
 
+Listing details expose a generated SEO recommendation and the seller's selected
+recommendation or moderated custom text under `seo`. Canonical public links use
+`/listing/<slug>-<short-id>`; requests for a previous slug redirect to the
+current key. Sellers can preview through `POST /api/listings/seo-recommendation`.
+Custom SEO text is checked on listing submission and again when a published
+listing revision is submitted for moderation.
+
 ## Testing
 
 ```bash
