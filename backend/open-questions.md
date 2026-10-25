@@ -95,8 +95,8 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - `LISTING_REVISIONS_PLAN.md` records the implemented Phase 2 revision scope;
   its contents do not adopt the superseded version-pointer/cache proposals.
 - `PHASE3_GATE_REPORT.md` records the Phase 3 decisions, evidence, parked and
-  deferred work, and live checks. The 2026-10-25 guarded integration rerun did
-  not start because `TEST_DATABASE_URL` was unset; do not treat it as a pass.
+  deferred work, and live checks. On 2026-10-25, the guarded integration suite
+  passed 13 suites/125 tests with Redis-backed limits enabled.
 
 ## Resolved
 
@@ -158,3 +158,4 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-13 · A seller must be ID-verified before the first payout, whatever the price. No cool-off on payout-detail changes.
 - 2026-10-13 · Reservation: yes, the listing is reserved for the buyer while payment is pending (duration still open above).
 - 2026-10-15 · FR-68 · When to hand "mark Delivered" (and other routine steps) to an ops role as volume grows; today it is admin-only and every order needs an admin action. A permission, so no code change is needed to delegate it.
+- 2026-10-25 · SEC-31 · **Resolved — owner decision:** accept exact `body-parser` 2.4.0 even though it is less than 14 days old because it fixes a high-severity production advisory. Pin it directly, run `npm audit signatures`, and require zero production audit findings.

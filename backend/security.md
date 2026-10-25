@@ -3,10 +3,10 @@
 Phase 1 security implementation evidence and outstanding live checks are
 summarized in `PHASE1_GATE_REPORT.md` and `LIVE_CHECKS.md`; Phase 3 evidence is
 in `PHASE3_GATE_REPORT.md`. On 2026-10-25 the backend unit/smoke suite passed
-46 suites/569 tests. The guarded integration suite ran: 11 suites passed, 2
-failed; 122 tests passed, 3 failed, and none were skipped. Only checked rows
-have complete, current implementation/test evidence; local test results do
-not close deployment or integration gates.
+46 suites/573 tests. The guarded integration suite passed 13 suites/125 tests,
+with no skips or failures. Only checked rows have complete, current
+implementation/test evidence; local test results do not close deployment or
+integration gates.
 
 Read alongside `rules.md` (Section 9 makes this binding). Same convention as
 `specs.md`: **every row has a checkbox**, ticked only when that job is done.
@@ -125,6 +125,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 
 - [x] **SEC-31 Dependencies.** `npm audit --omit=dev` is clean before every release; dev-tree findings are triaged; the lockfile is committed.
   *Enforced by:* `npm.cmd audit --omit=dev` (backend and frontend both returned 0 vulnerabilities on 2026-10-23) plus owner review. Owner decision 2026-10-22: the 33 development-tree advisories in the Jest 29 chain are triaged and do not stop Phase 2; keep Jest 29 through Phase 2. The 2026-10-23 full backend audit reported 28 high-severity development-tree vulnerabilities in the Jest 29 chain; full frontend audit is clean. The owner-triaged advisories and current audit count are recorded separately because npm's current report groups the transitive findings differently. The sole dependency stop condition is any production dependency vulnerability reported by `npm audit --omit=dev` in either package. Schedule Jest 29 -> 30 as a separate small task immediately after Phase 2.
+  *Owner exception (2026-10-25):* accept exact `body-parser` 2.4.0 despite its release being less than 14 days old; it fixes a high-severity production advisory. Pin it directly and exactly, and verify with `npm audit --omit=dev`.
 - [ ] **SEC-32 Source maps.** The production frontend build ships no public source maps. **Frontend repo.**
   *Enforced by:* review · *Today:* n/a here.
 - [ ] **SEC-33 Webhook signature verification (when a provider is added).** HMAC over the **raw** body, constant-time comparison, reject stale timestamps (replay), idempotency keys, parse only after verification. Decided design (specs.md FR-77b): verify the signature, store the raw event under a unique gateway event ID (an inbox), enqueue, return 200, process in the worker. Escrow is decided (a payment gateway, 2026-10-13), so this row goes live in Phase 4.

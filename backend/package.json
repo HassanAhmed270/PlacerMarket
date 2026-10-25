@@ -11,7 +11,7 @@
     "dev": "node --env-file-if-exists=.env --watch src/server.js",
     "worker": "node --env-file-if-exists=.env worker.js",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js",
-    "test:integration": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --config test/integration/jest.config.js",
+    "test:integration": "node --env-file-if-exists=.env --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --config test/integration/jest.config.js",
     "password:benchmark": "node scripts/benchmark-argon2.js",
     "admin:create": "node --env-file-if-exists=.env scripts/create-admin.js",
     "prepare": "node hooks/install.js",
@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "argon2": "0.45.1",
+    "body-parser": "2.4.0",
     "express": "^5.3.0",
     "helmet": "8.3.0",
     "node-pg-migrate": "9.0.0",
