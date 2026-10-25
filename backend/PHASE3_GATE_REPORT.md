@@ -2,9 +2,11 @@
 
 Phase 3 is **not closed**. This report maps the Phase 3 scope in `Phases.md`
 and the 2026-10-22 owner decisions to current evidence. A test file existing is
-not the same as a passing test. The guarded integration suite ran against the
-local `testing_only` database and localhost Redis in this refresh: 11 suites
-passed, 2 failed; 122 tests passed and 3 failed, with no skipped tests.
+not the same as a passing test. A prior guarded integration run is recorded
+below. In the latest S15 attempt, Jest stopped in `globalSetup` because
+`TEST_DATABASE_URL` was absent from the command's process environment; no
+integration tests ran in that attempt. Do not treat the prior run as a passing
+result for the S15 rerun.
 
 The 2026-10-22 owner decisions supersede the former negotiation-only Buy flow.
 Fixed-price Buy is the early-site path; Phase 3 only routes a signed-in buyer to
@@ -116,11 +118,12 @@ listing or charges payment.
 | SEO titles/descriptions, structured data, URLs, canonicals and indexability | Done (with evidence) | The owner decisions are documented; implementation/test status is separately mapped under FR-81/82 above. |
 | CDN provider selection and production snapshot-serving/purge model | Live-check pending | No provider is selected. Verify production routing, no-cloaking behavior, cache freshness and purge delivery in `LIVE_CHECKS.md`. |
 | Production cache freshness and deployed CDN behavior | Live-check pending | Verify the approved 10-second detail/status and 60-second search/category freshness limits against the deployed origin/CDN. |
-| Integration test rerun with approved `TEST_DATABASE_URL` (and `TEST_REDIS_URL` where required) | Open | Ran on 2026-10-25 against the local `testing_only` database and localhost Redis: 11 suites passed, 2 failed; 122 tests passed, 3 failed; none skipped. The three failures and reasons are recorded above. |
+| Integration test rerun with approved `TEST_DATABASE_URL` (and `TEST_REDIS_URL` where required) | Open | Prior run: 11 suites passed, 2 failed; 122 tests passed, 3 failed; no tests skipped. Latest S15 attempt did not reach Jest test collection: global setup failed because `TEST_DATABASE_URL` was empty in the command process. No per-test names or skip results exist for the latest attempt. |
 | Offers, counters, offer acceptance/history, Urdu script/RTL, popularity, trending, “did you mean”, real-time chat, video and voice | Deferred | Owner decisions and deferred scope are recorded in `open-questions.md` and `END_OF_PHASES_REVIEW.md`. Video and voice remain FR-75–FR-76a deferrals. |
 
-## Verification run (2026-10-25)
+## Prior integration run and verification record (2026-10-25)
 
+This is the previously recorded run, not the latest S15 integration attempt.
 Commands ran from the respective package directories:
 
 - Backend unit and smoke: `npm.cmd test -- --runInBand`
@@ -146,3 +149,37 @@ Commands ran from the respective package directories:
 
 This refresh also did not run production-provider or deployment checks. No push
 or production-readiness claim is made.
+
+## S15 verification attempt (2026-10-25)
+
+The backend unit result below was supplied as a terminal transcript by the
+operator; the other commands were run from their respective package folders in
+the S15 command terminal.
+
+- Backend unit: `npm.cmd test -- --runInBand` — operator-provided transcript:
+  - `Test Suites: 46 passed, 46 total`
+  - `Tests:       569 passed, 569 total`
+  - `Snapshots:   0 total`
+- Backend integration: `npm.cmd run test:integration -- --runInBand` — failed
+  before test collection in Jest `globalSetup`:
+  - `Error: Jest: Got error running globalSetup - ...\test\integration\global-setup.js, reason: TEST_DATABASE_URL is required and cannot be empty.`
+  - No integration test ran or was skipped by this attempt, so there are no
+    individual failing/skipped test names to report. The S15 integration
+    requirement remains open.
+- Backend schema: `npm.cmd run db:check-schema` — exit 0.
+- Backend production dependency audit: `npm.cmd audit --omit=dev` — exit 1;
+  `1 high severity vulnerability`, `body-parser` 2.0.0–2.3.0,
+  `GHSA-27r3-jxmh-p828`.
+- Frontend production dependency audit: `npm.cmd audit --omit=dev` — exit 0;
+  `found 0 vulnerabilities`.
+- Frontend lint: `npm.cmd run lint` — exit 0.
+- Frontend tests: `npm.cmd test` — exit 0; `# tests 16`, `# pass 16`,
+  `# fail 0`, `# skipped 0`.
+- Frontend production build: `npm.cmd run build` — exit 0. Vite reported an
+  `INEFFECTIVE_DYNAMIC_IMPORT` warning for `src/lib/api.js`; build completed.
+- Public bundle: `npm.cmd run check:bundle` — exit 0; largest public route
+  `75.1 KB gzip (budget: 200 KB)`.
+
+No `specs.md` or `security.md` checkbox was changed: the latest integration
+attempt did not execute a test, and the existing checkboxes remain governed by
+the named-test rule and same-commit hook. No push was made.
