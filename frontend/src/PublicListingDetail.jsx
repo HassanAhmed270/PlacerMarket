@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { ListingGrid } from './BrowseComponents.jsx'
 import { api } from './lib/api.js'
 import { getBuyDestination, getListingViewState } from './lib/browse.js'
+import { POLL_INTERVALS, schedulePolling } from './lib/polling.js'
+import { getMessageErrorMessage } from './lib/seoValidation.js'
 
 function PublicListingDetail({ id }) {
   const [listing, setListing] = useState(null)
@@ -16,6 +18,30 @@ function PublicListingDetail({ id }) {
   const [messageText, setMessageText] = useState('')
   const [messageState, setMessageState] = useState('idle')
   const [messageError, setMessageError] = useState('')
+
+  useEffect(() => {
+    if (!conversationId) return undefined
+    let active = true
+    async function refreshMessages() {
+      try {
+        const result = await api.getConversationMessages(conversationId)
+        await api.markConversationRead(conversationId)
+        if (active) setMessages(result.messages || [])
+      } catch (cause) {
+        if (active) setMessageError(cause.payload?.error || cause.message)
+      }
+    }
+    const stopChatPolling = schedulePolling(refreshMessages, POLL_INTERVALS.openChat)
+    const stopInboxPolling = schedulePolling(
+      () => api.getConversationInbox().catch((cause) => { if (active) setMessageError(cause.payload?.error || cause.message) }),
+      POLL_INTERVALS.unread,
+    )
+    return () => {
+      active = false
+      stopChatPolling()
+      stopInboxPolling()
+    }
+  }, [conversationId])
 
   useEffect(() => {
     let active = true
@@ -177,6 +203,7 @@ function PublicListingDetail({ id }) {
       const conversation = await api.startConversation(listing.id)
       setConversationId(conversation.id)
       const result = await api.getConversationMessages(conversation.id)
+      await api.markConversationRead(conversation.id)
       setMessages(result.messages || [])
       setMessageState('ready')
     } catch (cause) {
@@ -194,7 +221,7 @@ function PublicListingDetail({ id }) {
       setMessages((current) => [message, ...current])
       setMessageText('')
     } catch (cause) {
-      setMessageError(cause.payload?.error || cause.message)
+      setMessageError(getMessageErrorMessage(cause))
     }
   }
 

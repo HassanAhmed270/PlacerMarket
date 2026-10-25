@@ -12,7 +12,10 @@ function SiteHeader() {
       </form>
       <nav className="main-nav" aria-label="Main navigation">
         <a href="/#categories">Explore</a>
-        <a href="/#about">About</a>
+        <a href="/about">About</a>
+        <a href="/favorites">Favorites</a>
+        <a href="/inbox">Inbox</a>
+        <a href="/notifications">Notifications</a>
         <a className="nav-sell" href="/seller/listings">Sell with us</a>
         <a href="/login">Sign in</a>
       </nav>
@@ -26,7 +29,12 @@ function SiteFooter() {
       <a className="wordmark footer-wordmark" href="/" aria-label="Poshaak home">Poshaak</a>
       <nav className="footer-nav" aria-label="Footer navigation">
         <a href="/#categories">Explore</a>
-        <a href="/#about">About</a>
+        <a href="/about">About</a>
+        <a href="/how-it-works">How it works</a>
+        <a href="/terms">Terms</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/help">Help</a>
+        <a href="/contact">Contact</a>
         <a href="/seller/listings">Sell with us</a>
         <a href="/login">Sign in</a>
       </nav>

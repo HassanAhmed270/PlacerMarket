@@ -1,9 +1,8 @@
 # Poshaak frontend
 
-React and Vite frontend workspace. It currently provides a responsive development
-preview and reads public main-category data from the backend when the API is
-available. Authentication and protected seller/admin actions are intentionally
-not implemented here.
+React and Vite frontend for the Poshaak marketplace. It provides public browsing,
+protected customer messaging/favorites/notifications, seller listing tools, and
+moderation queues using the backend API.
 
 ## Requirements
 
@@ -61,15 +60,30 @@ it starts. Its `CORS_ORIGINS` allowlist must include `http://localhost:5173`.
 The frontend remains viewable if the API is down; the category section will
 show an unavailable state.
 
+## Screens
+
+- `/favorites`, `/inbox`, `/inbox/:conversationId`, and `/notifications` require
+  an authenticated session.
+- Open chats poll every 15 seconds; inbox and unread notification data refresh
+  every 60 seconds.
+- `/seller/listings` offers managed color, brand, and fabric choices plus custom
+  values that remain pending until approved. SEO recommendations are labeled
+  as recommendations from seller details; custom text is checked for length
+  and replica rules before submission.
+- `/moderation` includes listing/revision SEO review and the custom-attribute
+  approval queue, subject to API permissions.
+- `/about`, `/how-it-works`, `/terms`, `/privacy`, `/help`, and `/contact` are
+  clearly marked drafts and set `noindex,follow`. Their text makes no refund,
+  return, or payment promises.
+
 ## Checks
 
 ```powershell
 npm.cmd test
 npm.cmd run lint
 npm.cmd run build
+npm.cmd run check:bundle
 ```
 
 The tests use Node's built-in test runner and require no additional dependency.
-The production build does not emit source maps. SEO titles, descriptions, URL
-rules, and search-oriented headings remain subject to the project SEO discussion
-gate; the HTML document title is still the Vite starter default for now.
+The production build does not emit source maps.

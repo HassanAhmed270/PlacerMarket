@@ -23,29 +23,37 @@ function ModeratorImage({ src }) {
 function ModerationWorkspace({ onSignOut }) {
   const [listings, setListings] = useState([])
   const [revisions, setRevisions] = useState([])
+  const [attributeQueue, setAttributeQueue] = useState([])
   const [reasons, setReasons] = useState({})
   const [error, setError] = useState('')
+  const [attributeQueueError, setAttributeQueueError] = useState('')
   const [message, setMessage] = useState('')
 
   async function refresh() {
-    const [listingQueue, revisionQueue] = await Promise.all([api.getListingModerationQueue(), api.getListingRevisionQueue()])
-    setListings(listingQueue)
-    setRevisions(revisionQueue)
+    const [listingResult, revisionResult, attributeResult] = await Promise.allSettled([
+      api.getListingModerationQueue(), api.getListingRevisionQueue(), api.getManagedAttributeApprovalQueue(),
+    ])
+    if (listingResult.status === 'rejected') throw listingResult.reason
+    if (revisionResult.status === 'rejected') throw revisionResult.reason
+    setListings(listingResult.value)
+    setRevisions(revisionResult.value)
+    if (attributeResult.status === 'fulfilled') {
+      setAttributeQueue(attributeResult.value)
+      setAttributeQueueError('')
+    } else {
+      setAttributeQueueError(attributeResult.reason.payload?.error || attributeResult.reason.message)
+    }
   }
 
   useEffect(() => {
     let active = true
-    Promise.all([api.getListingModerationQueue(), api.getListingRevisionQueue()])
-      .then(([listingQueue, revisionQueue]) => {
-        if (active) {
-          setListings(listingQueue)
-          setRevisions(revisionQueue)
-        }
-      })
-      .catch((cause) => {
-        if (active) setError(cause.payload?.error || cause.message)
-      })
-    return () => { active = false }
+    const timer = window.setTimeout(() => {
+      refresh().catch((cause) => { if (active) setError(cause.payload?.error || cause.message) })
+    }, 0)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
   }, [])
 
   async function run(action, done) {
@@ -68,12 +76,17 @@ function ModerationWorkspace({ onSignOut }) {
       {message && <p role="status">{message}</p>}
       <button className="text-button" type="button" onClick={() => refresh().catch((cause) => setError(cause.message))}>Refresh queues</button>
       <section className="listing-panel">
-        <h2>Listings and photos</h2>
+        <h2>Listings, photos, and SEO text review</h2>
         {listings.map((listing) => (
           <article className="moderation-card" key={listing.id}>
             <h3>{listing.title}</h3>
             <p>PKR {listing.asking_price} · {listing.is_high_value ? 'High value' : 'Standard review'}</p>
-            {listing.seo_choice === 'custom' && <p><strong>Seller SEO title:</strong> {listing.seo_title}<br /><strong>Seller SEO description:</strong> {listing.seo_description}</p>}
+            <div className="seo-review">
+              <strong>SEO text · {listing.seo_choice === 'custom' ? 'Seller-written — review' : 'System recommendation'}</strong>
+              {listing.seo_choice === 'custom'
+                ? <p><strong>Seller SEO title:</strong> {listing.seo_title}<br /><strong>Seller SEO description:</strong> {listing.seo_description}</p>
+                : <p>Recommendation is based on listing details and seller city.</p>}
+            </div>
             <div className="moderation-photos">
               {(listing.photos || []).map((photo) => (
                 <div key={photo.id}>
@@ -96,18 +109,38 @@ function ModerationWorkspace({ onSignOut }) {
         ))}
       </section>
       <section className="listing-panel">
-        <h2>Content revisions</h2>
+        <h2>Content revisions and SEO text review</h2>
         {revisions.map((revision) => (
           <article className="moderation-card" key={revision.id}>
             <h3>{revision.proposed_title}</h3>
             <p>PKR {revision.proposed_asking_price} · {revision.current_title}</p>
-            {revision.proposed_seo_choice === 'custom' && <p><strong>Seller SEO title:</strong> {revision.proposed_seo_title}<br /><strong>Seller SEO description:</strong> {revision.proposed_seo_description}</p>}
+            <div className="seo-review">
+              <strong>SEO text · {revision.proposed_seo_choice === 'custom' ? 'Seller-written — review' : 'System recommendation'}</strong>
+              {revision.proposed_seo_choice === 'custom'
+                ? <p><strong>Seller SEO title:</strong> {revision.proposed_seo_title}<br /><strong>Seller SEO description:</strong> {revision.proposed_seo_description}</p>
+                : <p>Recommendation is based on listing details and seller city.</p>}
+            </div>
             <button className="button button-primary" type="button" onClick={() => run(() => api.approveListingRevision(revision.id), 'Revision approved and published.')}>Approve revision</button>
             <label>Rejection reason<input value={reasons[revision.id] || ''} onChange={(event) => setReasons({ ...reasons, [revision.id]: event.target.value })} /></label>
             <button className="text-button" type="button" disabled={!reasons[revision.id]} onClick={() => run(() => api.rejectListingRevision(revision.id, reasons[revision.id]), 'Revision rejected.')}>Reject revision</button>
           </article>
         ))}
         {revisions.length === 0 && <p>No pending revisions.</p>}
+      </section>
+      <section className="listing-panel">
+        <h2>Custom attribute approval queue</h2>
+        <p>Approved values become available in seller choices and catalog filters.</p>
+        <ErrorMessage>{attributeQueueError}</ErrorMessage>
+        {attributeQueue.map((item) => (
+          <article className="moderation-card" key={item.id}>
+            <h3>{item.value}</h3>
+            <p>{item.attribute_type} · Pending approval</p>
+            <button className="button button-primary" type="button" onClick={() => run(() => api.approveManagedAttribute(item.id), 'Custom catalog value approved.')}>Approve value</button>
+            <label>Rejection reason<input value={reasons[item.id] || ''} maxLength="500" onChange={(event) => setReasons({ ...reasons, [item.id]: event.target.value })} /></label>
+            <button className="text-button" type="button" disabled={!reasons[item.id]?.trim()} onClick={() => run(() => api.rejectManagedAttribute(item.id, reasons[item.id]), 'Custom catalog value rejected.')}>Reject value</button>
+          </article>
+        ))}
+        {attributeQueue.length === 0 && !attributeQueueError && <p>No custom values awaiting approval.</p>}
       </section>
     </WorkspaceFrame>
   )

@@ -10,8 +10,11 @@ const SearchPage = lazy(() => import('./SearchPage.jsx'))
 const PublicListingDetail = lazy(() => import('./PublicListingDetail.jsx'))
 const CategoryPage = lazy(() => import('./CategoryPage.jsx'))
 const ProtectedWorkspace = lazy(() => import('./ListingWorkspace.jsx'))
+const ProtectedCustomerWorkspace = lazy(() => import('./CustomerWorkspace.jsx'))
+const StaticPage = lazy(() => import('./StaticPage.jsx'))
 
 const authRoutes = new Set(['/login', '/register', '/forgot-password', '/reset-password', '/account'])
+const staticPageRoutes = new Set(['/about', '/how-it-works', '/terms', '/privacy', '/help', '/contact'])
 
 function CheckoutSoonPage() {
   const [allowed, setAllowed] = useState(api.isAuthenticated())
@@ -53,6 +56,12 @@ function App() {
   let page
   if (authRoutes.has(path)) {
     page = <AuthScreen />
+  } else if (path === '/favorites' || path === '/inbox' || path === '/notifications') {
+    page = <ProtectedCustomerWorkspace path={path} />
+  } else if (/^\/inbox\/[^/]+$/.test(path)) {
+    page = <ProtectedCustomerWorkspace path={path} conversationId={decodeURIComponent(path.slice('/inbox/'.length))} />
+  } else if (staticPageRoutes.has(path)) {
+    page = <StaticPage page={path.slice(1)} />
   } else if (path === '/search') {
     page = <SearchPage />
   } else if (path === '/categories') {

@@ -10,6 +10,9 @@ function WorkspaceFrame({ children, onSignOut }) {
       <header className="workspace-toolbar">
         <nav className="workspace-links">
           <a href="/seller/listings">My listings</a>
+          <a href="/favorites">Favorites</a>
+          <a href="/inbox">Inbox</a>
+          <a href="/notifications">Notifications</a>
           <a href="/moderation">Moderation</a>
         </nav>
         {onSignOut && <button className="text-button" type="button" onClick={onSignOut}>Sign out</button>}
