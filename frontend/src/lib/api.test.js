@@ -21,6 +21,22 @@ test('public catalog client requests the existing main-categories endpoint', asy
   assert.deepEqual(categories, [{ id: 'category-1', name: 'Clothing' }])
 })
 
+test('public search client encodes the query in the existing discovery endpoint', async () => {
+  let requestUrl
+  const client = createApiClient({
+    baseUrl: 'http://localhost:3000/api',
+    fetchImpl: async (url) => {
+      requestUrl = url
+      return { ok: true, status: 200, json: async () => ({ items: [], nextCursor: null, hasNextPage: false }) }
+    },
+  })
+
+  const result = await client.searchListings('silk outfit')
+
+  assert.equal(requestUrl, 'http://localhost:3000/api/discovery/search?q=silk%20outfit')
+  assert.deepEqual(result, { items: [], nextCursor: null, hasNextPage: false })
+})
+
 test('API client reports non-success responses without exposing response content', async () => {
   const client = createApiClient({
     baseUrl: 'http://localhost:3000/api',

@@ -1,16 +1,64 @@
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 1000;
+  src: url('@fontsource-variable/dm-sans/files/dm-sans-latin-wght-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 900;
+  src: url('@fontsource-variable/playfair-display/files/playfair-display-latin-wght-normal.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
-  font-family: Arial, Helvetica, sans-serif;
+  --color-forest: #173d35;
+  --color-forest-soft: #214f44;
+  --color-forest-mid: #2b6253;
+  --color-cream: #fbfaf6;
+  --color-cream-muted: #f2efe5;
+  --color-cream-border: #e6e0d1;
+  --color-cream-card: #fffefa;
+  --color-white: #ffffff;
+  --color-cream-warm: #fffdf8;
+  --color-gold: #b58a48;
+  --color-ink: #202820;
+  --color-muted: #68736b;
+  --color-muted-strong: #5d6a61;
+  --color-label: #35463d;
+  --color-control-border: #c9cfc8;
+  --color-on-forest: #e1e6df;
+  --color-success-bg: #edf4ee;
+  --color-success-ink: #214f44;
+  --color-error-bg: #fff0ed;
+  --color-error-ink: #8f2e1c;
+  --color-warning-bg: #fff7df;
+  --color-warning-ink: #664d1f;
+  --font-body: 'DM Sans', Arial, Helvetica, sans-serif;
+  --font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --green-950: var(--color-forest);
+  --green-900: var(--color-forest-soft);
+  --green-800: var(--color-forest-mid);
+  --cream-50: var(--color-cream);
+  --cream-100: var(--color-cream-muted);
+  --cream-200: var(--color-cream-border);
+  --gold-500: var(--color-gold);
+  --ink: var(--color-ink);
+  --muted: var(--color-muted);
+  font-family: var(--font-body);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-optical-sizing: auto;
   font-weight: 400;
-  color: #202820;
-  background: #fbfaf6;
-
-  --font-body: Arial, Helvetica, sans-serif;
-  --font-display: Georgia, 'Times New Roman', serif;
+  color: var(--color-ink);
+  background: var(--color-cream);
 }
 
 * {

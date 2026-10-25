@@ -1,14 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
-import { api, DEV_FAKES_BANNER } from './lib/api.js'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import { api } from './lib/api.js'
+import WorkspaceFrame, { ErrorMessage } from './WorkspaceFrame.jsx'
+
+const ModerationWorkspace = lazy(() => import('./ModerationWorkspace.jsx'))
 
 const SLOT_LABELS = [
   ['front', 'Front (required)'], ['back', 'Back (required)'], ['other', 'Other / detail (required)'],
   ['optional_1', 'Optional photo 1'], ['optional_2', 'Optional photo 2'], ['optional_3', 'Optional photo 3'],
 ]
-
-function ErrorMessage({ children }) {
-  return children ? <p className="workspace-error" role="alert">{children}</p> : null
-}
 
 function ProtectedWorkspace({ path, onSignOut }) {
   const [state, setState] = useState('checking')
@@ -30,22 +29,14 @@ function ProtectedWorkspace({ path, onSignOut }) {
   if (state === 'checking') return <WorkspaceFrame><p role="status">Restoring your secure session…</p></WorkspaceFrame>
   if (state === 'signed-out') return <WorkspaceFrame><h1>Sign in to continue</h1><p>Your secure session has expired.</p><a className="button button-primary" href="/login">Sign in</a></WorkspaceFrame>
   if (path === '/seller/listings') return <SellerListings key={token} onSignOut={onSignOut} />
-  if (path === '/moderation') return <ModerationWorkspace onSignOut={onSignOut} />
+  if (path === '/moderation') {
+    return (
+      <Suspense fallback={<WorkspaceFrame onSignOut={onSignOut}><p role="status">Loading moderation tools…</p></WorkspaceFrame>}>
+        <ModerationWorkspace onSignOut={onSignOut} />
+      </Suspense>
+    )
+  }
   return <WorkspaceFrame><h1>Workspace not found</h1><a href="/">Return to Poshaak</a></WorkspaceFrame>
-}
-
-function WorkspaceFrame({ children, onSignOut }) {
-  return (
-    <main className="account-shell listing-workspace">
-      <header className="account-header">
-        <a className="wordmark" href="/">Poshaak</a>
-        <nav className="workspace-links"><a href="/seller/listings">My listings</a><a href="/moderation">Moderation</a></nav>
-        {onSignOut && <button className="text-button" type="button" onClick={onSignOut}>Sign out</button>}
-      </header>
-      {DEV_FAKES_BANNER && <p className="auth-mock-banner" role="status">Development only: DEV_FAKES is enabled. Provider actions may be simulated.</p>}
-      {children}
-    </main>
-  )
 }
 
 function SellerListings({ onSignOut }) {
@@ -250,126 +241,6 @@ function SellerListings({ onSignOut }) {
       </section>
     </WorkspaceFrame>
   )
-}
-
-function ModeratorImage({ src }) {
-  const [objectUrl, setObjectUrl] = useState('')
-  useEffect(() => {
-    let active = true
-    let createdUrl = ''
-    if (src) api.getAuthenticatedImage(src).then((url) => { createdUrl = url; if (active) setObjectUrl(url); else URL.revokeObjectURL(url) }).catch(() => {})
-    return () => { active = false; if (createdUrl) URL.revokeObjectURL(createdUrl) }
-  }, [src])
-  return objectUrl ? <img className="moderation-photo" src={objectUrl} alt="Processed seller photo" /> : <span>Photo processing or unavailable</span>
-}
-
-function ModerationWorkspace({ onSignOut }) {
-  const [listings, setListings] = useState([])
-  const [revisions, setRevisions] = useState([])
-  const [reasons, setReasons] = useState({})
-  const [error, setError] = useState('')
-  const [message, setMessage] = useState('')
-
-  async function refresh() {
-    const [listingQueue, revisionQueue] = await Promise.all([api.getListingModerationQueue(), api.getListingRevisionQueue()])
-    setListings(listingQueue); setRevisions(revisionQueue)
-  }
-  useEffect(() => {
-    let active = true
-    Promise.all([api.getListingModerationQueue(), api.getListingRevisionQueue()])
-      .then(([listingQueue, revisionQueue]) => {
-        if (active) { setListings(listingQueue); setRevisions(revisionQueue) }
-      })
-      .catch((cause) => {
-        if (active) setError(cause.payload?.error || cause.message)
-      })
-    return () => { active = false }
-  }, [])
-
-  async function run(action, done) {
-    setError(''); setMessage('')
-    try { await action(); setMessage(done); await refresh() }
-    catch (cause) { setError(cause.payload?.error || cause.message) }
-  }
-
-  return (
-    <WorkspaceFrame onSignOut={onSignOut}>
-      <p className="eyebrow">Review desk</p><h1>Moderation queue</h1>
-      <ErrorMessage>{error}</ErrorMessage>{message && <p role="status">{message}</p>}
-      <button className="text-button" type="button" onClick={() => refresh().catch((cause) => setError(cause.message))}>Refresh queues</button>
-      <section className="listing-panel"><h2>Listings and photos</h2>
-        {listings.map((listing) => <article className="moderation-card" key={listing.id}><h3>{listing.title}</h3><p>PKR {listing.asking_price} · {listing.is_high_value ? 'High value' : 'Standard review'}</p>
-          {listing.seo_choice === 'custom' && <p><strong>Seller SEO title:</strong> {listing.seo_title}<br /><strong>Seller SEO description:</strong> {listing.seo_description}</p>}
-          <div className="moderation-photos">{(listing.photos || []).map((photo) => <div key={photo.id}><ModeratorImage src={photo.imageUrl} /><strong>{photo.slot || 'unlabeled'}</strong>
-            {photo.labelConfirmedAt ? <span>Confirmed</span> : <><button className="text-button" type="button" onClick={() => run(() => api.confirmListingPhoto(photo.id), 'Photo label confirmed.')}>Confirm label</button><label>Rejection reason<input value={reasons[photo.id] || ''} onChange={(event) => setReasons({ ...reasons, [photo.id]: event.target.value })} /></label><button className="text-button" type="button" disabled={!reasons[photo.id]} onClick={() => run(() => api.rejectListingPhoto(photo.id, reasons[photo.id]), 'Photo rejected with reason.')}>Reject photo</button></>}
-          </div>)}</div>
-          <label>Listing rejection reason<input value={reasons[listing.id] || ''} onChange={(event) => setReasons({ ...reasons, [listing.id]: event.target.value })} /></label>
-          <button className="button button-primary" type="button" onClick={() => run(() => api.approveListing(listing.id), 'Listing approved.')}>Approve listing</button>
-          <button className="text-button" type="button" disabled={!reasons[listing.id]} onClick={() => run(() => api.rejectListing(listing.id, reasons[listing.id]), 'Listing rejected.')}>Reject listing</button>
-        </article>)}
-      </section>
-      <section className="listing-panel"><h2>Content revisions</h2>
-        {revisions.map((revision) => <article className="moderation-card" key={revision.id}><h3>{revision.proposed_title}</h3><p>PKR {revision.proposed_asking_price} · {revision.current_title}</p>
-          {revision.proposed_seo_choice === 'custom' && <p><strong>Seller SEO title:</strong> {revision.proposed_seo_title}<br /><strong>Seller SEO description:</strong> {revision.proposed_seo_description}</p>}
-          <button className="button button-primary" type="button" onClick={() => run(() => api.approveListingRevision(revision.id), 'Revision approved and published.')}>Approve revision</button>
-          <label>Rejection reason<input value={reasons[revision.id] || ''} onChange={(event) => setReasons({ ...reasons, [revision.id]: event.target.value })} /></label>
-          <button className="text-button" type="button" disabled={!reasons[revision.id]} onClick={() => run(() => api.rejectListingRevision(revision.id, reasons[revision.id]), 'Revision rejected.')}>Reject revision</button>
-        </article>)}
-        {revisions.length === 0 && <p>No pending revisions.</p>}
-      </section>
-    </WorkspaceFrame>
-  )
-}
-
-export function PublicListingDetail({ id }) {
-  const [listing, setListing] = useState(null)
-  const [error, setError] = useState('')
-  useEffect(() => {
-    let active = true
-    const originalTitle = document.title
-    const description = document.querySelector('meta[name="description"]')
-    const originalDescription = description?.getAttribute('content')
-    const canonical = document.querySelector('link[rel="canonical"]')
-    const originalCanonical = canonical?.getAttribute('href')
-    const meta = description || document.createElement('meta')
-    const link = canonical || document.createElement('link')
-    if (!description) {
-      meta.name = 'description'
-      document.head.append(meta)
-    }
-    if (!canonical) {
-      link.rel = 'canonical'
-      document.head.append(link)
-    }
-    api.getPublicListing(id).then((result) => {
-      if (!active) return
-      const canonicalPath = `/listing/${result.canonicalKey}`
-      if (window.location.pathname !== canonicalPath) {
-        window.history.replaceState({}, '', canonicalPath)
-      }
-      document.title = result.seo.choice.title
-      meta.content = result.seo.choice.description
-      link.href = new URL(result.canonicalUrl, window.location.origin).href
-      setListing(result)
-    }).catch((cause) => {
-      if (active) setError(cause.payload?.error || cause.message)
-    })
-    return () => {
-      active = false
-      document.title = originalTitle
-      if (description) {
-        if (originalDescription === null) description.removeAttribute('content')
-        else description.content = originalDescription
-      } else meta.remove()
-      if (canonical) {
-        if (originalCanonical === null) canonical.removeAttribute('href')
-        else canonical.href = originalCanonical
-      } else link.remove()
-    }
-  }, [id])
-  if (error) return <main className="account-shell"><a href="/">Poshaak</a><h1>Listing unavailable</h1><ErrorMessage>{error}</ErrorMessage></main>
-  if (!listing) return <main className="account-shell"><p role="status">Loading listing…</p></main>
-  return <main className="account-shell listing-workspace"><a href="/">Poshaak</a><article className="listing-panel"><h1>{listing.title}</h1><p>PKR {listing.asking_price}</p><p>{listing.description}</p><div className="moderation-photos">{(listing.images || []).map((image) => <img key={image.id} className="moderation-photo" src={image.image_url} alt={`${listing.title} listing photo`} />)}</div></article></main>
 }
 
 export default ProtectedWorkspace

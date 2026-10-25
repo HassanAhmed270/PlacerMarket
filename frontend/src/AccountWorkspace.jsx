@@ -74,13 +74,9 @@ function AccountWorkspace({ onSignOut }) {
 
   return (
     <main className="account-shell">
-      <header className="account-header">
-        <a className="wordmark" href="/">Poshaak</a>
-        <button className="text-button" type="button" onClick={onSignOut}>Close workspace</button>
-      </header>
       <div className="account-title">
         <div><p className="eyebrow">Secure account workspace</p><h1>Seller &amp; admin tools</h1></div>
-        <span className="section-index">Phase 1 preview</span>
+        <button className="text-button" type="button" onClick={onSignOut}>Close workspace</button>
       </div>
       {DEV_FAKES_BANNER && <p className="auth-mock-banner" role="status">Development only: DEV_FAKES is enabled. Provider actions may be simulated.</p>}
       {message && <p className="auth-notice" role="status">{message}</p>}

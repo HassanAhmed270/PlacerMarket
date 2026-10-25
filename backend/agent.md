@@ -385,3 +385,19 @@ before selection (2026-10-23). Backend production dependency audit after
 installation reported zero vulnerabilities. No cloud storage provider code is
 included; local-disk and explicit development fake adapters are the only
 implementations.
+
+# Frontend design and dependency note
+
+The frontend uses native pathname routing with React `lazy()` and dynamic
+imports, so no router dependency is needed and protected account, seller, and
+moderation screens are not part of the public-route startup graph. Public route
+gzip size is checked against a 200 KB ceiling after each production build.
+
+`@fontsource-variable/dm-sans@5.2.8` and
+`@fontsource-variable/playfair-display@5.2.8` are exact-pinned to self-host the
+two design-system families. Both releases were published 2025-09-17, well over
+14 days before selection, and carry the SIL Open Font License 1.1. The frontend
+loads only each Latin variable WOFF2 subset, declares `font-display: swap`, and
+uses no third-party font CDN. These are static asset packages with no runtime
+Node requirement; frontend builds use the project's Node 22.12+ baseline. Their
+production dependency audit is run in CI with `npm audit --omit=dev`.

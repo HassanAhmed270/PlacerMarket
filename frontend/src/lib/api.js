@@ -98,6 +98,7 @@ export function createApiClient({
     approveListingRevision: (id) => post(`listings/revisions/${encodeURIComponent(id)}/approve`, {}, { authenticated: true }),
     rejectListingRevision: (id, reason) => post(`listings/revisions/${encodeURIComponent(id)}/reject`, { reason }, { authenticated: true }),
     getPublicListing: (id) => get(`discovery/listings/${encodeURIComponent(id)}`),
+    searchListings: (query) => get(`discovery/search?q=${encodeURIComponent(query)}`),
     getAuthenticatedImage,
     login: (input) => post('users/login', input),
     staffLogin: (input) => post('users/login/totp', input),
