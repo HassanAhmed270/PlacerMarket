@@ -1,7 +1,8 @@
 # Phases.md — build order (backend and frontend in parallel)
 
 Created 2026-10-13, **consolidated 2026-10-14** with the Poshaak scale, auth and
-listing-media decisions. **Current phase: 0** (change this line when a gate passes).
+listing-media decisions. **Current phase: 3** (Phase 3 gate remains open; see
+`PHASE3_GATE_REPORT.md`).
 
 ## How phases work
 
@@ -44,6 +45,16 @@ recommendation, unconfirmed.
 Redis, object storage and a CDN from day one; managed Postgres with failover; a
 real migration runner; Postgres full-text search; worker-generated HTML
 snapshots; edits to live listings go through moderation (FR-73–FR-81d).
+
+**Phase 3 owner decisions (2026-10-22):** fixed-price Buy replaces negotiation
+as the early-site purchase path; offers remain dormant behind
+`OFFERS_ENABLED` (default off) and are deferred. The Phase 3 Buy action is
+login-gated and leads to “checkout opens soon”; reservation/payment begin in
+Phase 4. Messaging remains in scope with participant-only access, blocked
+contact details, polling, and throttled notification email. Search hides sold
+items and badges reserved items. English and Roman Urdu search are supported;
+the interface is English-only and Urdu script/RTL is deferred. See
+`DECISIONS_2026-10-22.md`, `specs.md`, and `open-questions.md`.
 
 **Auth.** JWT in the Authorization header: a short-lived access token in memory plus a rotating refresh-token cookie; two-factor at every sign-in (email code for buyers, authenticator app for admins and moderators, passkeys later); first admin via `npm run admin:create` (FR-83, FR-83a, FR-83h, FR-84).
 
@@ -326,31 +337,45 @@ and local Redis. Phase 2 remains ungated; see `PHASE2_GATE_REPORT.md`.
 - [ ] Decisions above resolved
 - [ ] `npm test` green and `npm audit --omit=dev` clean
 
-## Phase 3 — Discovery, negotiation and public delivery
+## Phase 3 — Discovery, messaging and public delivery
 
-**Backend:** Module 4 (FR-22–FR-27a, FR-27 share link), Module 5 (FR-28–FR-31 up
-to requesting an accept — the atomic accept + reservation lands in Phase 4),
-search (FR-80–FR-80e; FR-80f once confirmed), the live-status endpoint and cache
-headers (FR-73a, and FR-73b–FR-73d once confirmed), HTML snapshots plumbing
-(FR-81a–FR-81c — wording is SEO-GATE, FR-82 to FR-82d stay DISCUSS).
+**Backend:** public discovery and seller-city filters (FR-22–FR-27a, including
+FR-27 share links); listing-linked messaging and contact-detail blocking
+(FR-28, FR-30); search/suggestions/sorts (FR-80–FR-80e) with sold hidden and
+reserved badged (FR-80f); status freshness (FR-73a); and worker-generated
+snapshots and URL/indexability rules (FR-81a–FR-81c). FR-29's negotiation-only
+sale path is superseded: offers/negotiation stay off behind
+`OFFERS_ENABLED` (default off) and are deferred. FR-31 offer history and
+acceptance work is consequently not Phase 3 scope. FR-73b–FR-73c version-pointer
+and proposed cache semantics were not adopted. The owner-approved SEO rules are
+in `specs.md`; only remaining alt-text/internal-linking details stay open.
 
-**Frontend:** remove the fixed-price "Add to bag" path · login gates on Favorite,
-Chat and Make-an-offer · trim the seller card · chat and offer screens · search
-sort set and suggestions (suggestions once confirmed) · listing page status
-behavior · route-level code splitting, public JS budget, self-hosted fonts
-(FR-81d).
+**Frontend:** replace legacy Add-to-bag with login-gated Buy and a
+“checkout opens soon” state · login gates on Favorite and Chat (offers hidden) ·
+seller card with display alias, rating and join date · chat with 15-second
+conversation and 60-second inbox polling · sold/removed/paused/reserved status
+behavior · approved search sort set and minimal suggestions · route-level code
+splitting, public JS budget and self-hosted fonts (FR-81d).
 
-**Security rows to close:** SEC-12 (conversations, offers, messages — known holes
-`getNegotiationHistory`, `acceptOffer`), 24, 17, 36.
+**Security rows to close:** SEC-12 object-level authorization, SEC-16 complete
+route-boundary validation, SEC-17 output/XSS handling, SEC-24 complete rate
+limiting/proxy behavior, and SEC-36 cache policy. Their partial test evidence
+and unchecked state are recorded in `security.md` and `PHASE3_GATE_REPORT.md`.
 
-**Decisions needed first:** CDN provider; sold-item visibility in search.
+**Decisions resolved:** sold visibility and reserved badge; seller-city filter;
+suggestions/sorts; fixed-price Buy and offers deferral; approved SEO content,
+structured data, URLs and indexing; snapshot generation behavior.
+
+**Decisions/live checks still pending:** choose the CDN provider; verify
+production snapshot serving and CDN purge behavior; settle the remaining
+alt-text and internal-linking details before those details are finalized.
 
 **Gate**
 - [ ] Backend FRs above ticked
 - [ ] Frontend items above ticked
 - [ ] SEC rows above ticked
 - [ ] Decisions above resolved
-- [ ] `npm test` green and `npm audit --omit=dev` clean
+- [ ] Backend unit/smoke, guarded integration, and frontend suites green; `npm audit --omit=dev` clean
 
 ## Phase 4 — Orders and payment in (money comes in)
 
@@ -461,7 +486,7 @@ obsolete (no COD). See that review for post-phase decisions.
 | Initial hosting is Render (decided); PostgreSQL hosting, Redis if required, CDN, storage, connection configuration | Before the first deployment |
 | Email provider(s) for two-factor codes (+ a second for failover) | Before the first real login |
 | Storage adapter: local disk initially; production S3-compatible backend later | Phase 2 / before launch respectively |
-| CDN provider | Phase 3 |
+| CDN provider | Before launch (CDN-ready implementation in Phase 3) |
 | Payment gateway provider, legal advice on holding funds, sandbox account | Phase 4 |
 | Courier partner(s) | Phase 4 |
 | Notification channel for general notifications | Phase 4 |
@@ -470,7 +495,7 @@ obsolete (no COD). See that review for post-phase decisions.
 
 ## Decisions parked for later
 
-All tracked in `open-questions.md`: reservation duration · other open offers (FR-63b)
-· seller no-ship · FR-33b refusal/return and return shipping · delivery fee on
-refunds · chargeback liability · held funds for an unverified seller · real-time
-updates · all SEO wording (SEO-GATE).
+All tracked in `open-questions.md`: reservation duration · other open offers
+(FR-63b) · seller no-ship · FR-33b refusal/return and return shipping · delivery
+fee on refunds · chargeback liability · held funds for an unverified seller ·
+real-time updates · remaining alt-text/internal-linking details (SEO-GATE).

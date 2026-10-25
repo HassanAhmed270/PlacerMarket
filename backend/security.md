@@ -1,10 +1,12 @@
 # security.md — security checklist
 
 Phase 1 security implementation evidence and outstanding live checks are
-summarized in `PHASE1_GATE_REPORT.md` and `LIVE_CHECKS.md`. Only checked rows
-have the required implementation/test evidence; SEC-11/12/13 and SEC-34 remain
-open. Payout encryption custody/rotation and real Redis concurrency are live
-checks, not completed security evidence.
+summarized in `PHASE1_GATE_REPORT.md` and `LIVE_CHECKS.md`; Phase 3 evidence is
+in `PHASE3_GATE_REPORT.md`. On 2026-10-25 the backend unit/smoke suite passed
+46 suites/581 tests. The guarded integration suite did not start because
+`TEST_DATABASE_URL` was unset. Only checked rows have complete, current
+implementation/test evidence; local test results do not close deployment or
+integration gates.
 
 Read alongside `rules.md` (Section 9 makes this binding). Same convention as
 `specs.md`: **every row has a checkbox**, ticked only when that job is done.
@@ -71,7 +73,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [ ] **SEC-11 Every non-public route is permission-checked on the server** (`requireAuth` + `requirePermission`); hiding a button client-side is never a control.
   *Enforced by:* test · *Today:* **PARTIAL** — the admin router is fully gated and tested. `payments` (`expected-amount`, `confirm-collection`, `reconcile`) and delivery `POST /orders/:id/status` need only a login. No courier/ops role exists in `lib/roles.js`; decided 2026-10-13: only an admin marks Delivered, through a new `order.mark_delivered` permission, and the COD payment routes are replaced in Phase 4.
 - [ ] **SEC-12 Object-level authorization (BOLA).** Every handler that takes an id (order, offer, dispute, notification, conversation, listing, …) verifies the caller is a party to it or holds a permission. Test pattern: user A cannot read or change user B's object, on every `:id` route.
-  *Enforced by:* test · *Today:* **FAILS** — no ownership check in `getDeliveryTracking`, `getNegotiationHistory` (returns every message and offer on a listing), `notifications.markRead`, and `acceptOffer` (doesn't check the caller is the other party).
+  *Enforced by:* named tests `SEC-12: every conversation/message ID route denies a stranger`, `SEC-12: inbox and message keyset pages are participant-scoped and report unread counts`, and `SEC-12: staff conversation reads require the new permission and an audited reference` in `test/integration/conversation-security.test.js`; photo and listing-revision ownership tests are in `test/integration/known-mismatches.test.js` and `test/integration/revisions.test.js`. **Partial, unchecked:** these PostgreSQL tests could not run in the 2026-10-25 refresh because `TEST_DATABASE_URL` was unset, and the full set of object-ID routes is not demonstrated by this subset. Offers are disabled by default per the 2026-10-22 owner decision.
 - [ ] **SEC-13 No mass assignment.** Handlers pick named fields from `req.body`; the client can never set `role`, `status`, `seller_id`, `buyer_id`, prices after agreement, or any column list. `role` changes only through admin paths.
   *Enforced by:* review · *Today:* needs an audit — services destructure named fields, but several routes spread `...req.body` into service arguments.
 - [ ] **SEC-14 Row-level security (Postgres RLS).** Evaluated, **not adopted**: one DB role plus a modular monolith means RLS needs a per-request context on every query. Revisit if app-layer ownership tests (SEC-12) prove hard to keep complete. Awaiting your confirmation.
@@ -82,7 +84,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [ ] **SEC-15 SQL injection.** Every value is a bound parameter. Never concatenate or interpolate user input into SQL. A template-literal query is allowed only when built from fixed internal strings, and carries a comment saying so.
   *Enforced by:* test (planned) · *Today:* **PASSES** — all queries parameterized. Two template-literal queries (`discovery.filterListings`, `orders.setOrderStatus`) are safe today but fragile.
 - [ ] **SEC-16 Input validation at the route boundary** *(added)*. Types, lengths, enums, UUID ids, positive amounts, rating range, pagination caps — reject before the service runs.
-  *Enforced by:* test · *Today:* **FAILS** — services trust their input.
+  *Enforced by:* passing named tests `SEC-16: login validates its boundary and does not accept extra fields` in `test/smoke/app.test.js` and `SEC-16: verification endpoints reject unknown fields and malformed emails` in `test/unit/users.email.routes.test.js`; `test/unit/users.auth.routes.test.js` also names SEC-16 for reset routes. **Partial, unchecked:** these tests cover selected auth boundaries, not every route and validation class required by this row.
 - [ ] **SEC-17 XSS.** The API returns JSON only; user text (listing descriptions, messages, dispute reasons, reviews) is stored raw and escaped at render; CSP and security headers set (SEC-23). **Frontend repo:** never `dangerouslySetInnerHTML`/`innerHTML` on user text.
   *Enforced by:* review · *Today:* no helmet/CSP (see SEC-23).
 - [ ] **SEC-18 File upload validation (when built).** Allowlist MIME **and** check magic bytes, size cap, server-generated random names, no user-controlled paths, strip EXIF (GPS) from images, store in object storage — private bucket plus short-lived signed URLs for sensitive files (`id_verification_doc_url`, dispute evidence).
@@ -101,7 +103,7 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [x] **SEC-23 Security headers.** `helmet` with a real CSP.
   *Enforced by:* `test/smoke/app.test.js` — SEC-23 asserts Helmet security headers and CSP.
 - [ ] **SEC-24 Rate limiting.** Global limit, stricter on auth, messaging, offers and dispute filing; correct `trust proxy` setting behind a proxy.
-  *Enforced by:* `test/unit/rate-limit.test.js` and `test/integration/rate-limit.test.js` (real Redis test requires `TEST_REDIS_URL`). **Partial:** auth signup/login and message/offer writes are covered; global/dispute limits and deployed proxy configuration remain pending.
+  *Enforced by:* `test/unit/rate-limit.test.js` covers concurrent account/IP limits, fail-closed behavior, soft challenge, and the approved conversation/message caps; `test/integration/rate-limit.test.js` requires `TEST_REDIS_URL`. **Partial, unchecked:** current unit tests pass but do not name SEC-24 in their test titles; the guarded integration suite did not start without `TEST_DATABASE_URL`, and global/dispute coverage plus deployed proxy forwarding remain pending.
 - [x] **SEC-25 Explicit request-size limit** *(added)*. `express.json({ limit })` set deliberately.
   *Enforced by:* `test/smoke/app.test.js` — SEC-25 rejects bodies over the explicit one-megabyte limit.
 
@@ -132,8 +134,8 @@ money integrity; expect a payments section here once Phase 4 starts.
 - [x] **SEC-35 Payout-detail changes are protected.** Payout writes consume a one-use `payout.update` grant bound to the seller's active session, require an enrolled authenticator, and enqueue a generic notice. Admin payout review exposes the configurable seven-day recent-change flag, identity status, masked last four, and audited hold state. There is no automatic 72-hour payout-detail change lock; recovered sellers' payouts follow FR-83l.
   *Enforced by:* `test/unit/users.service.test.js` and Stage 6 regression `test/integration/known-mismatches.test.js`; full PostgreSQL integration passes.
 
-- [ ] **SEC-36 Private, money and auth routes are never cached** *(added)*. They send `Cache-Control: private, no-store`; public routes never set cookies; money values are never read from a cache (specs.md FR-73b–FR-73d, DISCUSS).
-  *Enforced by:* test (a route walker, planned) · *Today:* n/a-yet (no caching layer yet).
+- [ ] **SEC-36 Private, money and auth routes are never cached** *(added)*. They send `Cache-Control: private, no-store`; public routes never set cookies; money values are never read from a cache.
+  *Enforced by:* passing `test/unit/route-cache-policy.test.js`, test title `every registered API route is private/no-store unless explicitly allow-listed; public routes set no cookies`. **Partial, unchecked:** the test title does not name SEC-36 as required by this checklist's tick rule, and it does not assert the money-data access path. The approved Phase 3 freshness limits are in `specs.md` FR-73a; version-pointer/cache proposals FR-73b–FR-73c were not adopted.
 - [ ] **SEC-37 The database is locked down** *(added)*. Private network only, TLS with certificate verification, least-privilege roles (web, worker, migrator, read-only, backup), no PII in logs or slow-query logs, staging never receives raw production data (specs.md FR-79g, decided).
   *Enforced by:* review · *Today:* n/a-yet (no deployment).
 

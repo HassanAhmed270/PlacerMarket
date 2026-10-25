@@ -11,24 +11,26 @@ say "Marketplace" — same project). **Reading order for a new session:**
 `HANDOFF.md` → `DEVELOPMENT_HANDOFF.md` → `MASTER_PROJECT_CONTEXT.md` → this file → `rules.md`
 → `Phases.md` → `security.md` → `specs.md` → `open-questions.md`.
 
-## Phase status — implemented foundation and planned follow-up
+## Phase status — Phase 3 implementation and gate follow-up
 
-**Phase 2 implementation handoff (2026-10-23):** listing core repairs, local
-media processing/storage adapter, photo moderation, listing revisions, and
-workspace screens are implemented. Detailed evidence and remaining gate items
-are in `PHASE2_PROGRESS.md` and `PHASE2_GATE_REPORT.md`. Listing revisions
-require `LISTING_REVISIONS_ENABLED=1` in production; the production default is
-off. Backend unit passed 39 suites/487 tests; focused media unit passed 4/4;
-integration passed 7 suites/98 tests with the guarded test database and local
-Redis; frontend lint, 5 tests, build, and schema check passed.
-The dev-tree Jest 29 advisories are owner-triaged under SEC-31 and do not stop
-Phase 2; only a nonzero production dependency audit in either package blocks.
+**Phase 3 gate refresh (2026-10-25):** see `PHASE3_GATE_REPORT.md` for the
+item-by-item status. Backend unit/smoke passed 46 suites/581 tests; frontend
+tests passed 16/16, lint and production build passed, and the largest public
+route measured 75.1 KB gzip against the 200 KB budget. The guarded integration
+suite did not start because `TEST_DATABASE_URL` is unset in this workspace;
+integration-dependent claims remain unverified in this run. Phase 3 is not
+closed. Production CDN/snapshot serving and other hosted checks remain pending.
+
+**Phase 2 handoff (2026-10-23):** listing core repairs, local media
+processing/storage adapter, photo moderation, listing revisions, and workspace
+screens are implemented. Detailed evidence and remaining gate items are in
+`PHASE2_PROGRESS.md` and `PHASE2_GATE_REPORT.md`. Listing revisions require
+`LISTING_REVISIONS_ENABLED=1` in production; the production default is off.
 The configured local database URL and JWT secret were used. Migrations 001–012,
 seeders, API and worker startup, Vite routes, live CORS, and the 14-step demo
-passed. Phase 2 is not closed: production storage/provider checks and named
-frontend behavior evidence remain pending. The revisions plan is marked
-implemented per the 2026-10-22 corrections; FR-73a and tagged FR-73b-d remain
-open.
+passed. Phase 2 remains not closed; production storage/provider checks and
+named frontend behavior evidence remain pending. The revisions plan is marked
+implemented per the 2026-10-22 corrections.
 
 Decided in the scale/escrow/auth program (see `specs.md` sections 13–20 and
 `MASTER_PROJECT_CONTEXT.md`): Phase 0b now has `worker.js`, `lib/queue.js`
@@ -321,9 +323,10 @@ purpose so the schema works whichever way this eventually gets decided.
   attempt rate is not tracked: pg-boss's persisted deltas count terminal
   failures, not retry attempts. Payment/reservation reconciliation sweeps and
   external-service rate limits remain tied to their later feature phases.
-- **Discovery gaps:** FR-24 city filtering remains unresolved because
-  listings have no city column; see `open-questions.md`. Do not treat seller
-  city as listing city without a decision.
+- **Discovery decision:** FR-24 city filtering uses the seller's registered
+  `users.city_id`; no listing-level city is introduced (owner decision,
+  2026-10-22). The Phase 3 PostgreSQL suite must be rerun with the guarded
+  `TEST_DATABASE_URL`; see `PHASE3_GATE_REPORT.md`.
 - **Schema/code mismatch audit:** see [`SCHEMA_CODE_AUDIT.md`](SCHEMA_CODE_AUDIT.md)
   for the full service-SQL comparison, classifications, evidence, passing
   regression tests, and remaining expected-failure probes. Phase 0a-2a repaired

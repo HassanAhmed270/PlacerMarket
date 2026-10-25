@@ -4,13 +4,19 @@
 
 **Legend:** `[ ]` = not done · `[x]` = done · items marked **(DEFERRED)** are explicitly out of MVP scope · items marked **(OPEN)** still need a product decision before they can be built · items marked **(DISCUSS)** are recommended or proposed but NOT confirmed by the human — discuss before building; they cannot be ticked until the human removes the tag · items marked **(SUPERSEDED)** were replaced by a later decision — do not build them
 
-Phase 1 implementation evidence and residual release-gate items are summarized
-in `PHASE1_GATE_REPORT.md`; Phase 2 implementation evidence and gate gaps are
-mapped in `PHASE2_GATE_REPORT.md`. Checked rows below retain their named test
-evidence; unchecked rows remain open. `LISTING_REVISIONS_PLAN.md` records the
-implemented FR-73 scope per the 2026-10-22 corrections. FR-73a cached version
-serving and the tagged FR-73b-d proposals remain unresolved and are not implied
-by that implementation.
+Phase 1, Phase 2, and Phase 3 evidence and residual gate work are mapped in
+`PHASE1_GATE_REPORT.md`, `PHASE2_GATE_REPORT.md`, and `PHASE3_GATE_REPORT.md`.
+Checkboxes are retained only when a passing test title names the requirement
+and asserts its current wording. Phase 3's current backend unit/smoke run passed
+46 suites/581 tests and the frontend suite passed 16/16 on 2026-10-25. The
+guarded integration rerun did not start because `TEST_DATABASE_URL` was unset;
+integration-only checks are not treated as passing in this refresh.
+
+**Phase 3 decision refresh (2026-10-25):** the 2026-10-22 owner decisions
+supersede negotiation-only Buy, broaden the approved seller card to include
+`display_alias`, resolve sold/reserved search behavior, and replace the
+version-pointer cache proposals with bounded staleness. Rows are updated below;
+unverified rows remain unchecked.
 
 **Phase 2 verification refresh (2026-10-23):** the backend unit suite passed
 39 suites/487 tests, the focused media test passed 4/4, and the frontend lint,
@@ -65,20 +71,20 @@ tests. Frontend UI behavior rows without named tests remain unchecked.
 - [ ] FR-21a Rejected listings can be resubmitted after edits; reviewed case-by-case, no automatic cooldown.
 
 ## 4. Search & Discovery
-- [x] FR-22 Pure browsing (viewing marketplace, listing details, images) is fully public — no login required.
-- [x] FR-22a Login required the moment a user favorites a listing, messages a seller, or makes an offer.
+- [ ] FR-22 Pure browsing (viewing marketplace, listing details, images) is fully public — no login required. Test: `FR-22: public listing-detail route serves published listing photos without authentication` in `test/integration/known-mismatches.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
+- [ ] FR-22a Login required for favorites and messaging. Offers are dormant behind `OFFERS_ENABLED` (default off) and deferred; see the 2026-10-22 owner decision. Test: `FR-22a, FR-26: favorites require login, add/remove idempotently, and paginate by keyset` in `test/integration/discovery.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
 - [ ] FR-22b Redirect-and-return login pattern: logged-out user attempting a gated action is sent to /login, then returned to the exact action after successful login (no inline modal).
-- [x] FR-23 Buyers can search listings by keyword.
-- [ ] FR-24 Buyers can filter by main category, sub-category/occasion, condition, price range, and seller registered city. The city filter joins through `users.city_id`.
-- [x] FR-25 Buyers can view full listing details, asking price, live availability, images, and a seller card containing only rating and join date. Sold listings return 200 with a sold flag and six newest same-sub-category listings priced within 30%; paused listings return 200 with an unavailable flag; removed listings return 410. The public status endpoint is cacheable for at most 10 seconds.
-- [x] FR-26 Buyers can favorite/save listings (requires login); add/remove are idempotent and the favorites list uses keyset pagination.
-- [x] FR-27 Buyers can share a listing (external link, no login required).
-- [x] FR-27a Seller's public profile card (buyer-facing) shows rating and join date only — no alias, contact details, payout details, verification data, or seller stats. (Seller's own private dashboard may show richer stats to themselves.) Test: `FR-27a: public seller card exposes rating and join date only` in `test/integration/known-mismatches.test.js`.
+- [ ] FR-23 Buyers can search listings by keyword. Test: `FR-23: keyword search matches title or description on published listings only` in `test/integration/known-mismatches.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
+- [ ] FR-24 Buyers can filter by main category, sub-category/occasion, condition, price range, and seller registered city. The city filter joins through `users.city_id`. Tests: the two `FR-24`-named filter tests in `test/integration/known-mismatches.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
+- [ ] FR-25 Buyers can view full listing details, asking price, live availability, images, and a seller card containing the seller's display alias, rating, and join date. Sold listings return 200 with a sold flag and six newest same-sub-category listings priced within 30%; paused listings return 200 with an unavailable flag; removed listings return 410. Listing status/detail staleness is at most 10 seconds. The current `FR-25` unit test asserts the old card shape without `display_alias`; the PostgreSQL coverage was not rerun, so this row is unchecked.
+- [x] FR-26 Buyers can favorite/save listings (requires login); add/remove are idempotent and the favorites list uses keyset pagination. Tests: `FR-26: add/remove are safe to repeat and keyset pages use a deterministic cursor` and `FR-26: malformed cursors and zero-size pages are rejected` in `test/unit/discovery.service.test.js`.
+- [ ] FR-27 Buyers can share a listing (external link, no login required). Test: `FR-27: public share URL is available without login and does not set cookies` in `test/integration/discovery.test.js` (not rerun: guarded integration setup requires `TEST_DATABASE_URL`).
+- [ ] FR-27a Seller's public profile card (buyer-facing) shows display alias, rating and join date only — no contact details, payout details, verification data, or seller stats. (Seller's own private dashboard may show richer stats.) Owner decision: 2026-10-22. The existing `FR-27a` unit/integration test asserts the superseded no-alias shape; update implementation and test before checking this row.
 - [ ] FR-27b Two-way rating system: after order completion, both buyer and seller can rate each other. Feeds FR-27a.
 
 ## 5. Messaging & Negotiation
 - [ ] FR-28 Buyers and sellers can message each other in-platform about a specific listing.
-- [ ] FR-29 No fixed "Buy Now" path at all, at any price point. Negotiation (offer/counter/accept) is the only path to a sale.
+- [ ] FR-29 **(SUPERSEDED by the 2026-10-22 owner decision)** Fixed-price Buy is the early-site purchase path; offers/negotiation are dormant behind `OFFERS_ENABLED` (default off) and deferred. Phase 3 Buy is login-gated and leads to “checkout opens soon”; reservation/payment begin in Phase 4.
 - [ ] FR-30 System detects/blocks attempts to share phone numbers, emails, or external links in messages.
 - [ ] FR-31 All negotiation history tied to the listing/order for later reference (dispute evidence).
 
@@ -173,9 +179,9 @@ tests. Frontend UI behavior rows without named tests remain unchecked.
 
 ## 14. Listing content versioning & caching  (scale program, Point 1)
 - [x] FR-73 Every edit to a live listing, including every price edit, creates a revision and goes through moderation. The previously approved version stays public while the edit waits; the new version goes live only when approved. Each listing can have only one open revision at a time. *(Tests: `FR-73: one pending revision keeps public data unchanged; concurrent submissions serialize and seller can withdraw/resubmit`, `FR-73: concurrent moderator approve/reject decisions produce exactly one transition`, and the stale-version/rollback/permission cases in `test/integration/revisions.test.js`.)*
-- [ ] FR-73a Listing content is versioned and cached per version; the live status (available / reserved / sold / removed) is served separately with a very short cache. Price travels with the published version/status and all price edits follow FR-73.
-- [ ] FR-73b **(DISCUSS)** Hardening: latest_version vs published_version pointers; drafts served privately with no-store; invalid version values return a short-cached 404; take-down purges immediately; status read from Redis (one batch call for list pages) with a "Check availability" fallback and stale-if-error; private files (ID documents, dispute evidence) in a private bucket with short-lived signed links; video embed follows status; operations that move money or accept offers (offer, accept, checkout, payment, refund, payout) always read the live database — the displayed asking price may lag the cached status by up to the status cache lifetime; the offer action always checks the live database.
-- [ ] FR-73c **(DISCUSS)** Starting cache values, tuned in load tests: status 5–10 s, list/search pages ~60 s, content up to ~1 day, images 1 year immutable via content-hashed URLs; public routes never set cookies; hit-rate target above 90%.
+- [ ] FR-73a Listing detail/status staleness is at most 10 seconds; search/category staleness is at most 60 seconds. Price edits follow FR-73. Version pointers and the proposed versioned-content cache model were not adopted. Production serving/cache behavior remains a live check.
+- [ ] FR-73b **(SUPERSEDED by the 2026-10-22 owner decision)** The proposed version-pointer/cache hardening design was not adopted. Do not implement its version pointers, Redis status model, stale-if-error behavior, or proposed cache semantics without a new decision.
+- [ ] FR-73c **(SUPERSEDED by the 2026-10-22 owner decision)** The adopted freshness limits are in FR-73a; proposed content/cache lifetimes and hit-rate targets were not adopted.
 - [ ] FR-73d **(DISCUSS)** A Jest test walks all routes and fails if a private or money route lacks `Cache-Control: private, no-store` (public routes use an allow-list).
 - [x] FR-73e Every price edit to a live listing goes through a revision and moderation. Before publication, if the proposed price is strictly above `platform_settings.high_value_threshold_pkr`, the seller's registered email must be verified under the temporary policy (FR-08a); equality does not trigger that email gate. Email verification never sets legal identity verification. *(Tests: `FR-73e: equality does not require email; approval uses the latest threshold` and `FR-73e, FR-15a: approval rechecks email verification and active measurement definitions`.)*
 
@@ -217,22 +223,22 @@ tests. Frontend UI behavior rows without named tests remain unchecked.
 - [ ] FR-80 Postgres full-text search plus indexed filters; no separate search engine now. An upgrade path stays behind `discovery.service.js` (trigger example: p95 search above 300 ms in load tests).
 - [ ] FR-80a A dedicated denormalized `listing_search` table (one row per PUBLISHED listing) with a generated tsvector, a trigram index and composite indexes matching each sort; kept in sync via the queue with version checks; rebuildable; with a reconciliation sweep.
 - [ ] FR-80b Roman Urdu / spelling tolerance: trigram matching plus an admin-managed synonym list (an ongoing admin task).
-- [ ] FR-80c Suggestions come from a versioned vocabulary file (categories, brands, fabrics, colors, synonyms, popular searches) built by a worker, cached by the CDN and matched in the browser: completions, spelling variants, "did you mean", trending and recent searches (recent stored only in the browser). Only terms with live listings behind them; popular-search terms need a minimum number of distinct users; admin can pin/remove.
+- [ ] FR-80c Suggestions use a worker-built versioned vocabulary of categories, brands, fabrics, colors and synonyms, matched in the browser, plus browser-only recent searches. Trending, popular-search mining and “did you mean” are out of scope (owner decision, 2026-10-22).
 - [ ] FR-80d Search load protection: CDN → Redis (30–60 s) → Postgres; single-flight merging; a separate small search connection pool with a 1–2 s statement timeout; a concurrency cap with graceful degradation; bounded query length/terms/filters and result depth; per-IP rate limits.
 - [ ] FR-80e Sort set: newest, price low→high, price high→low, relevance (only when there is a text query). Popularity sort comes later **(DEFERRED)**.
-- [ ] FR-80f **(DISCUSS)** Sold items are hidden from search results; reserved items show a badge.
+- [ ] FR-80f Sold items are hidden from search results; reserved items show a badge. **Owner-approved 2026-10-22.** PostgreSQL behavior test exists but was not rerun because `TEST_DATABASE_URL` is unset.
 
 ## 19. Frontend delivery & SEO  (scale program, Point 8)
 - [ ] FR-81 Keep React + Vite; NO Next.js migration.
-- [ ] FR-81a Worker-generated static HTML snapshots of public pages (home, categories, listings, static pages) carry a real title, description, key attributes, first image, social preview tags and structured data; the SPA takes over in the browser; snapshots regenerate through the queue when the published version, sold or removed state changes.
+- [ ] FR-81a Worker-generated static HTML snapshots of public pages (home, categories, listings and static pages) carry metadata and structured data; the SPA takes over in the browser; listing snapshots regenerate through the queue on publish, price change, sold, removal and revision approval. Test: `FR-81a, FR-82b public snapshots` in `test/unit/page-snapshots.test.js` passed in this refresh; leave unchecked in this docs-only commit because the hook requires the test to be staged with a new tick.
 - [ ] FR-81b A sold listing keeps its URL with a "Sold" banner and similar items; a moderator take-down returns a "gone" response.
 - [ ] FR-81c Slugged URLs (old slugs redirect), canonical tags, a worker-generated sitemap, `noindex` on deep filter combinations, bot rate limits on uncached routes, and a light watermarked 1200x630 social preview image.
 - [ ] FR-81d Performance: route-level code splitting; no admin/moderator code shipped to public visitors; real-time and sign-in code loaded on demand; public JS budget about 150–200 KB compressed; self-hosted subset fonts (Playfair Display + DM Sans) with `font-display: swap` and critical weights preloaded only; reserved image space and a prioritized first photo; bundle-size and Lighthouse budgets in CI; real-user tracking of load speed, layout shift and responsiveness per page type; no service worker, no PWA.
-- [ ] FR-82 **(DISCUSS)** SEO wording rules — title and meta-description formulas, headings, keyword strategy. SEO-GATE (rules.md Section 10): stop and discuss with the human before finalizing.
+- [ ] FR-82 Owner-approved 2026-10-22: recommend a title/description from structured fields; seller may accept or write their own; enforce Replica wording and contact-info/length/format guardrails, with normal moderation. SEO-GATE still applies to future changes. No test currently names and asserts the complete FR-82 rule set.
 - [ ] FR-82a **(DISCUSS)** Image alt text and file names (e.g. generated from structured fields — brand, type, color, fabric, handwork, condition — rather than seller free text).
-- [ ] FR-82b **(DISCUSS)** Structured data: negotiation-only means no fixed price, so how price, condition and availability are described needs a deliberate choice.
-- [ ] FR-82c **(DISCUSS)** URL, slug, canonical and filter-page indexing rules (which filter combinations deserve indexable pages) and handling of duplicate seller-copied descriptions.
-- [ ] FR-82d **(DISCUSS)** Internal linking and technical SEO checks; which languages buyers search in (English, Roman Urdu, Urdu script).
+- [ ] FR-82b Owner-approved structured data: Product + Offer (price, PKR, availability, condition, brand, color) + BreadcrumbList; home WebSite/Organization; no star ratings. Test: `FR-81a, FR-82b public snapshots` in `test/unit/page-snapshots.test.js` passed in this refresh; leave unchecked in this docs-only commit because the hook requires the test to be staged with a new tick.
+- [ ] FR-82c Owner-approved 2026-10-22: `/listing/<slug>-<shortid>` with ID as key, old-slug redirects and canonical tags; index home/categories/sub-categories/category+city; noindex search results and pages with price/sort/condition/color/brand/fabric filters; worker sitemap and robots.txt. Named PostgreSQL redirect coverage was not rerun; no checkbox added.
+- [ ] FR-82d Internal-linking and remaining technical SEO checks are still open. Language decision: English-only interface, English and Roman Urdu search; Urdu script/RTL is deferred (owner decision, 2026-10-22).
 
 ## 20. Authentication & two-factor  (scale program Point 9; auth decisions)
 - [ ] FR-83 Two-factor authentication on EVERY login, designed for the best UX, strong security and reliability, including use across multiple devices.
@@ -267,19 +273,24 @@ tests. Frontend UI behavior rows without named tests remain unchecked.
 - [ ] Payout automation through the gateway (payouts are manual at launch, FR-65). **(DEFERRED)**
 - [ ] Real-time updates / Server-Sent Events (FR-78). **(DEFERRED: design proposed, not accepted)**
 - [ ] Popularity sort in search (FR-80e). **(DEFERRED)**
+- [ ] Offers/negotiation (FR-29–FR-31). **(DEFERRED by owner decision 2026-10-22; `OFFERS_ENABLED` defaults off.)**
+- [ ] Urdu script and right-to-left interface. **(DEFERRED by owner decision 2026-10-22; search may use Roman Urdu.)**
+- [ ] Trending, popular-search mining and “did you mean” suggestions (FR-80c). **(DEFERRED by owner decision 2026-10-22.)**
+- [ ] Real-time chat. **(DEFERRED; use the approved polling behavior.)**
 
 ## Open product decisions still blocking full spec (tracked, not yet resolved)
 - [ ] Dispute resolution granularity (binary vs. partial/split) — FR-45a (Claude recommended partial, FR-71; awaiting confirmation)
 - [ ] Verified-badge grant criteria — FR-18a
 - [ ] Delivery-partner count and city-based assignment — FR-40a
 - [ ] COD refusal-at-the-door flow (major gap) — FR-33b (parked; now a refund/return question under escrow)
+- [ ] Image alt text and filenames, plus remaining internal-linking/technical SEO checks — FR-82a / FR-82d
 - Full register of open, deferred and parked decisions: `open-questions.md`.
 
 ## Prototype gap-analysis action items (build/fix against existing zip)
-- [ ] Remove fixed-price "Add to bag"/direct checkout path entirely (product page currently bypasses negotiation).
+- [ ] Replace the legacy fixed-price "Add to bag" path with login-gated Buy and a “checkout opens soon” screen; no reservation/payment before Phase 4. Frontend tests cover guest redirect and signed-in checkout state, but these tests do not name an FR code.
 - [ ] Remove Card/Wallet payment option from checkout (COD-only). **(SUPERSEDED by escrow — replace the payment step with the gateway's hosted checkout, FR-60a)**
-- [ ] Add login gates to Favorite, Chat, and Make-an-offer actions (currently unguarded).
-- [ ] Trim seller profile card on Product page to rating + join date only (currently shows response-rate/items-sold).
+- [ ] Add login gates to Favorite and Chat; offers remain hidden while `OFFERS_ENABLED` is off. The Buy login-return path has named frontend tests; database-backed Favorite/Chat gates still need the guarded integration rerun.
+- [ ] Trim seller card to display alias, rating and join date only, per the 2026-10-22 owner decision. Current backend tests assert the superseded no-alias output; resolve before ticking.
 - [ ] Rework reviews to two-way (buyer↔seller), entry point only from completed Orders page (currently one-directional, reachable from product page).
 - [ ] Add Kids' as a third main category with its own sub-categories.
 - [ ] Replace Condition dropdown (Like New/Excellent/Good) with real Condition/Type set: Brand New, Pre-Owned, Custom-Made, Replica (+ disclosure field on Replica).
@@ -296,11 +307,11 @@ tests. Frontend UI behavior rows without named tests remain unchecked.
 - [ ] Build the two-factor login flow: email code for ordinary buyers (FR-83a); passkeys are deferred to the end-of-phases review (FR-83b).
 - [ ] Sell form: photo upload enforcing 3–6 photos with labeled required slots (Front, Back, Other) and up to three optional slots; moderators confirm each required photo matches its label (FR-74/FR-74a).
 - [ ] Optional video and voice-story sections are deferred to the end-of-phases review (FR-75–FR-76a); do not add these sections in the current phase plan.
-- [ ] Search: sort set newest / price low→high / price high→low / relevance (FR-80e); suggestions UI **(DISCUSS, FR-80c)**.
-- [ ] Listing page: cached content with a status badge, "Check availability" fallback, click-to-play video, Sold banner with similar items **(DISCUSS, FR-73b, FR-81b)**.
+- [ ] Search: newest / price low→high / price high→low / relevance (query only); minimal approved suggestions and browser-only recent searches (FR-80c/e). Popularity, trending and “did you mean” are deferred. No named frontend behavior test currently covers the full set.
+- [ ] Listing page: status behavior, Sold banner and similar items; content/status freshness uses FR-73a. Version-pointer caching and video playback are not in the approved scope. Existing unit tests cover backend sold-item selection and frontend sold/removed rendering, but the PostgreSQL rerun is pending.
 - [ ] Bag/checkout: reserved-listing state with a payment-window countdown (FR-63).
 - [ ] Frontend delivery: route-level code splitting, no admin code in the public bundle, public JS budget, self-hosted subset fonts (FR-81d).
 - [ ] Ignore/do not build against: `verified_boutique_landing_sana_boutique`, `boutique_onboarding_hub_poshak`, `poshak_design_system/DESIGN.md`, `stitch-reference/`. The prototype's wired `styles.css` theme (deep green / cream / gold, Playfair Display + DM Sans) is the FINAL design system.
 
 ---
-_Last updated: 2026-10-14 (consolidated with the Poshaak escrow, scale, auth and listing-media decisions — see MASTER_PROJECT_CONTEXT.md). Update this file's checkboxes as work is completed — do not remove rows once ticked; this is the running source of truth for build progress._
+_Last updated: 2026-10-25 (Phase 3 gate and 2026-10-22 owner-decision reconciliation). Update this file's checkboxes only when a passing test title names and asserts the current requirement; this remains the running source of truth for build progress._

@@ -1,15 +1,14 @@
 # DEVELOPMENT_HANDOFF.md — resuming Poshaak development
 
-**State updated 2026-10-23.** Poshaak (formerly "Marketplace" — same project) has
-a backend, React/Vite frontend, PostgreSQL queue, migrations, and completed
-Phase 0 auth implementation. Local Redis is reachable; the hosted workflow and
-live providers remain unverified.
-Read `MASTER_PROJECT_CONTEXT.md`, `PHASE1_PROGRESS.md`, and
-`PHASE1_GATE_REPORT.md` for current evidence. Phase 1 implementation stages and
-local checks are recorded, but the broader gate remains open. Configured
-development database/JWT values were used; the full local demo passed using a
-fresh Redis logical DB. See
-`DEMO_RUN.md` and `LIVE_CHECKS.md`.
+**State updated 2026-10-25.** Poshaak (formerly "Marketplace" — same project)
+has a backend, React/Vite frontend, PostgreSQL queue and migrations. Phase 3
+implementation and gate evidence are mapped in `PHASE3_GATE_REPORT.md`.
+Backend unit/smoke passed 46 suites/581 tests; frontend tests passed 16/16;
+frontend lint, build and public-bundle check passed. The guarded integration
+suite could not start because `TEST_DATABASE_URL` was unset. Phase 3 is not
+closed; production provider/CDN/snapshot checks remain pending. Read
+`MASTER_PROJECT_CONTEXT.md`, `Phases.md`, `PHASE3_GATE_REPORT.md` and
+`LIVE_CHECKS.md` for current status.
 
 ## Phase 2 update (2026-10-23)
 
@@ -35,12 +34,18 @@ Reading order: `MASTER_PROJECT_CONTEXT.md` → `agent.md` → `rules.md` → `Ph
 
 ## 2. First 10 minutes in a new conversation
 
-1. Ask for (or confirm you have) the latest ZIP. Run `unzip -tq` on it; extract it to a
-   fresh working directory. Don't rebuild anything from memory of earlier chats.
-2. `cd backend && npm install && npm test` — expect **192 tests, 12 suites, all passing**.
-   `npm audit --omit=dev` — expect 0.
-3. Read the documents in the order above. Check `Phases.md` for the **Current phase**.
-4. Confirm the state with the human in a few lines before changing anything.
+1. Confirm the checked-out workspace and current branch; do not overwrite or
+   reconstruct the repository from an old ZIP or chat summary.
+2. Read `MASTER_PROJECT_CONTEXT.md`, `Phases.md`, `PHASE3_GATE_REPORT.md`,
+   `DEVELOPMENT_HANDOFF.md`, `agent.md`, `rules.md`, `security.md`, `specs.md`
+   and `open-questions.md`.
+3. Run backend unit/smoke (`cd backend && npm test -- --runInBand`) and frontend
+   tests (`cd frontend && npm test`). The guarded backend integration suite
+   requires an explicitly approved `TEST_DATABASE_URL` and, where applicable,
+   `TEST_REDIS_URL`; do not substitute production/development URLs.
+4. Check `Phases.md` and the gate report before choosing the next task. The
+   2026-10-25 integration attempt did not start because `TEST_DATABASE_URL` was
+   unset; it is not a pass.
 
 **Owner decisions dated 2026-10-21:** Phase 1/2 seller application, atomic
 approval, measurement definition, payout protection, seller authenticator,
@@ -53,31 +58,21 @@ high-value listings strictly above the threshold. Historical Phase 0 gate
 evidence still contains the prior first-payout email wording, documented as a
 conflict in `END_OF_PHASES_REVIEW.md`.
 
-## 3. What to do next (Phase 1 handoff)
+## 3. What to do next (Phase 3 gate)
 
-Resume from the residual items in `PHASE1_GATE_REPORT.md`, not by repeating
-completed implementation stages. Owner decisions
-dated 2026-10-21 set FR-83d limits, the FR-84b Argon2id/Redis scope, FR-83g
-self-service password reset, the strict high-value threshold, and the Phase 2
-gate amendment. FR-83k recovery policy is now decided; implementation is in the
-Phase 1 backlog, with the manual owner-only procedure used until then.
-Provider credentials and deployed behavior are listed in `LIVE_CHECKS.md`.
+Resume from `PHASE3_GATE_REPORT.md`; do not repeat completed work or treat this
+documentation checkpoint as a closed gate. Resolve the integration rerun by
+providing the specifically approved guarded test database and Redis
+configuration. Then address the report's parked rows with tests whose titles
+name the FR/SEC requirement. Do not implement the deferred offers/negotiation
+or superseded version-pointer/cache proposals.
 
-Stage 1 centralizes runtime settings in `src/config.js` and adapter boundaries
-under `src/lib/adapters/`; no production provider implementation is claimed yet.
-Stage 2 added Argon2id registration and the auth foundation migration. Stages 5–7 now implement login/session flows; live-provider and deployment checks remain open.
-Stage 3 adds fail-closed Redis fixed-window limits for signup/login and existing
-message/offer writes. Email-code requests add address caps and a soft IP signal in Stage 4; Stage 6 adds rate-limited reset requests and confirmation. Real Redis concurrency verification
-requires `TEST_REDIS_URL`; Redis is unavailable in the current workspace.
-Stage 4 adds address verification, encrypted queue delivery, code attempt and
-send limits, and the high-value email-ownership gate. Stages 5–7 add buyer email
-factor login, staff TOTP, rotating refresh sessions, reset flows and the one-time
-admin bootstrap. Phase 1 Stages 1–10 and local checks are documented in
-`PHASE1_PROGRESS.md`. The account UI has not had browser-level testing, real
-Redis tests were skipped, and demo seed/smoke did not run. Resolve these and the
-unchecked items in `PHASE1_GATE_REPORT.md` before claiming release readiness.
-`LISTING_REVISIONS_PLAN.md` is proposed design only; resolve its questions before
-Phase 2 implementation.
+Phase 3 decisions are recorded in `DECISIONS_2026-10-22.md`: fixed-price Buy
+with a “checkout opens soon” state, offers disabled by default and deferred,
+messaging retained, sold listings hidden from search, reserved badges,
+English/Roman Urdu search and English-only UI, and bounded snapshot/search
+freshness. The selected production CDN and snapshot serving model remain live
+checks in `LIVE_CHECKS.md`.
 
 ## 4. Working agreements (details in `rules.md`)
 
@@ -119,14 +114,14 @@ folder (keep the hooks executable); present the ZIP. Update `MASTER_PROJECT_CONT
 
 ## 7. Resume prompt (paste into a new chat in this Claude Project, with the ZIP attached)
 
-> We are continuing Poshaak (formerly "Marketplace"), one project. I've attached the
-> latest `poshaak-project-consolidated.zip`. Verify the ZIP, extract it, run
-> `npm install && npm test` (expect 192 tests in 12 suites), then read
-> `DEVELOPMENT_HANDOFF.md`, `MASTER_PROJECT_CONTEXT.md`, `agent.md`, `rules.md`,
-> `Phases.md`, `security.md`, `specs.md` and `open-questions.md`, in that order. Follow
-> `rules.md` strictly, including stop-and-ask and SEO-GATE. Tell me the current phase
-> and the decisions still needed before Phase 0, then wait for my answers. Don't change
-> files until we've agreed the next step.
+> We are continuing Poshaak (formerly "Marketplace"), one project. Inspect the
+> current workspace and read `MASTER_PROJECT_CONTEXT.md`, `Phases.md`,
+> `PHASE3_GATE_REPORT.md`, `DEVELOPMENT_HANDOFF.md`, `agent.md`, `rules.md`,
+> `security.md`, `specs.md` and `open-questions.md`. Follow `rules.md`, including
+> stop-and-ask and SEO-GATE. Phase 3 is not closed; the latest guarded
+> integration attempt could not start because `TEST_DATABASE_URL` was unset.
+> Resume from the gate report and do not claim integration or production checks
+> passed without evidence..
 
 ## 8. Phase 1 authorization amendment (2026-10-21)
 

@@ -57,10 +57,9 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - CNIC/document retention and legal review are required only if a future provider or workflow stores identity documents. Deferred decisions and external review are listed in `END_OF_PHASES_REVIEW.md`; current manual verification stores no CNIC number or document.
 
 ### Needed by Phase 3
-- 2026-10-14 · CDN provider (a node near Pakistani users matters; Cloudflare was mentioned as a candidate — verify).
-- 2026-10-14 · FR-80f · Sold items hidden from search, reserved shown with a badge (proposed default).
-- 2026-10-14 · FR-82–FR-82d · All SEO decisions, via SEO-GATE at page-building time, including which languages buyers search in (English, Roman Urdu, Urdu script).
-- 2026-10-14 · Urdu-script / right-to-left support: not decided anywhere.
+- 2026-10-14 · CDN provider: choose and verify a provider near Pakistani users before launch; no provider is selected.
+- Production snapshot serving model and CDN purge behavior are live-check pending; see `LIVE_CHECKS.md` and `PHASE3_GATE_REPORT.md`.
+- FR-82a alt-text/file-name behavior and the remaining internal-linking/technical-SEO checks in FR-82d need a decision before those details are finalized. The owner-approved SEO titles, descriptions, structured data, URLs, canonical and indexability rules are recorded in the 2026-10-22 decisions and `specs.md`.
 
 ### Needed by Phase 4
 - 2026-10-13 · Payment gateway provider, legal advice on holding customer funds, sandbox account (external).
@@ -87,18 +86,26 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-13 · SEC-14 · Postgres row-level security: recommended to defer (one DB role, modular monolith). Awaiting confirmation.
 - 2026-10-14 · Load-test targets and SLOs (proposed: p95 browse under 500 ms, error rate under 1%, search p95 under 300 ms, cache hit above 90%).
 
-## Current handoff notes (2026-10-22)
+## Current handoff notes (2026-10-25)
 
 - `PHASE1_GATE_REPORT.md` maps implementation evidence and residuals; it does
-  not mark the broad Phase 1 release gate closed. The local demo remains blocked
-  by missing development database/JWT/Redis configuration; see `DEMO_RUN.md` and
-  `LIVE_CHECKS.md`.
-- `LISTING_REVISIONS_PLAN.md` is a proposed Phase 2 document only. It does not
-  resolve FR-73b–d or the field/media/lifecycle questions listed in that plan.
-  Do not treat its recommendations or illustrative SQL as owner decisions.
+  not mark the broad Phase 1 release gate closed. The local demo passed on
+  2026-10-23, but deployed provider/host checks remain open; see `DEMO_RUN.md`
+  and `LIVE_CHECKS.md`.
+- `LISTING_REVISIONS_PLAN.md` records the implemented Phase 2 revision scope;
+  its contents do not adopt the superseded version-pointer/cache proposals.
+- `PHASE3_GATE_REPORT.md` records the Phase 3 decisions, evidence, parked and
+  deferred work, and live checks. The 2026-10-25 guarded integration rerun did
+  not start because `TEST_DATABASE_URL` was unset; do not treat it as a pass.
 
 ## Resolved
 
+- 2026-10-22 · FR-29 / FR-28–FR-31 · Fixed-price Buy is the early-site purchase path; Buy is login-gated and leads to a “checkout opens soon” screen until Phase 4. Offers/negotiation are dormant behind `OFFERS_ENABLED` (default off) and deferred; messaging remains in scope. No reservation or payment happens in Phase 3.
+- 2026-10-22 · FR-24 / FR-80f · Discovery city means the seller's registered profile city; sold listings are hidden from search and reserved listings show a badge.
+- 2026-10-22 · FR-73a–FR-73c · Listing detail/status staleness is at most 10 seconds and search/category staleness at most 60 seconds. Version-pointer and other proposed cache semantics were not adopted.
+- 2026-10-22 · FR-80c / FR-80e · Suggestions are a worker-built versioned vocabulary of categories, brands, fabrics, colors and synonyms, matched in-browser, plus browser-only recent searches; no trending or “did you mean”. Sorts are newest, price low-to-high, price high-to-low, and relevance only with a query. Popularity is deferred.
+- 2026-10-22 · FR-82–FR-82d language/SEO decisions · English-only interface; English and Roman Urdu search; Urdu script/RTL deferred. Owner-approved SEO text, structured data, URLs, canonical, sitemap and indexability requirements are in `specs.md`; remaining alt-text and internal-linking details stay open above.
+- 2026-10-22 · FR-81a · Worker-generated snapshots are stored in PostgreSQL and regenerated on publish, price change, sold, removal and revision approval; production serving behavior remains a live check, not a product decision.
 - 2026-10-23 · SEC-31 verification: both `npm audit --omit=dev` checks returned zero vulnerabilities. The full backend audit currently reports 28 high-severity vulnerabilities in the Jest 29 development chain; the full frontend audit is clean. This current count does not change the owner's 2026-10-22 triage of 33 advisory findings. Preserve Jest 29 through Phase 2 and do its version 30 upgrade as the immediate separate follow-up.
 
 - 2026-10-22 Â· SEC-31 Â· **Owner decision:** keep Jest 29 through Phase 2. The 33 development-tree npm audit advisories in its Jest 29 chain are triaged and do not stop work. Only a nonzero production dependency audit (`npm audit --omit=dev`) in either package blocks. Schedule “Jest 29 -> 30 upgrade (separate small task, right after Phase 2)” in `Phases.md`.
@@ -151,4 +158,3 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-13 · A seller must be ID-verified before the first payout, whatever the price. No cool-off on payout-detail changes.
 - 2026-10-13 · Reservation: yes, the listing is reserved for the buyer while payment is pending (duration still open above).
 - 2026-10-15 · FR-68 · When to hand "mark Delivered" (and other routine steps) to an ops role as volume grows; today it is admin-only and every order needs an admin action. A permission, so no code change is needed to delegate it.
-

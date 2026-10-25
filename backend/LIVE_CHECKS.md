@@ -1,7 +1,8 @@
 # Live checks before launch
 
-Phase 1 and Phase 2 local evidence and remaining implementation-gate items are
-mapped in `PHASE1_GATE_REPORT.md` and `PHASE2_GATE_REPORT.md`. On 2026-10-23,
+Phase 1, Phase 2 and Phase 3 evidence and remaining implementation-gate items
+are mapped in `PHASE1_GATE_REPORT.md`, `PHASE2_GATE_REPORT.md` and
+`PHASE3_GATE_REPORT.md`. On 2026-10-23,
 the configured development database and JWT secret were used; migrations,
 seeds, API, worker, and Vite started. Redis at 127.0.0.1:6379 was reachable.
 Vite route fallbacks returned HTTP 200, and a live local API CORS preflight
@@ -11,6 +12,27 @@ using Redis logical DB 2. Integration passed with the guarded
 
 Fake adapters and local integration tests do not satisfy these checks. Never
 put live credentials in this file, source control, test output, or logs.
+
+## Phase 3 checks (2026-10-25)
+
+The backend unit/smoke suite passed 46 suites/581 tests; frontend tests passed
+16/16; lint, production build and the public-bundle budget check passed. The
+guarded PostgreSQL integration suite did not reach test execution because
+`TEST_DATABASE_URL` was unset. This is not evidence that integration passed;
+rerun with the specifically approved guarded test database before closing
+integration-dependent Phase 3 items. See `PHASE3_GATE_REPORT.md`.
+
+- [ ] Select a production CDN provider and verify its cache headers, immutable
+  hashed-media behavior, purge adapter and purge delivery.
+- [ ] Verify the production snapshot serving model: identical generated HTML
+  for crawlers and users (no cloaking), SPA takeover, snapshot refresh on the
+  approved listing events, and live canonical/robots/sitemap behavior.
+- [ ] Verify production listing/status and search/category freshness against
+  the 10-second and 60-second limits; confirm origin/CDN behavior and cache
+  invalidation under deployment routing.
+- [ ] Complete the guarded integration rerun for Phase 3 using the approved
+  test database and Redis endpoints; do not place endpoint credentials or
+  values in this checklist or logs.
 
 - [ ] Email primary and secondary providers selected; verify real delivery,
   provider authentication, retry behavior, rate limits, and failover.
