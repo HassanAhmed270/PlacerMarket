@@ -11,7 +11,8 @@ const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 const requestId = require('./middleware/requestId');
 const { createCorsMiddleware } = require('./middleware/cors');
-const { cachePolicy } = require('./middleware/cachePolicy');
+const { cachePolicy, pageCachePolicy } = require('./middleware/cachePolicy');
+const pageSnapshots = require('./modules/pageSnapshots.service');
 const { NotFoundError } = require('./lib/errors');
 
 // modules/notifications.service.js registers its eventBus listeners as a
@@ -37,6 +38,50 @@ if (process.env.NODE_ENV !== 'production' && process.env.DEV_FAKES === '1') {
   app.use('/api/dev', require('./routes/dev.routes'));
 }
 app.use('/api', (_req, _res, next) => next(new NotFoundError('route', 'unknown')));
+app.use(async (req, res, next) => {
+  if (!['GET', 'HEAD'].includes(req.method) || req.path.startsWith('/api/')) return next();
+  const snapshotPath = req.path === '/' || req.path === '/search' || req.path === '/sitemap.xml'
+    || req.path === '/robots.txt' || req.path.startsWith('/category/') || req.path.startsWith('/listing/');
+  if (!snapshotPath) return next();
+  const searchParams = new URLSearchParams(req.originalUrl.split('?')[1] || '');
+  const filtered = pageSnapshots.isNoindex({ pathname: req.path, searchParams });
+  let snapshot = await pageSnapshots.getSnapshot(req.path);
+  if (!snapshot && req.path.startsWith('/listing/')) {
+    const canonicalPath = await pageSnapshots.getCanonicalListingPath(req.path.slice('/listing/'.length));
+    if (canonicalPath && canonicalPath !== req.path) return res.redirect(301, canonicalPath);
+  }
+  if (!snapshot && req.path === '/search') {
+    snapshot = {
+      html: pageSnapshots.renderCollectionPage({
+        title: 'Search | Poshaak',
+        description: 'Search Pakistani fashion.',
+        path: '/search',
+        items: [],
+        baseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/+$/, ''),
+        pageType: 'search',
+        noindex: true,
+      }),
+      status_code: 200,
+      noindex: true,
+    };
+  }
+  if (!snapshot) return next();
+
+  pageCachePolicy(req, res, () => {});
+  if (snapshot.noindex || filtered) {
+    res.set('X-Robots-Tag', 'noindex, follow');
+    if (filtered && !snapshot.noindex) {
+      snapshot.html = snapshot.html.replace(
+        '<meta name="robots" content="index,follow">',
+        '<meta name="robots" content="noindex,follow">'
+      );
+    }
+  }
+  if (req.path === '/sitemap.xml') res.type('application/xml');
+  else if (req.path === '/robots.txt') res.type('text/plain');
+  else res.type('html');
+  return res.status(snapshot.status_code).send(snapshot.html);
+});
 app.use(errorHandler); // must be mounted LAST
 
 module.exports = app;

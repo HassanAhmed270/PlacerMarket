@@ -32,4 +32,9 @@ function cachePolicy(req, res, next) {
   next();
 }
 
-module.exports = { cachePolicy, CACHE_POLICY_ALLOWLIST, getCachePolicyRule };
+function pageCachePolicy(_req, res, next) {
+  res.set('Cache-Control', 'public, max-age=10, stale-while-revalidate=60');
+  next();
+}
+
+module.exports = { cachePolicy, pageCachePolicy, CACHE_POLICY_ALLOWLIST, getCachePolicyRule };

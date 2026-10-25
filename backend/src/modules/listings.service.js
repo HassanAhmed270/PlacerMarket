@@ -25,6 +25,7 @@ const users = require('./users.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
+const pageSnapshots = require('./pageSnapshots.service');
 const { validateSeoChoice, buildSeoPayload, generateSeoRecommendation } = require('../lib/listingSeo');
 const { canonicalListingUrl } = require('../lib/listingUrls');
 const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
@@ -460,6 +461,7 @@ async function approveListing(listingId, reviewerId) {
       [reviewerId, listingId]
     );
     await listingSearch.enqueueListingSearchSync(client, listingId, published[0].search_version);
+    await pageSnapshots.enqueueListingSnapshotSync(client, listingId, published[0].search_version);
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: 'published' }, { transaction: client });
     return published[0];
   });
@@ -594,6 +596,7 @@ async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
       throw new ValidationError('Only listings pending review or published can be rejected or unpublished');
     }
     await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
+    await pageSnapshots.enqueueListingSnapshotSync(client, listingId, rows[0].search_version);
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: rows[0].status, reason }, { transaction: client });
     return rows[0];
   });
@@ -615,6 +618,7 @@ async function setOwnListingPaused(listingId, sellerId, paused) {
       [status, listingId]
     );
     await listingSearch.enqueueListingSearchSync(client, listingId, updated[0].search_version);
+    await pageSnapshots.enqueueListingSnapshotSync(client, listingId, updated[0].search_version);
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status }, { transaction: client });
     return updated[0];
   });
@@ -634,6 +638,7 @@ async function removeOwnListing(listingId, sellerId) {
       [listingId]
     );
     await listingSearch.enqueueListingSearchSync(client, listingId, updated[0].search_version);
+    await pageSnapshots.enqueueListingSnapshotSync(client, listingId, updated[0].search_version);
     await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: 'removed' }, { transaction: client });
     return updated[0];
   });

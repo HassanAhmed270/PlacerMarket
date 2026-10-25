@@ -117,6 +117,18 @@ current key. Sellers can preview through `POST /api/listings/seo-recommendation`
 Custom SEO text is checked on listing submission and again when a published
 listing revision is submitted for moderation.
 
+Public page snapshots for the home page, category pages, city-category pages,
+and listing pages are rebuilt by the `page-snapshots` PostgreSQL queue after
+publication, price/revision approval, sale, or removal. The same stored HTML is
+served to all clients; its module entry lets the React SPA take over. Sitemap
+and robots documents are rebuilt with those pages. Page HTML uses short CDN
+caching, while fingerprinted image variants remain immutable. Production
+workers load the selected live CDN purge adapter from the module named by
+`CDN_PURGE_ADAPTER_MODULE` when `CDN_PURGE_ADAPTER=live`; the module exports
+`createCdnPurger()` returning `{ kind: 'live', purge(paths) }`. The fake purger
+is for non-production runs and tests. Set `PUBLIC_SPA_ENTRY_URL` to the
+frontend's deployed entry bundle when it differs from `/src/main.jsx`.
+
 ## Testing
 
 ```bash

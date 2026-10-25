@@ -5,6 +5,7 @@ const users = require('./users.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
+const pageSnapshots = require('./pageSnapshots.service');
 const { validateSeoChoice } = require('../lib/listingSeo');
 const { ValidationError, ForbiddenError, NotFoundError } = require('../lib/errors');
 
@@ -212,6 +213,7 @@ async function submitListingRevision(listingId, sellerId, patch) {
           [proposed.askingPrice, requiresEmail, listingId]
         );
         await listingSearch.enqueueListingSearchSync(client, listingId, updatedListings[0].search_version);
+        await pageSnapshots.enqueueListingSnapshotSync(client, listingId, updatedListings[0].search_version);
         await eventBus.emitAsync(events.LISTING_REVISION_DECIDED,
           { listingId, revisionId: revision.id, decision: 'approved' }, { transaction: client });
         return { ...revision, measurements };
@@ -333,6 +335,7 @@ async function approveListingRevision(revisionId, reviewerId) {
         [listing.id, item.fieldDefId, item.value]);
     }
     await listingSearch.enqueueListingSearchSync(client, listing.id, updatedListings[0].search_version);
+    await pageSnapshots.enqueueListingSnapshotSync(client, listing.id, updatedListings[0].search_version);
     const { rows: decided } = await client.query(
       "UPDATE listing_revisions SET status = 'approved', reviewed_by = $2, reviewed_at = now() WHERE id = $1 RETURNING *",
       [revisionId, reviewerId]

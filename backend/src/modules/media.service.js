@@ -139,7 +139,8 @@ async function publicVariant(imageId, variant, contentHash) {
   if (!column) return null;
   const { rows } = await db.query(
     `SELECT i.${column} AS object_key FROM listing_images i JOIN listings l ON l.id = i.listing_id
-     WHERE i.id = $1 AND i.processing_state = 'ready' AND l.status = 'published'`, [imageId]
+     WHERE i.id = $1 AND i.processing_state = 'ready'
+       AND l.status IN ('published', 'paused', 'sold')`, [imageId]
   );
   const keyHash = rows[0]?.object_key?.split('/')[1];
   return keyHash && keyHash === contentHash ? storage.get(rows[0].object_key) : null;

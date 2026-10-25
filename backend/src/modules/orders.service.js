@@ -24,6 +24,7 @@ const db = require('../db.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
+const pageSnapshots = require('./pageSnapshots.service');
 const { NotFoundError, ValidationError, ForbiddenError, NotYetSpecifiedError } = require('../lib/errors');
 
 const PRE_DISPATCH_STATUSES = new Set(['bag', 'order_placed', 'seller_preparing']); // FR-33a cutoff
@@ -57,6 +58,7 @@ async function syncListingAfterOrderTransition(client, listingId, listing, wasRe
   );
   if (rows[0]) {
     await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
+    await pageSnapshots.enqueueListingSnapshotSync(client, listingId, rows[0].search_version);
   }
 }
 

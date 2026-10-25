@@ -9,9 +9,17 @@ const { createDevEmailOutboxSender } = require('./src/lib/adapters/devEmailOutbo
 const { keyProviderFromEnv } = require('./src/lib/keyProvider');
 const media = require('./src/modules/media.service');
 const listingSearch = require('./src/modules/listingSearch.service');
+const pageSnapshots = require('./src/modules/pageSnapshots.service');
+const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 
-async function startWorker({ emailSender, logger = console } = {}) {
+async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
   if (process.env.NODE_ENV === 'production') keyProviderFromEnv(process.env);
+  const selectedCdnPurger = cdnPurger || createCdnPurger({
+    adapter: process.env.CDN_PURGE_ADAPTER || (process.env.NODE_ENV === 'production' ? undefined : 'fake'),
+    adapterModule: process.env.CDN_PURGE_ADAPTER_MODULE,
+    allowFake: process.env.NODE_ENV !== 'production',
+    production: process.env.NODE_ENV === 'production',
+  });
   const selectedEmailSender = emailSender || (process.env.DEV_FAKES === '1' && process.env.NODE_ENV !== 'production'
     ? createDevEmailOutboxSender()
     : process.env.EMAIL_SENDER_ADAPTER
@@ -41,6 +49,7 @@ async function startWorker({ emailSender, logger = console } = {}) {
         await selectedEmailSender.send(message);
       }
     );
+    await pageSnapshots.enqueueFullSnapshotRebuild();
     await queue.boss.work(
       QUEUES.MEDIA,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.MEDIA], transactional: false },
@@ -50,6 +59,16 @@ async function startWorker({ emailSender, logger = console } = {}) {
       QUEUES.LISTING_SEARCH,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.LISTING_SEARCH], transactional: false },
       async ([job]) => listingSearch.processListingSearchJob(job.data)
+    );
+    await queue.boss.work(
+      QUEUES.PAGE_SNAPSHOTS,
+      { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.PAGE_SNAPSHOTS], transactional: false },
+      async ([job]) => {
+        const result = await pageSnapshots.processSnapshotJob(job.data);
+        if (result.outcome === 'regenerated' && result.paths.length) {
+          await selectedCdnPurger.purge(result.paths);
+        }
+      }
     );
     // eslint-disable-next-line no-console
     console.log('Poshaak worker started');
