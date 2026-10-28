@@ -21,6 +21,14 @@ suite did not start because `TEST_DATABASE_URL` is unset in this workspace;
 integration-dependent claims remain unverified in this run. Phase 3 is not
 closed. Production CDN/snapshot serving and other hosted checks remain pending.
 
+**Phase 4 documentation sync (2026-10-28):** the owner decision record is
+`DECISIONS_2026-10-25.md`; Phase 4 Task 0 is design-only. Fixed-price Buy
+creates a reservation directly (`reserved`, with a temporary legacy `Bag`
+alias); it does not depend on offers. The order/payment scope, launch checks,
+and provisional D1/D2 boundaries are in `specs.md`, `Phases.md`,
+`open-questions.md`, and `LIVE_CHECKS.md`. No Phase 4 code/schema change is
+claimed by this documentation update.
+
 **Phase 2 handoff (2026-10-23):** listing core repairs, local media
 processing/storage adapter, photo moderation, listing revisions, and workspace
 screens are implemented. Detailed evidence and remaining gate items are in

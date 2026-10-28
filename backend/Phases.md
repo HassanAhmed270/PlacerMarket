@@ -29,16 +29,17 @@ listing-media decisions. **Current phase: 3** (Phase 3 gate remains open; see
 
 ## Settled decisions the phases build on
 
-**Payment model — escrow, replaces COD (decided 2026-10-13/14).** Buyers pay
-through a licensed gateway; an order becomes Funded only from a verified webhook
-(FR-60, FR-61). Flow (FR-62): offer accepted → Bag (listing reserved for that
-buyer, with a payment window) → Funded → ship → Delivered (only an admin marks
-it, FR-68) → hold and complaint window → Completed. The platform absorbs the
-gateway fee (FR-64); payouts are manual at launch (FR-65); a seller must be
-manually identity-verified before their first payout (FR-66), while registered
-email verification gates only high-value listings strictly above threshold
-(FR-08a). No automatic payout-detail change lock (FR-67/SEC-35). Partial refunds (FR-71) are Claude's
-recommendation, unconfirmed.
+**Payment model — escrow, replaces COD (owner decisions 2026-10-25).** A fixed-
+price Buy creates a `reserved` listing/order state directly (temporary legacy
+`Bag` alias); no accepted offer is required. Flow (FR-62): Buy → reservation →
+payment → Funded only from a verified webhook → ship → Delivered (admin marks it,
+FR-68) → hold/complaint window → Completed. The reservation window starts at 60
+minutes, configurable; the active-unpaid cap is 3, configurable. Buyer payments
+are adapter-based; cards first is provisional (D1), wallets/bank later. Seller
+payouts stay manual under FR-65. The platform absorbs gateway fees (FR-64).
+Manual refunds require two distinct authenticator-verified Admins; system refunds
+use a separate idempotent path. D2's additional-admin and payment-enable gates
+remain provisional. See `DECISIONS_2026-10-25.md` and `open-questions.md`.
 
 **Scale program (10K concurrent visitors).** One codebase, two processes:
 `server.js` and `worker.js`; a Postgres-backed queue behind `lib/queue.js`;
@@ -377,36 +378,57 @@ alt-text and internal-linking details before those details are finalized.
 - [ ] Decisions above resolved
 - [ ] Backend unit/smoke, guarded integration, and frontend suites green; `npm audit --omit=dev` clean
 
-## Phase 4 — Orders and payment in (money comes in)
+## Phase 4 — Fixed-price purchases, reservations, payments, refunds and delivery
 
-**Task 0:** `specs.md` was already revised for escrow on 2026-10-14. Before code:
-confirm the DISCUSS rows (FR-60a, FR-63a, FR-69, FR-70), write the new
-schema as migrations (payments, refunds, reservation fields, webhook inbox,
-append-only ledger — FR-79f), and update `agent.md`. Do not extend any COD path.
+**Task 0 — design only.** Reconcile endpoint/request/response contracts and
+architecture to the 2026-10-25 decisions; produce the design review and update
+the implementation plan. Do not write code, migrations, or schema changes in
+Task 0. No live gateway is selected, no legal clearance is claimed, and
+`PAYMENTS_ENABLED` remains false in production. D1/D2 are provisional and must
+be confirmed before implementation depends on them.
 
-**Backend:** Module 6 (FR-32–FR-34 per FR-62: reservation and the atomic accept FR-63/FR-63a (cap per buyer FR-63c once confirmed), payment window, checkout, lifecycle, cancel with refund), Module 7
-rewritten (hosted checkout, webhook inbox FR-61/FR-77b, payments with the
-gateway fee FR-64), Module 8 (FR-39, FR-41, FR-42; admin-only status entry through
-`order.mark_delivered`, FR-68), notifications completed through the queue (FR-51),
-reservation expiry job and reconciliation sweeps (FR-77c). Real-Postgres
-concurrency tests: many simultaneous accepts → exactly one wins; expiry vs
-payment race.
+**Stage plan (in order):**
+1. Design review: fixed-price Buy → reservation → payment → Funded → fulfillment;
+  PaymentGateway boundary, order/refund state transitions, admin controls, API
+  contracts, data ownership, security, operational and rollback design.
+2. Expand-only migrations: reservation/order/payment/refund/webhook/audit data;
+  preserve old COD columns, constraints, and paths until a separately gated
+  contract step.
+3. Reservation engine: atomic Buy, locked item-price snapshot, one reservation
+  per listing, self-purchase refusal, validated structured address, server-side
+  PKR 300 configurable fee, three active unpaid reservations per buyer, 60-minute
+  configurable expiry, and blocked price-revision approval under a row lock.
+4. Gateway adapter and fake: hosted checkout boundary, idempotent payment create,
+  test/development fake, and no live provider selection implied.
+5. Webhook inbox: raw-body route before `express.json()`, signature verification,
+  unique event storage, queueing, safe repeated processing, and verified-payment
+  transition.
+6. Refunds: full pre-handover cancellation, expiry/late-payment and missed
+  handover paths; trigger attribution, idempotency, audit, and manual two-Admin
+  authenticator approval subject to D2 confirmation.
+7. Delivery admin: manual courier coordination, tracking/status updates, three-day
+  seller handover deadline, and Phase 4 manual issue-resolution stopgap for lost
+  parcels/refused delivery.
+8. Notifications: in-app and rate-limited email for purchase, payment, refund and
+  delivery state changes.
+9. Frontend: Buy/reservation, payment review, hosted checkout, order state,
+  cancellation, tracking, and administrative workflows.
+10. Demo: fixed-price purchase, payment webhook, expiry, cancellation/refund,
+   handover timeout, and manual delivery exception walkthrough.
+11. Gate: all in-scope unchecked FR/SEC rows, backend/frontend checks, audit,
+   live-check evidence, and unresolved decision review.
 
-**Frontend:** checkout with the gateway's hosted payment step (**supersedes** the
-"Remove Card/Wallet payment option" item) · reserved-listing state and
-payment-window countdown · expanded order lifecycle states (FR-33) · buyer
-cancellation (pre-dispatch only) · delivery tracking.
+**Security rows to close:** SEC-33, SEC-34, SEC-39, SEC-40; SEC-11 for delivery
+permission, SEC-12 for orders/payments, SEC-27 for money-data logging, and SEC-36
+where money routes/cache behavior apply.
 
-**Security rows to close:** SEC-33, 34, 11 (delivery permission), 12 (orders,
-payments), 27 (no payment data in logs).
-
-**Decisions needed first:** gateway provider, legal advice and a sandbox account
-(external) · reservation duration · other open offers on accept (FR-63b,
-deferred by the human) · seller no-ship policy · courier partner count (FR-40a) ·
-general-notification channel.
+**External launch dependencies:** payment provider and sandbox, legal clearance
+for holding customer funds, provider-specific signature verification, courier
+arrangement, two-admin enrollment per D2 if confirmed, and all production
+`PAYMENTS_ENABLED` gates. FR-63b is not applicable under fixed-price Buy.
 
 **Gate**
-- [ ] Task 0 done (DISCUSS rows confirmed, migrations written)
+- [ ] Task 0 design review done (design only; no code or migrations)
 - [ ] Backend FRs above ticked
 - [ ] Frontend items above ticked
 - [ ] SEC rows above ticked

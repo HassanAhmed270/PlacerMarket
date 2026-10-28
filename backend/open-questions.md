@@ -70,6 +70,8 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-13 · FR-51 · Delivery channel for general notifications (email / SMS / WhatsApp / push). Today the code only writes rows. Decide together with real-time updates (FR-78, deferred) and how offline users are reached.
 - 2026-10-14 · FR-60a, FR-63a, FR-69, FR-70 · Confirm the DISCUSS design rows for escrow (hosted checkout, atomic reservation and auto-refund, gateway refunds, settlement reconciliation).
 - 2026-10-15 · FR-63c, FR-32b · Cap on a buyer's active reservations (value open) and how it fits the single-item checkout rule. Proposed (DISCUSS).
+- 2026-10-25 · FR-60 / FR-65 · **D1 provisional — owner to confirm:** Phase 4 covers buyer payments only, cards first; buyer wallets/bank later through the PaymentGateway adapter. Seller payouts remain manual under FR-65 and are outside Phase 4.
+- 2026-10-25 · FR-69 / FR-84 / FR-83h · **D2 provisional — owner to confirm:** require a second real person with their own Admin account and authenticator; design a controlled command for additional Admin creation; `PAYMENTS_ENABLED` stays disabled until two distinct authenticator-enrolled Admins exist. System-triggered refunds use their own idempotent path and do not need a second Admin.
 
 ### Needed by Phase 5
 - 2026-10-14 · FR-45a, FR-50a, FR-71 · Confirm partial refunds with commission on what the seller receives. Claude's recommendation; the human left the choice to Claude and has not objected — treat as the working decision, not as confirmed.
@@ -99,6 +101,29 @@ Marketplace-chat entries with the register in the Poshaak handoff.
   passed 13 suites/125 tests with Redis-backed limits enabled.
 
 ## Resolved
+
+- 2026-10-25 · Q1 / FR-60, FR-62 · Fixed-price Buy on an available listing starts a reservation and checkout directly; no offer acceptance or `accepted_offer_id` is required. The checked item price is locked in the reservation/order snapshot. Offers remain disabled/deferred.
+- 2026-10-25 · Q2 / FR-63 · Reservation window is 60 minutes initially and administrator-configurable; unpaid expiry releases the reservation where valid.
+- 2026-10-25 · Q3 / FR-32b, FR-63c · Maximum 3 active unpaid reservations per buyer, administrator-configurable and enforced on the server, including concurrent attempts. Paid, expired, and cancelled reservations do not consume a slot.
+- 2026-10-25 · Q4 / FR-73e · Approval of a pending price revision is blocked while its listing has an active reservation; check under a row lock. Keep it pending after reservation end for normal review; never auto-approve. Notify the seller in-dashboard and in-app that approval is blocked because the item is reserved.
+- 2026-10-25 · Q5 / FR-85 · Flat PKR 300 delivery fee per order at launch, administrator-configurable, calculated and recorded server-side and shown before payment. Courier/distance pricing is deferred.
+- 2026-10-25 · Q6 / FR-86 · At Buy require and validate recipient name, phone, supported city, and sufficient address details; snapshot the structured delivery address on the order.
+- 2026-10-25 · Q7 / FR-87 · Refuse self-purchase on the server using authenticated buyer identity and listing ownership.
+- 2026-10-25 · Q8 / FR-72 · Seller handover deadline is 3 days after the paid order is ready for fulfillment; missed deadline automatically cancels and initiates a full refund, idempotently and with an audit record.
+- 2026-10-25 · Q9 / FR-33a · Buyer cancellation before courier handover is free and refunds the full item price plus full delivery fee; the platform absorbs a non-refundable gateway fee. This automatic rule does not extend past handover.
+- 2026-10-25 · Q10 / FR-60 · PaymentGateway/provider abstraction first; fake gateway for development and tests; no live provider selected by this decision.
+- 2026-10-25 · Q11 / FR-60, FR-77b · Keep `PAYMENTS_ENABLED=false` in production until legal, provider, security, and operational prerequisites are reviewed and approved; code or fake-gateway support is not authorization to collect funds.
+- 2026-10-25 · Q12 / FR-60, FR-65 · Buyer payment methods are distinct from payouts: cards first, wallets/bank later; seller payouts remain manual at launch under FR-65. **D1 further narrows Phase 4 scope provisionally; see Open.**
+- 2026-10-25 · Q13 / FR-39, FR-41 · One manually coordinated courier partner at launch; no courier API is required.
+- 2026-10-25 · Q14 / FR-41, FR-42, FR-68 · Admin-managed delivery status and tracking number; notify buyers on important delivery-status changes. Courier API/webhooks are future enhancements.
+- 2026-10-25 · Q15 / FR-33b, FR-72e · Lost parcels and refused delivery receive manual issue recording and documented administrative resolution in Phase 4; automated handling and policy are deferred to Phase 5.
+- 2026-10-25 · Q16 / FR-51 · Order/delivery notifications use in-app plus rate-limited email through the existing email mechanism; SMS and WhatsApp are deferred. Notification failure does not roll back recorded state.
+- 2026-10-25 · Q17 / FR-69, FR-83h · Manual refunds require distinct initiating and approving Admins, each with authenticator verification; no self-approval; retain the requester/approver/decision audit. System-triggered refunds are separate and idempotent. **D2 adds provisional launch controls; see Open.**
+- 2026-10-25 · Q18 / FR-45a, FR-50a, FR-71 · Phase 4 prepares data structures, validation, status handling, and gateway tracking for partial refunds; the complete end-to-end partial-refund workflow is deferred to Phase 5. Any later manual partial refund follows Q17.
+- 2026-10-25 · Q19a / FR-79b · Migrations use expand-first compatibility; destructive/drop steps are separately gated after dependent code, data, deployments, and rollback/recovery are checked.
+- 2026-10-25 · Q19b / FR-32, FR-33, FR-62 · `reserved` is the canonical reservation status; `Bag` is a temporary compatibility alias and must not remain a separate business state.
+- 2026-10-25 · FR-77b / body parsing · Mount provider webhook routes before general `express.json()` parsing where raw bytes are required; preserve original bytes for signature verification and leave ordinary API JSON parsing unchanged.
+- 2026-10-25 · SEC-31 / body-parser · Accept and pin exact `body-parser` 2.4.0 despite its age because it fixes the high-severity production advisory; run `npm audit signatures` and require zero production audit findings.
 
 - 2026-10-22 · FR-29 / FR-28–FR-31 · Fixed-price Buy is the early-site purchase path; Buy is login-gated and leads to a “checkout opens soon” screen until Phase 4. Offers/negotiation are dormant behind `OFFERS_ENABLED` (default off) and deferred; messaging remains in scope. No reservation or payment happens in Phase 3.
 - 2026-10-22 · FR-24 / FR-80f · Discovery city means the seller's registered profile city; sold listings are hidden from search and reserved listings show a badge.

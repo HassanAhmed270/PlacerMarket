@@ -34,6 +34,27 @@ integration-dependent Phase 3 items. See `PHASE3_GATE_REPORT.md`.
   test database and Redis endpoints; do not place endpoint credentials or
   values in this checklist or logs.
 
+## Phase 4 payment and delivery launch checks
+
+- [ ] Select the live payment gateway provider; verify its production account,
+  approved buyer methods, adapter behavior, settlement reporting, and support
+  process.
+- [ ] Provision and test the provider sandbox with non-production credentials;
+  verify hosted checkout, success/failure, duplicate and late events, and refunds.
+- [ ] Obtain legal clearance for holding customer funds and approve the customer-
+  facing payment, cancellation, delivery, and refund terms before enabling payments.
+- [ ] Verify webhook signatures against the selected provider using the original
+  raw request bytes; test invalid signatures, stale/replayed events, and duplicate
+  delivery in the provider sandbox.
+- [ ] Keep `PAYMENTS_ENABLED` false in production until provider, legal, security,
+  operational, and deployment gates are reviewed and approved.
+- [ ] If D2 is confirmed, provision two distinct real Admins with separate
+  accounts and enrolled authenticators; verify the enablement gate and recovery
+  procedure before `PAYMENTS_ENABLED` can be enabled.
+- [ ] Confirm and document the one-courier launch arrangement, manual pickup and
+  handover process, tracking-number handling, delivery-status source, and lost /
+  refused-delivery escalation path.
+
 - [ ] Email primary and secondary providers selected; verify real delivery,
   provider authentication, retry behavior, rate limits, and failover.
 - [ ] Verify queued email delivery with the selected provider, including retry

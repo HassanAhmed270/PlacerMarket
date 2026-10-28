@@ -10,6 +10,13 @@ closed; production provider/CDN/snapshot checks remain pending. Read
 `MASTER_PROJECT_CONTEXT.md`, `Phases.md`, `PHASE3_GATE_REPORT.md` and
 `LIVE_CHECKS.md` for current status.
 
+**Phase 4 documentation update (2026-10-28):** owner decisions Q1–Q19 are
+recorded in `DECISIONS_2026-10-25.md`; `Phases.md` now defines Task 0 as
+design-only and lays out the fixed-price reservation/payment/delivery stage
+plan. The current-phase line remains Phase 3 until the owner changes it. D1/D2
+remain provisional; no code, migration, schema change, payment provider choice,
+or launch clearance is implied.
+
 ## Phase 2 update (2026-10-23)
 
 Listing core, media pipeline, photo moderation, listing revisions, and workspace
@@ -58,9 +65,10 @@ high-value listings strictly above the threshold. Historical Phase 0 gate
 evidence still contains the prior first-payout email wording, documented as a
 conflict in `END_OF_PHASES_REVIEW.md`.
 
-## 3. What to do next (Phase 3 gate)
+## 3. What to do next (Phase 3 gate and Phase 4 design)
 
-Resume from `PHASE3_GATE_REPORT.md`; do not repeat completed work or treat this
+The current phase remains Phase 3 until the owner says otherwise. Resume from
+`PHASE3_GATE_REPORT.md`; do not repeat completed work or treat this
 documentation checkpoint as a closed gate. Resolve the integration rerun by
 providing the specifically approved guarded test database and Redis
 configuration. Then address the report's parked rows with tests whose titles

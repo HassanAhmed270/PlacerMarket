@@ -6,6 +6,17 @@ are implemented per the 2026-10-22 owner decisions; the version-pointer/cache
 proposals were not adopted. Phase 3 status and remaining gate work are mapped
 in `PHASE3_GATE_REPORT.md`. Phase 3 is not closed.
 
+## Phase 4 pre-launch gates (2026-10-28)
+
+These are external/operational release conditions, not claims of approval or
+implementation: select and verify the live gateway provider and sandbox; obtain
+legal clearance for holding customer funds and approve customer-facing terms;
+verify provider webhook signatures against raw request bytes; keep production
+`PAYMENTS_ENABLED` disabled until all gates are approved; enroll two distinct
+authenticator-protected Admins if provisional D2 is confirmed; and confirm the
+manual courier arrangement and escalation process. Track execution in
+`LIVE_CHECKS.md`.
+
 Items to revisit after the scheduled phases. Deferral here does not authorize
 building these features in an earlier phase.
 

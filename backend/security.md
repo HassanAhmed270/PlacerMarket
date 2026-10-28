@@ -142,6 +142,10 @@ money integrity; expect a payments section here once Phase 4 starts.
 
 - [x] **SEC-38 Refresh tokens rotate and are revocable** *(added)*. Every refresh issues a new single-use token; reuse of an old one revokes its whole family and forces sign-in; absolute and inactivity expiry are enforced server-side; tokens are stored hashed (specs.md FR-84, FR-84a, approved 2026-10-17).
   *Enforced by:* `test/integration/known-mismatches.test.js` — FR-84/FR-84a/SEC-38 tests concurrent refresh reuse and family revocation.
+- [ ] **SEC-39 Manual refunds require two-person approval.** The initiator and approver are distinct Admin accounts; each completes fresh authenticator verification for the respective action; self-approval is rejected; requester, approver, decision, and timestamps are auditable (FR-69; provisional launch gate D2 in `open-questions.md`).
+  *Enforced by:* test · *Today:* n/a-yet; Phase 4 refund workflow is not implemented.
+- [ ] **SEC-40 Refund effects are idempotent and trigger-attributed.** Each system or manual refund records its trigger, payment/refund identity, and durable idempotency key before external effects; repeated jobs/webhooks cannot issue duplicate refunds; system-triggered refunds use a distinct authorization path from manual Admin refunds (FR-69, FR-72, FR-77b).
+  *Enforced by:* test · *Today:* n/a-yet; Phase 4 refund workflow is not implemented. Webhook raw-body signature verification is already covered by SEC-33; money-operation idempotency is also covered generally by SEC-34.
 
 
 ---

@@ -15,6 +15,14 @@ check passed. The guarded integration suite did not start because
 `TEST_DATABASE_URL` was unset. Phase 3 is not closed; do not infer a passing
 PostgreSQL integration run or production readiness.
 
+**Phase 4 documentation checkpoint (2026-10-28):** the 2026-10-25 owner
+decisions now specify fixed-price Buy → reservation → payment, a 60-minute
+configurable reservation, three active unpaid reservations, server-calculated
+PKR 300 delivery, structured address validation, pre-handover full refunds, and
+a three-day seller handover deadline. Task 0 is design-only; implementation and
+live payment readiness are not claimed. D1/D2 remain provisional. See
+`DECISIONS_2026-10-25.md`, `specs.md`, `Phases.md` and `open-questions.md`.
+
 **Owner update (2026-10-22; machine state refreshed 2026-10-23):** the approved Phase 1 implementation stages are
 recorded in `PHASE1_PROGRESS.md`, with evidence and remaining gate work in
 `PHASE1_GATE_REPORT.md`. Seller application/approval, flexible measurements,
@@ -97,8 +105,8 @@ proposed, not confirmed — don't build) · **OPEN** (undecided) · **DEFERRED**
 Poshaak is a C2C marketplace in Pakistan for high-value occasion, bridal and groom
 fashion (sherwani, bridal wear, designer/branded). Website only — React + Vite,
 no native app, no PWA. Individual sellers only (boutique tier deferred). Buy-only
-(no rental). Replica items are allowed with disclosure. **There is no fixed-price
-purchase path: negotiation (offer / counter / accept) is the only way to a sale.**
+(no rental). Replica items are allowed with disclosure. **Fixed-price Buy is the
+active purchase path; offers/negotiation are disabled and deferred.**
 Revenue: commission (single global %, adjustable, about 10%, on item price only) plus
 featured listings and advertising.
 
@@ -163,9 +171,9 @@ Target load: **10K concurrent visitors**. Full requirement rows: `specs.md` sect
 
 | Area | Was (COD) | Now |
 |---|---|---|
-| Payment | Cash or digital transfer at the door | Licensed gateway (card / wallet / bank); hosted checkout proposed (FR-60a, DISCUSS) |
+| Payment | Cash or digital transfer at the door | PaymentGateway adapter; cards first provisionally, buyer wallets/bank later (D1 provisional); provider unselected |
 | Order becomes paid | Courier confirms collection | Only from a verified webhook (FR-61) |
-| Flow | Order Placed … Delivered (Payment Confirmed) | Bag (reserved) → Funded → … → Delivered → hold → Completed (FR-62) |
+| Flow | Order Placed … Delivered (Payment Confirmed) | Fixed-price Buy → `reserved` (temporary `Bag` alias) → verified Funded → … → Delivered → hold → Completed (FR-62) |
 | Delivered marked by | Courier/ops staff | **Admin only, for now** (FR-68) |
 | Cash remittance reconciliation | Manual vs courier statements | Obsolete; gateway settlement reconciliation (FR-70, DISCUSS) |
 | Gateway fee | n/a | Platform absorbs it from commission (FR-64) |
