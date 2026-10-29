@@ -1,10 +1,11 @@
-# Phase 3 gate report (2026-10-25)
+# Phase 3 gate report (close-out evidence, 2026-10-28)
 
-Phase 3 is **not closed**. This report maps the Phase 3 scope in `Phases.md`
-and the 2026-10-22 owner decisions to current evidence. A test file existing is
-not the same as a passing test. The latest guarded integration run passed all
-13 suites and 125 tests with no skips. Earlier S15 attempts and their resolved
-failures are recorded below.
+This report maps the Phase 3 scope in `Phases.md` and the owner decisions to
+verified evidence. The final evidence snapshot is for baseline commit
+`7bef01a3c4f7a436c802208e96179e867ea8bbf6`; outstanding work is assigned in
+the **Carried forward** section below. This close-out records test and build
+results, not production readiness. Earlier S15 attempts and their resolved
+failures are retained as historical evidence.
 
 The 2026-10-22 owner decisions supersede the former negotiation-only Buy flow.
 Fixed-price Buy is the early-site path; Phase 3 only routes a signed-in buyer to
@@ -191,3 +192,47 @@ transcript; a fresh unit run also passed after the dependency fix.
 tests, staged with those test changes to comply with the same-commit hook.
 Security rows remain unchecked where the passing tests do not cover their full
 scope. No push was made as part of this follow-up.
+
+## Final verification snapshot (baseline commit `7bef01a`, 2026-10-28)
+
+The following results are the final verified evidence for this close-out:
+
+| Area | Command / evidence | Result |
+|---|---|---|
+| Backend unit and smoke | `npm.cmd test -- --runInBand` (from `backend/`) | 46 suites and 573 tests passed. |
+| Backend integration | `npm.cmd run test:integration -- --runInBand` (from `backend/`) | 13 suites and 125 tests passed; no failures or skips. The integration database `testing_only` was created during the run. |
+| Backend schema | `npm.cmd run db:check-schema` (from `backend/`) | Passed. |
+| Backend production dependency audit | `npm.cmd audit --omit=dev` (from `backend/`) | 0 vulnerabilities. |
+| Frontend production dependency audit | `npm.cmd audit --omit=dev` (from `frontend/`) | 0 vulnerabilities. |
+| Frontend lint | `npm.cmd run lint` (from `frontend/`) | Passed. |
+| Frontend tests | `npm.cmd test` (from `frontend/`) | 16/16 passed. |
+| Frontend production build | `npm.cmd run build` (from `frontend/`) | Passed. |
+| Public bundle budget | `npm.cmd run check:bundle` (from `frontend/`) | Passed; largest public bundle was 75.1 KB gzip against a 200 KB budget. |
+
+### SEC-31 dated exception
+
+The owner-approved exception recorded under SEC-31 accepts exact
+`body-parser` 2.4.0, published 2026-10-22, while it is within the 14-day
+release-age rule. At this report date (2026-10-28), it is six days old. The
+backend lockfile pins 2.4.0 and records its registry tarball SHA-512 integrity
+value. `npm.cmd audit --omit=dev` reported zero vulnerabilities in both
+packages. `npm.cmd audit signatures` (from `backend/`) audited 413 packages;
+413 registry signatures and 56 attestations were verified.
+
+No specification or security checkbox was changed or newly ticked by this
+documentation update: the close-out does not claim that a test title proves
+additional full-row requirements.
+
+## Carried forward
+
+| Open item | Owner phase / disposition | Remaining work |
+|---|---|---|
+| Hosted CI green run | Phase 0c | Run the hosted workflow and retain a green result; the workflow has not yet been verified on the hosted runner. |
+| Live provider checks | Phase 0c / Phase 6 | Verify real email-provider delivery and failover before real login, then complete applicable production-provider checks. |
+| Production TLS, secrets and keys | Phase 1 / Phase 6 | Complete payout-key custody/rotation checks and production TLS, secret provisioning and deployment verification. |
+| Recovery flow (FR-83k/FR-83l) | Phase 1 | Implement and exercise the approved Admin-only recovery, notice, session revocation, factor enrollment and seller payout-pause workflow; use the manual owner-only procedure meanwhile. |
+| Measurement `required` enforcement migration | Phase 1 — status reconciliation | Confirm closure against current evidence. The dated Phase 1 backlog lists it as pending, while `PHASE1_GATE_REPORT.md` records migration 006 and named tests as done. |
+| Jest 29 to 30 | Phase 2 follow-up | Complete the separately scheduled development-toolchain upgrade; current Jest 29 advisories remain owner-triaged. |
+| Offers and negotiation (`OFFERS_ENABLED` off) | Phase 3 disposition: deferred | Keep disabled and out of the active purchase flow; revisit only under a future owner-approved scope. |
+| Seller-card `display_alias` spec/test discrepancy | Phase 3 | Update or replace the test so it verifies the approved alias-inclusive card shape before claiming FR-27a coverage. |
+| Word files in git history | Phase 0 repository hygiene | Review the historical Word-file entries and document/perform any approved repository-history cleanup separately. |
