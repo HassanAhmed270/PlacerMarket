@@ -26,6 +26,10 @@ const SEED_SETTINGS = [
   ['instant_price_decrease_max_percent', '30'], // FR-73e
   ['payout_hold_days', '5'], // FR-45c
   ['complaint_window_days', '3'], // FR-43
+  ['reservation_minutes', '60'], // Phase 4
+  ['max_unpaid_reservations', '3'], // Phase 4
+  ['delivery_fee_pkr', '300'], // Phase 4
+  ['handover_deadline_hours', '72'], // Phase 4
 ];
 
 async function seed() {
