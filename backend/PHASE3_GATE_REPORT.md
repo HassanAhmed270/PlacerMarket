@@ -227,6 +227,7 @@ additional full-row requirements.
 
 | Open item | Owner phase / disposition | Remaining work |
 |---|---|---|
+| SEC-31 audit exception (2026-10-31) | Phase 4 schema review | Re-check the approved `glob`/`minimatch` exception and upgrade `node-pg-migrate` when a compatible release is available, or no earlier than 2026-11-11, whichever comes first; details are recorded under SEC-31 in `security.md`. |
 | Hosted CI green run | Phase 0c | Run the hosted workflow and retain a green result; the workflow has not yet been verified on the hosted runner. |
 | Live provider checks | Phase 0c / Phase 6 | Verify real email-provider delivery and failover before real login, then complete applicable production-provider checks. |
 | Production TLS, secrets and keys | Phase 1 / Phase 6 | Complete payout-key custody/rotation checks and production TLS, secret provisioning and deployment verification. |
