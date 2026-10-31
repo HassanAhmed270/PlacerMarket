@@ -679,6 +679,12 @@ async function listCities() {
   return rows;
 }
 
+/** FR-04: look up a city, optionally using the caller's transaction client. */
+async function getCityById(cityId, client = db) {
+  const { rows } = await client.query('SELECT id FROM cities WHERE id = $1', [cityId]);
+  return rows[0] || null;
+}
+
 /** FR-04: admin adds a supported city. */
 async function createCity({ name }, adminId) {
   const { rows } = await db.query('INSERT INTO cities (name) VALUES ($1) RETURNING *', [name]);
@@ -1079,6 +1085,7 @@ module.exports = {
   confirmLoginEmailCode,
   assertCityVerified,
   listCities,
+  getCityById,
   createCity,
   getUserRole,
   submitSellerApplication,

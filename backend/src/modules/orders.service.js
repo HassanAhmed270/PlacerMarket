@@ -25,7 +25,9 @@ const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
 const pageSnapshots = require('./pageSnapshots.service');
-const { NotFoundError, ValidationError, ForbiddenError, NotYetSpecifiedError } = require('../lib/errors');
+const {
+  NotFoundError, ValidationError, ForbiddenError, ConflictError, NotYetSpecifiedError,
+} = require('../lib/errors');
 
 const PRE_DISPATCH_STATUSES = new Set(['bag', 'order_placed', 'seller_preparing']); // FR-33a cutoff
 const RESERVED_ORDER_STATUSES = [
@@ -106,6 +108,9 @@ async function checkoutFromBag(orderId, buyerId, { deliveryAddress, paymentMetho
     const order = rows[0];
     if (!order) throw new NotFoundError('order', orderId);
     if (order.buyer_id !== buyerId) throw new ForbiddenError('Not your bag entry');
+    if (order.reservation_id !== null) {
+      throw new ConflictError('Reservation-backed orders cannot use legacy checkout.');
+    }
     if (order.status !== 'bag') throw new ValidationError('Order is not in "bag" state');
 
     const listing = await lockListingForOrder(client, order.listing_id);
@@ -160,6 +165,9 @@ async function cancelOrder(orderId, buyerId) {
     const order = rows[0];
     if (!order) throw new NotFoundError('order', orderId);
     if (order.buyer_id !== buyerId) throw new ForbiddenError('Not your order');
+    if (order.reservation_id !== null) {
+      throw new ConflictError('Reservation-backed orders cannot use legacy cancellation.');
+    }
     if (!PRE_DISPATCH_STATUSES.has(order.status)) {
       throw new ValidationError('Order has already been handed to delivery — cancellation window has passed (FR-33a)');
     }
@@ -174,6 +182,14 @@ async function cancelOrder(orderId, buyerId) {
   });
   eventBus.emit(events.ORDER_CANCELLED, { orderId });
   return updated;
+}
+
+/** FR-63a: guard legacy payment and payout paths against reservation-backed orders. */
+async function assertLegacyOrder(orderId) {
+  const { rows } = await db.query('SELECT reservation_id FROM orders WHERE id = $1', [orderId]);
+  if (rows[0]?.reservation_id !== null && rows[0]?.reservation_id !== undefined) {
+    throw new ConflictError('Reservation-backed orders cannot use legacy COD or payout operations.');
+  }
 }
 
 /**
@@ -243,6 +259,7 @@ module.exports = {
   checkoutFromBag,
   setOrderStatus,
   cancelOrder,
+  assertLegacyOrder,
   handleRefusalAtDoor,
   getOrderHistory,
   getCodAmountDue,

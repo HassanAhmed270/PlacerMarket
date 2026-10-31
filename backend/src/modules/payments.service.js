@@ -37,6 +37,7 @@ async function confirmCodCollection(orderId, { collectedAmount, collectionMethod
   if (!['cash', 'digital_transfer'].includes(collectionMethod)) {
     throw new ValidationError('collectionMethod must be "cash" or "digital_transfer" (FR-36a)');
   }
+  await orders.assertLegacyOrder(orderId);
   const { rows } = await db.query(
     `INSERT INTO cod_collections (order_id, collected_amount, collection_method, collected_at)
      VALUES ($1, $2, $3, now())

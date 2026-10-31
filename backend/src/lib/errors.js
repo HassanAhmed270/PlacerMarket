@@ -66,6 +66,30 @@ class ForbiddenError extends Error {
   }
 }
 
+class ConflictError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConflictError';
+    this.statusCode = 409;
+  }
+}
+
+class UnprocessableEntityError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'UnprocessableEntityError';
+    this.statusCode = 422;
+  }
+}
+
+class ConfigurationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'ConfigurationError';
+    this.statusCode = 500;
+  }
+}
+
 class ServiceUnavailableError extends Error {
   constructor(message = 'Database connection is temporarily unavailable') {
     super(message);
@@ -76,5 +100,5 @@ class ServiceUnavailableError extends Error {
 
 module.exports = {
   NotYetSpecifiedError, NotImplementedError, NotFoundError, ValidationError, ForbiddenError,
-  ServiceUnavailableError,
+  ConflictError, UnprocessableEntityError, ConfigurationError, ServiceUnavailableError,
 };

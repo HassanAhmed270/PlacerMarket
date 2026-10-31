@@ -52,6 +52,7 @@ eventBus.on(events.DISPUTE_FILED, async ({ orderId, disputeId }) => {
 
 /** FR-45b: called ONLY from payments.service.confirmCodCollection() — see file header. */
 async function startHold(orderId) {
+  await orders.assertLegacyOrder(orderId);
   const holdWindowDays = Number(await settlement.getSetting('payout_hold_days')); // FR-45c
   const complaintWindowDays = Number(await settlement.getSetting('complaint_window_days'));
   const { rows } = await db.query(

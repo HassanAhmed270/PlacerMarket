@@ -29,6 +29,13 @@ function normalizeEmail(value) {
   return email;
 }
 
+function validatePhone(value) {
+  if (typeof value !== 'string' || !PHONE.test(value.trim())) {
+    throw new ValidationError('Phone number must use an international phone format');
+  }
+  return value.trim();
+}
+
 function validatePassword(value) {
   if (typeof value !== 'string' || value.length < 12 || value.length > 128 || value.includes('\0')) {
     throw new ValidationError('Password must be 12 to 128 characters');
@@ -41,9 +48,6 @@ function validateRegistration(body) {
   if (typeof body.name !== 'string' || body.name.trim().length < 1 || body.name.trim().length > 150) {
     throw new ValidationError('Name must be 1 to 150 characters');
   }
-  if (typeof body.phone !== 'string' || !PHONE.test(body.phone.trim())) {
-    throw new ValidationError('Phone number must use an international phone format');
-  }
   const email = normalizeEmail(body.email);
   const password = validatePassword(body.password);
   let cityId = null;
@@ -53,7 +57,7 @@ function validateRegistration(body) {
     }
     cityId = body.cityId;
   }
-  return { name: body.name.trim(), phone: body.phone.trim(), email, password, cityId };
+  return { name: body.name.trim(), phone: validatePhone(body.phone), email, password, cityId };
 }
 
 function validateLogin(body) {
@@ -98,4 +102,12 @@ function validatePasswordReset(body) {
   return { token: body.token, password: validatePassword(body.password) };
 }
 
-module.exports = { validateRegistration, validateLogin, validateLoginCode, validateStaffLogin, validateResetRequest, validatePasswordReset };
+module.exports = {
+  validatePhone,
+  validateRegistration,
+  validateLogin,
+  validateLoginCode,
+  validateStaffLogin,
+  validateResetRequest,
+  validatePasswordReset,
+};

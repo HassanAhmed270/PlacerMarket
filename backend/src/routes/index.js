@@ -6,6 +6,7 @@ const routeMounts = [
   ['/users', require('./users.routes')],
   ['/catalog', require('./catalog.routes')],
   ['/listings', require('./listings.routes')],
+  ['/listings', require('./reservations.routes')],
   ['/media', require('./media.routes')],
   ['/discovery', require('./discovery.routes')],
   ['/negotiation', require('./negotiation.routes')],
