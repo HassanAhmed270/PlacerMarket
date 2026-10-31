@@ -24,13 +24,15 @@ CREATE TABLE reservations (
   paid_at TIMESTAMPTZ,
   ended_at TIMESTAMPTZ,
   end_reason TEXT,
+  CONSTRAINT reservations_paid_requires_timestamp
+    CHECK (status <> 'paid' OR paid_at IS NOT NULL),
   CONSTRAINT reservations_total_matches_snapshot
     CHECK (total_amount_snapshot = item_price_snapshot + delivery_fee_snapshot)
 );
 
-CREATE UNIQUE INDEX reservations_one_active_per_listing
+CREATE UNIQUE INDEX reservations_one_live_or_sold_per_listing
   ON reservations (listing_id)
-  WHERE status = 'active';
+  WHERE status IN ('active', 'paid');
 
 CREATE INDEX reservations_active_buyer_expiry
   ON reservations (buyer_id, expires_at)
@@ -68,19 +70,30 @@ AS $$
 DECLARE
   reservation_item_price NUMERIC(12,2);
   reservation_delivery_fee NUMERIC(12,2);
+  reservation_listing_id UUID;
+  reservation_buyer_id UUID;
+  reservation_seller_id UUID;
 BEGIN
   IF NEW.reservation_id IS NULL THEN
     RETURN NEW;
   END IF;
 
-  SELECT item_price_snapshot, delivery_fee_snapshot
-    INTO reservation_item_price, reservation_delivery_fee
+  SELECT item_price_snapshot, delivery_fee_snapshot, listing_id, buyer_id, seller_id
+    INTO reservation_item_price, reservation_delivery_fee, reservation_listing_id,
+         reservation_buyer_id, reservation_seller_id
     FROM reservations
     WHERE id = NEW.reservation_id;
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Order reservation does not exist'
       USING ERRCODE = '23503';
+  END IF;
+
+  IF NEW.listing_id IS DISTINCT FROM reservation_listing_id
+     OR NEW.buyer_id IS DISTINCT FROM reservation_buyer_id
+     OR NEW.seller_id IS DISTINCT FROM reservation_seller_id THEN
+    RAISE EXCEPTION 'Order listing, buyer, and seller must match the reservation'
+      USING ERRCODE = '23514';
   END IF;
 
   IF NEW.agreed_item_price IS DISTINCT FROM reservation_item_price
@@ -180,6 +193,8 @@ CREATE UNIQUE INDEX payments_one_succeeded_per_order
   ON payments (order_id)
   WHERE status = 'succeeded';
 
+CREATE INDEX payments_order_id_idx ON payments (order_id);
+
 CREATE TABLE refunds (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   payment_id UUID NOT NULL REFERENCES payments(id),
@@ -206,10 +221,63 @@ CREATE TABLE refunds (
       trigger <> 'manual_admin'
       OR (
         requested_by IS NOT NULL
-        AND (approved_by IS NULL OR requested_by IS DISTINCT FROM approved_by)
+        AND (
+          status NOT IN ('approved', 'pending', 'succeeded', 'reversed')
+          OR (approved_by IS NOT NULL AND approved_by <> requested_by)
+        )
       )
     )
 );
+
+CREATE INDEX refunds_payment_id_idx ON refunds (payment_id);
+CREATE INDEX refunds_order_id_idx ON refunds (order_id);
+
+CREATE FUNCTION enforce_refund_payment_cap()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  payment_order_id UUID;
+  payment_amount NUMERIC(12,2);
+  existing_refund_amount NUMERIC;
+  new_refund_amount NUMERIC;
+BEGIN
+  SELECT order_id, amount
+    INTO payment_order_id, payment_amount
+    FROM payments
+    WHERE id = NEW.payment_id
+    FOR UPDATE;
+
+  IF NOT FOUND OR NEW.order_id IS DISTINCT FROM payment_order_id THEN
+    RAISE EXCEPTION 'Refund order must match its payment order'
+      USING ERRCODE = '23514';
+  END IF;
+
+  SELECT COALESCE(SUM(amount), 0)
+    INTO existing_refund_amount
+    FROM refunds
+    WHERE payment_id = NEW.payment_id
+      AND status IN ('requested', 'approved', 'pending', 'succeeded')
+      AND id IS DISTINCT FROM NEW.id;
+
+  new_refund_amount := CASE
+    WHEN NEW.status IN ('requested', 'approved', 'pending', 'succeeded') THEN NEW.amount
+    ELSE 0
+  END;
+
+  IF existing_refund_amount + new_refund_amount > payment_amount THEN
+    RAISE EXCEPTION 'Refund amount exceeds the payment amount'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER refunds_payment_cap_guard
+  BEFORE INSERT OR UPDATE ON refunds
+  FOR EACH ROW
+  EXECUTE FUNCTION enforce_refund_payment_cap();
 
 CREATE TABLE ledger_entries (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -222,6 +290,9 @@ CREATE TABLE ledger_entries (
   idempotency_key TEXT NOT NULL UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX ledger_entries_order_id_idx ON ledger_entries (order_id);
+CREATE INDEX ledger_entries_payment_id_idx ON ledger_entries (payment_id);
 
 CREATE FUNCTION reject_append_only_mutation()
 RETURNS TRIGGER
@@ -275,6 +346,8 @@ CREATE TABLE money_audit_events (
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX money_audit_events_order_id_idx ON money_audit_events (order_id);
 
 CREATE TRIGGER money_audit_events_no_update_delete
   BEFORE UPDATE OR DELETE ON money_audit_events

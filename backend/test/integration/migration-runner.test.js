@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { randomUUID } = require('crypto');
 const { Pool } = require('pg');
 const db = require('../../src/db.service');
 const { runMigrations } = require('../../db/migrate');
@@ -84,7 +85,9 @@ async function insertPhase4Fixture(client) {
     `INSERT INTO users (phone, password_hash, full_name)
      VALUES ('+923000000101', 'test-hash', 'Phase 4 Seller'),
             ('+923000000102', 'test-hash', 'Phase 4 Buyer'),
-            ('+923000000103', 'test-hash', 'Phase 4 Admin')
+            ('+923000000103', 'test-hash', 'Phase 4 Admin'),
+            ('+923000000104', 'test-hash', 'Phase 4 Alternate Buyer'),
+            ('+923000000105', 'test-hash', 'Phase 4 Alternate Seller')
      RETURNING id, phone`
   );
   const userIds = Object.fromEntries(users.rows.map((row) => [row.phone, row.id]));
@@ -104,8 +107,22 @@ async function insertPhase4Fixture(client) {
     sellerId: userIds['+923000000101'],
     buyerId: userIds['+923000000102'],
     adminId: userIds['+923000000103'],
+    alternateBuyerId: userIds['+923000000104'],
+    alternateSellerId: userIds['+923000000105'],
     listingId: listing.rows[0].id,
+    mainCategoryId: category.rows[0].id,
+    subcategoryId: subcategory.rows[0].id,
   };
+}
+
+async function insertListing(client, fixture, title = 'Phase 4 Additional Listing') {
+  const listing = await client.query(
+    `INSERT INTO listings (seller_id, main_category_id, sub_category_id, condition, title, asking_price)
+     VALUES ($1, $2, $3, 'brand_new', $4, 1000)
+     RETURNING id`,
+    [fixture.sellerId, fixture.mainCategoryId, fixture.subcategoryId, `${title} ${randomUUID()}`]
+  );
+  return listing.rows[0].id;
 }
 
 async function insertReservation(client, fixture, overrides = {}) {
@@ -143,6 +160,27 @@ async function insertReservation(client, fixture, overrides = {}) {
     ]
   );
   return result.rows[0].id;
+}
+
+async function insertOrderAndPayment(client, fixture, { paymentAmount = '110.00', paymentStatus = 'pending' } = {}) {
+  const listingId = await insertListing(client, fixture);
+  const reservationId = await insertReservation(client, { ...fixture, listingId });
+  const order = await client.query(
+    `INSERT INTO orders (
+       reservation_id, listing_id, buyer_id, seller_id, agreed_item_price,
+       delivery_fee, delivery_address, payment_method_preference
+     ) VALUES ($1, $2, $3, $4, 100, 10, '[reservation snapshot]', 'fixed_price_gateway')
+     RETURNING id`,
+    [reservationId, listingId, fixture.buyerId, fixture.sellerId]
+  );
+  const payment = await client.query(
+    `INSERT INTO payments (
+       order_id, provider, status, amount, currency, gateway_fee_currency, idempotency_key
+     ) VALUES ($1, 'test', $2, $3, 'PKR', 'PKR', $4)
+     RETURNING id`,
+    [order.rows[0].id, paymentStatus, paymentAmount, `payment-${randomUUID()}`]
+  );
+  return { listingId, reservationId, orderId: order.rows[0].id, paymentId: payment.rows[0].id };
 }
 
 async function insertOffer(client, fixture) {
@@ -532,15 +570,184 @@ describe('FR-79b PostgreSQL migration runner', () => {
         `INSERT INTO refunds (
            payment_id, order_id, trigger, amount, currency, status, idempotency_key,
            requested_by, approved_by
-         ) VALUES ($1, $2, 'manual_admin', 110, 'PKR', 'approved', 'refund-key-2', $3, $4)`,
+         ) VALUES ($1, $2, 'manual_admin', 10, 'PKR', 'approved', 'refund-key-2', $3, $4)`,
         [paymentId, orderId, fixture.adminId, fixture.buyerId]
       );
       await expect(client.query(
         `INSERT INTO refunds (
            payment_id, order_id, trigger, amount, currency, status, idempotency_key
-         ) VALUES ($1, $2, 'system_expiry', 110, 'PKR', 'pending', 'refund-key-2')`,
+         ) VALUES ($1, $2, 'system_expiry', 10, 'PKR', 'pending', 'refund-key-2')`,
         [paymentId, orderId]
       )).rejects.toMatchObject({ code: '23505' });
+    });
+  });
+
+  test('FR-63a: paid reservations block another reservation only for the same listing', async () => {
+    const schema = newSchemaName();
+    await resetPgBossSchema();
+    await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
+    await withSchemaClient(schema, async (client) => {
+      const fixture = await insertPhase4Fixture(client);
+      const paidReservationId = await insertReservation(client, fixture);
+      await client.query(
+        "UPDATE reservations SET status = 'paid', paid_at = now() WHERE id = $1",
+        [paidReservationId]
+      );
+
+      await expect(insertReservation(client, fixture)).rejects.toMatchObject({ code: '23505' });
+
+      const differentListingId = await insertListing(client, fixture, 'Paid reservation different listing');
+      const activeReservationId = await insertReservation(client, { ...fixture, listingId: differentListingId });
+      expect(activeReservationId).toBeDefined();
+    });
+  });
+
+  test('FR-63a: expired and released reservations do not block a new active reservation', async () => {
+    const schema = newSchemaName();
+    await resetPgBossSchema();
+    await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
+    await withSchemaClient(schema, async (client) => {
+      const fixture = await insertPhase4Fixture(client);
+      const expiredListingId = await insertListing(client, fixture, 'Expired reservation listing');
+      const expiredFixture = { ...fixture, listingId: expiredListingId };
+      await insertReservation(client, expiredFixture, { status: 'expired' });
+      expect(await insertReservation(client, expiredFixture)).toBeDefined();
+
+      const releasedListingId = await insertListing(client, fixture, 'Released reservation listing');
+      const releasedFixture = { ...fixture, listingId: releasedListingId };
+      await insertReservation(client, releasedFixture, { status: 'released' });
+      expect(await insertReservation(client, releasedFixture)).toBeDefined();
+    });
+  });
+
+  test('FR-63a: reservation-backed orders must match reservation listing, buyer, and seller', async () => {
+    const schema = newSchemaName();
+    await resetPgBossSchema();
+    await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
+    await withSchemaClient(schema, async (client) => {
+      const fixture = await insertPhase4Fixture(client);
+      const reservationId = await insertReservation(client, fixture);
+      const otherListingId = await insertListing(client, fixture, 'Mismatched order listing');
+      const mismatches = [
+        { listingId: otherListingId, buyerId: fixture.buyerId, sellerId: fixture.sellerId },
+        { listingId: fixture.listingId, buyerId: fixture.alternateBuyerId, sellerId: fixture.sellerId },
+        { listingId: fixture.listingId, buyerId: fixture.buyerId, sellerId: fixture.alternateSellerId },
+      ];
+
+      for (const mismatch of mismatches) {
+        await expect(client.query(
+          `INSERT INTO orders (
+             reservation_id, listing_id, buyer_id, seller_id, agreed_item_price,
+             delivery_fee, delivery_address, payment_method_preference
+           ) VALUES ($1, $2, $3, $4, 100, 10, '[reservation snapshot]', 'fixed_price_gateway')`,
+          [reservationId, mismatch.listingId, mismatch.buyerId, mismatch.sellerId]
+        )).rejects.toMatchObject({ code: '23514' });
+      }
+    });
+  });
+
+  test('SEC-39: manual refunds in approved states require a distinct approver', async () => {
+    const schema = newSchemaName();
+    await resetPgBossSchema();
+    await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
+    await withSchemaClient(schema, async (client) => {
+      const fixture = await insertPhase4Fixture(client);
+      const { orderId, paymentId } = await insertOrderAndPayment(client, fixture, { paymentAmount: '500.00' });
+
+      await expect(client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key, requested_by
+         ) VALUES ($1, $2, 'manual_admin', 50, 'PKR', 'succeeded', $3, $4)`,
+        [paymentId, orderId, `refund-${randomUUID()}`, fixture.adminId]
+      )).rejects.toMatchObject({ code: '23514' });
+
+      await expect(client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+           requested_by, approved_by
+         ) VALUES ($1, $2, 'manual_admin', 50, 'PKR', 'succeeded', $3, $4, $4)`,
+        [paymentId, orderId, `refund-${randomUUID()}`, fixture.adminId]
+      )).rejects.toMatchObject({ code: '23514' });
+
+      const accepted = await client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+           requested_by, approved_by
+         ) VALUES ($1, $2, 'manual_admin', 50, 'PKR', 'succeeded', $3, $4, $5)
+         RETURNING id`,
+        [paymentId, orderId, `refund-${randomUUID()}`, fixture.adminId, fixture.buyerId]
+      );
+      expect(accepted.rows[0].id).toBeDefined();
+    });
+  });
+
+  test('SEC-34: refunds cannot exceed or mismatch their payment amount', async () => {
+    const schema = newSchemaName();
+    await resetPgBossSchema();
+    await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
+    await withSchemaClient(schema, async (client) => {
+      const fixture = await insertPhase4Fixture(client);
+      const singleRefund = await insertOrderAndPayment(client, fixture, { paymentAmount: '100.00' });
+      await expect(client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'system_cancel', 101, 'PKR', 'pending', $3)`,
+        [singleRefund.paymentId, singleRefund.orderId, `refund-${randomUUID()}`]
+      )).rejects.toMatchObject({ code: '23514' });
+
+      const cumulativeRefund = await insertOrderAndPayment(client, fixture, { paymentAmount: '100.00' });
+      const firstRefund = await client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'system_cancel', 60, 'PKR', 'requested', $3)
+         RETURNING id`,
+        [cumulativeRefund.paymentId, cumulativeRefund.orderId, `refund-${randomUUID()}`]
+      );
+      await expect(client.query(
+        'UPDATE refunds SET amount = 101 WHERE id = $1',
+        [firstRefund.rows[0].id]
+      )).rejects.toMatchObject({ code: '23514' });
+      await expect(client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'system_cancel', 50, 'PKR', 'pending', $3)`,
+        [cumulativeRefund.paymentId, cumulativeRefund.orderId, `refund-${randomUUID()}`]
+      )).rejects.toMatchObject({ code: '23514' });
+
+      const failedRefund = await insertOrderAndPayment(client, fixture, { paymentAmount: '100.00' });
+      await client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'system_cancel', 100, 'PKR', 'failed', $3)`,
+        [failedRefund.paymentId, failedRefund.orderId, `refund-${randomUUID()}`]
+      );
+      const acceptedAfterFailure = await client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'system_cancel', 100, 'PKR', 'pending', $3)
+         RETURNING id`,
+        [failedRefund.paymentId, failedRefund.orderId, `refund-${randomUUID()}`]
+      );
+      expect(acceptedAfterFailure.rows[0].id).toBeDefined();
+
+      const otherOrder = await insertOrderAndPayment(client, fixture, { paymentAmount: '100.00' });
+      await expect(client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'system_cancel', 50, 'PKR', 'pending', $3)`,
+        [otherOrder.paymentId, cumulativeRefund.orderId, `refund-${randomUUID()}`]
+      )).rejects.toMatchObject({ code: '23514' });
+    });
+  });
+
+  test('FR-63a: paid reservations require paid_at', async () => {
+    const schema = newSchemaName();
+    await resetPgBossSchema();
+    await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
+    await withSchemaClient(schema, async (client) => {
+      const fixture = await insertPhase4Fixture(client);
+      await expect(insertReservation(client, fixture, { status: 'paid' }))
+        .rejects.toMatchObject({ code: '23514' });
     });
   });
 
