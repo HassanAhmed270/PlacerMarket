@@ -26,9 +26,10 @@ const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
 const pageSnapshots = require('./pageSnapshots.service');
+const availability = require('./availability.service');
 const { validateSeoChoice, buildSeoPayload, generateSeoRecommendation } = require('../lib/listingSeo');
 const { canonicalListingUrl } = require('../lib/listingUrls');
-const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
+const { NotFoundError, ValidationError, ForbiddenError, ConflictError } = require('../lib/errors');
 
 const MIN_LISTING_IMAGES = 3;
 const MAX_LISTING_IMAGES = 6;
@@ -603,6 +604,20 @@ async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
 }
 
 /** FR-20: sellers may immediately pause or resume a published listing they own. */
+async function assertNoReservationForSellerAction(client, listingId) {
+  const { rows } = await client.query(
+    `SELECT ${availability.reservationBlocksSellerActionSql('l')} AS blocked
+     FROM listings l WHERE l.id = $1`,
+    [listingId]
+  );
+  if (rows[0].blocked) {
+    const error = new ConflictError('This listing cannot be changed while it has a reservation.');
+    error.code = 'reservation_active';
+    throw error;
+  }
+}
+
+/** FR-20: sellers may immediately pause or resume a published listing they own. */
 async function setOwnListingPaused(listingId, sellerId, paused) {
   if (typeof paused !== 'boolean') throw new ValidationError('paused must be a boolean');
   return db.withTransaction(async (client) => {
@@ -612,6 +627,7 @@ async function setOwnListingPaused(listingId, sellerId, paused) {
     if (!['published', 'paused'].includes(rows[0].status)) {
       throw new ValidationError('Only a published or paused listing can be paused or resumed');
     }
+    if (paused) await assertNoReservationForSellerAction(client, listingId);
     const status = paused ? 'paused' : 'published';
     const { rows: updated } = await client.query(
       'UPDATE listings SET status = $1, search_version = search_version + 1, updated_at = now() WHERE id = $2 RETURNING *',
@@ -633,6 +649,7 @@ async function removeOwnListing(listingId, sellerId) {
     if (['removed', 'unpublished'].includes(rows[0].status)) {
       throw new ValidationError('This listing is already unavailable');
     }
+    await assertNoReservationForSellerAction(client, listingId);
     const { rows: updated } = await client.query(
       "UPDATE listings SET status = 'removed', search_version = search_version + 1, updated_at = now() WHERE id = $1 RETURNING *",
       [listingId]

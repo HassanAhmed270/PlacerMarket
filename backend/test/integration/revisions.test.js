@@ -8,6 +8,7 @@ jest.mock('../../src/middleware/rateLimit', () => ({
 const db = require('../../src/db.service');
 const request = require('supertest');
 const app = require('../../src/app');
+const notificationService = require('../../src/modules/notifications.service');
 const revisions = require('../../src/modules/listingRevisions.service');
 const discovery = require('../../src/modules/discovery.service');
 const negotiation = require('../../src/modules/negotiation.service');
@@ -22,7 +23,12 @@ describe('FR-73 moderated listing revisions', () => {
     fixture = await createFixture();
     await db.query("UPDATE listings SET status = 'published', published_at = now(), title = 'Public title', asking_price = 100, content_version = 1 WHERE id = $1", [fixture.listingId]);
   });
-  afterEach(async () => { if (fixture) await fixture.cleanup(); });
+  afterEach(async () => {
+    if (!fixture) return;
+    await db.query('DELETE FROM orders WHERE listing_id = $1', [fixture.listingId]);
+    await db.query('DELETE FROM reservations WHERE listing_id = $1', [fixture.listingId]);
+    await fixture.cleanup();
+  });
 
   test('FR-73e: a decrease at the 30 percent boundary applies immediately with one audit revision', async () => {
     const { rows: setting } = await db.query(
@@ -157,6 +163,66 @@ describe('FR-73 moderated listing revisions', () => {
     const { rows } = await db.query('SELECT title, asking_price, content_version FROM listings WHERE id = $1', [fixture.listingId]);
     expect(rows[0]).toMatchObject({ title: 'Approved title', asking_price: '101.00', content_version: '2' });
     await expect(revisions.approveListingRevision(revision.id, fixture.otherUserId)).rejects.toThrow('already been decided');
+  });
+
+  test('FR-73: active reservations keep revisions pending, notify once, and expose the seller dashboard signal', async () => {
+    const revision = await revisions.submitListingRevision(fixture.listingId, fixture.userId, {
+      askingPrice: 120,
+    });
+    await db.query(
+      `INSERT INTO reservations
+         (listing_id, buyer_id, seller_id, status, item_price_snapshot,
+          delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
+          recipient_phone, city_id, address_line1, expires_at)
+       VALUES ($1, $2, $3, 'active', 100, 0, 100, 'PKR', 'Fixture buyer',
+               '+15551234567', $4, '12 Fixture Street', now() + interval '1 minute')`,
+      [fixture.listingId, fixture.otherUserId, fixture.userId, fixture.cityId]
+    );
+    const { rows: beforeListingRows } = await db.query(
+      'SELECT title, asking_price, content_version FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    const firstHistory = await revisions.getSellerRevisionHistory(fixture.listingId, fixture.userId);
+    expect(firstHistory).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: revision.id, approvalBlockedByReservation: true }),
+    ]));
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await expect(revisions.approveListingRevision(revision.id, fixture.otherUserId))
+        .rejects.toMatchObject({ statusCode: 409, code: 'reservation_active' });
+    }
+    const { rows: revisionRows } = await db.query(
+      'SELECT status FROM listing_revisions WHERE id = $1', [revision.id]
+    );
+    expect(revisionRows[0].status).toBe('pending_review');
+    const { rows: unchangedListingRows } = await db.query(
+      'SELECT title, asking_price, content_version FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    expect(unchangedListingRows[0]).toEqual(beforeListingRows[0]);
+    const { rows: notificationJobs } = await db.query(
+      "SELECT id, data FROM pgboss.job WHERE name = 'notifications' AND data->>'eventName' = 'listing_revision.blocked_by_reservation' AND data->'payload'->>'revisionId' = $1",
+      [revision.id]
+    );
+    expect(notificationJobs).toHaveLength(1);
+    await db.withTransaction(async (client) => {
+      await notificationService.processNotificationJob(notificationJobs[0].data, {
+        executeSql: (query, params) => client.query(query, params),
+      });
+    });
+    const { rows: notifications } = await db.query(
+      "SELECT id FROM notifications WHERE user_id = $1 AND dedupe_key = $2",
+      [fixture.userId, `revision-blocked:${revision.id}`]
+    );
+    expect(notifications).toHaveLength(1);
+
+    await db.query(
+      "UPDATE reservations SET expires_at = now() - interval '1 second' WHERE listing_id = $1",
+      [fixture.listingId]
+    );
+    await expect(revisions.approveListingRevision(revision.id, fixture.otherUserId))
+      .resolves.toMatchObject({ status: 'approved' });
+    const { rows: approvedListingRows } = await db.query(
+      'SELECT asking_price FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    expect(approvedListingRows[0].asking_price).toBe('120.00');
   });
 
   test('FR-73e, FR-15a: approval rechecks email verification and active measurement definitions', async () => {

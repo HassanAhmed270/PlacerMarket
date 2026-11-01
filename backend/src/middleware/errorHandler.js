@@ -18,6 +18,7 @@ function errorHandler(err, req, res, next) {
     : statusCode === 413 ? 'Request body too large'
       : statusCode === 400 ? 'Invalid request body' : 'Internal server error';
   const body = { error: message };
+  if (statusCode < 500 && typeof err.code === 'string') body.code = err.code;
   if (statusCode >= 500) body.requestId = req.requestId;
   if (err.frCode) body.frCode = err.frCode; // NotYetSpecifiedError
   if (statusCode >= 500) {

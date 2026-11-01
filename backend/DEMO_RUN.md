@@ -136,6 +136,31 @@ approval is a local demonstration; payout guard checks do not send money.
 Checkout is only the “Checkout opens soon” placeholder. There is no live
 payment provider, real payout, external email sender, or identity provider.
 
+## Buy and reservation demo
+
+Start the local API with `PAYMENTS_ENABLED=1`, then sign in as a buyer and use
+the seeded `Lahore Demo` city. The city is enabled for delivery by
+`demo:seed`. Send the authenticated request to
+`POST /api/listings/{listingId}/buy` with a delivery address:
+
+```json
+{
+  "address": {
+    "recipientName": "Demo Buyer",
+    "phone": "+15551234567",
+    "cityId": "<Lahore Demo city ID>",
+    "addressLine1": "12 Demo Street"
+  }
+}
+```
+
+Expect HTTP 201 with `status: "reserved"`, an `orderId`, a `reservationId`,
+`expiresAt`, and server-calculated `itemPrice`, `deliveryFee`, and `total`.
+The listing is unavailable while its reservation is active; after expiry it
+becomes available again without requiring a worker run. This demonstrates
+reservation creation only: `payment` remains `null`, no payment provider is
+configured, and the browser checkout screen remains a placeholder.
+
 ## Successful demo transcript
 
 The following is the complete successful `npm.cmd run demo:smoke` output.

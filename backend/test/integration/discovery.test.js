@@ -1,6 +1,7 @@
 const request = require('supertest');
 const db = require('../../src/db.service');
 const app = require('../../src/app');
+const discovery = require('../../src/modules/discovery.service');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { createFixture } = require('./fixtures');
 
@@ -43,6 +44,29 @@ function authenticateAsFixtureSeller() {
 }
 
 describe('FR-22 through FR-27 public discovery', () => {
+  test('FR-63: discovery uses database time for new reservations and sold wins over reserved', async () => {
+    await db.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
+    const { rows } = await db.query(
+      `INSERT INTO reservations
+         (listing_id, buyer_id, seller_id, status, item_price_snapshot,
+          delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
+          recipient_phone, city_id, address_line1, expires_at)
+       VALUES ($1, $2, $3, 'active', 100, 0, 100, 'PKR', 'Fixture buyer',
+               '+15551234567', $4, '12 Fixture Street', now() + interval '1 minute')
+       RETURNING id`,
+      [fixture.listingId, fixture.otherUserId, fixture.userId, fixture.cityId]
+    );
+    try {
+      await expect(discovery.getListingStatus(fixture.listingId))
+        .resolves.toMatchObject({ status: 'reserved', reserved: true, available: false, sold: false });
+      await db.query('UPDATE reservations SET expires_at = now() - interval \'1 second\' WHERE id = $1', [rows[0].id]);
+      await expect(discovery.getListingStatus(fixture.listingId))
+        .resolves.toMatchObject({ status: 'available', reserved: false, available: true, sold: false });
+    } finally {
+      await db.query('DELETE FROM reservations WHERE id = $1', [rows[0].id]);
+    }
+  });
+
   test('FR-82c: canonical listing detail redirects an old slug and returns SEO recommendation and choice', async () => {
     process.env.PUBLIC_BASE_URL = 'https://market.example';
     await db.query(

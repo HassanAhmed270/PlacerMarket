@@ -6,6 +6,8 @@
 const db = require('../db.service');
 const settlement = require('./settlement.service');
 const users = require('./users.service');
+const listingSearch = require('./listingSearch.service');
+const pageSnapshots = require('./pageSnapshots.service');
 const { validatePhone } = require('../lib/authValidation');
 const {
   NotFoundError,
@@ -119,6 +121,17 @@ function validateExpectedPrice(value) {
   return price.replace(/^\+/, '');
 }
 
+async function bumpListingSearchVersion(client, listingId) {
+  const { rows } = await client.query(
+    `UPDATE listings SET search_version = search_version + 1, updated_at = now()
+     WHERE id = $1 RETURNING search_version`,
+    [listingId]
+  );
+  if (!rows[0]) throw new NotFoundError('listing', listingId);
+  await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
+  await pageSnapshots.enqueueListingSnapshotSync(client, listingId, rows[0].search_version);
+}
+
 /** FR-32a, FR-63, FR-63a: atomically reserve a published listing for one buyer. */
 async function buyListing(listingId, buyerId, input) {
   if (typeof listingId !== 'string' || !UUID.test(listingId)) {
@@ -183,6 +196,7 @@ async function buyListing(listingId, buyerId, input) {
            WHERE reservation_id = ANY($1::uuid[]) AND status IN ('reserved', 'payment_pending')`,
           [expiredRows.map((row) => row.id)]
         );
+        await bumpListingSearchVersion(client, listingId);
       }
 
       const { rows: liveRows } = await client.query(
@@ -243,6 +257,7 @@ async function buyListing(listingId, buyerId, input) {
          RETURNING id`,
         [reservation.id]
       );
+      await bumpListingSearchVersion(client, listingId);
 
       return {
         orderId: orderRows[0].id,

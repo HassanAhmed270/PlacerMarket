@@ -3,6 +3,7 @@ const queue = require('../../src/lib/queue');
 const listings = require('../../src/modules/listings.service');
 const revisions = require('../../src/modules/listingRevisions.service');
 const orders = require('../../src/modules/orders.service');
+const discovery = require('../../src/modules/discovery.service');
 const listingSearch = require('../../src/modules/listingSearch.service');
 const { createFixture } = require('./fixtures');
 
@@ -30,6 +31,7 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
     for (const fixture of fixtures) {
       await waitForListingSearchJobs(fixture.listingId);
       await db.query('DELETE FROM orders WHERE listing_id = $1', [fixture.listingId]);
+      await db.query('DELETE FROM reservations WHERE listing_id = $1', [fixture.listingId]);
       await db.query('DELETE FROM offers WHERE listing_id = $1', [fixture.listingId]);
       await db.query('DELETE FROM conversations WHERE listing_id = $1', [fixture.listingId]);
       await db.query('DELETE FROM search_synonyms WHERE created_by = $1 OR updated_by = $1', [fixture.otherUserId]);
@@ -144,6 +146,76 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
     expect(indexed.search_vector).toBeTruthy();
   });
 
+  test('FR-80a: search derives reservation expiry live and excludes sold reservations', async () => {
+    const fixture = await makePublishedFixture();
+    const { rows: reservationRows } = await db.query(
+      `INSERT INTO reservations
+         (listing_id, buyer_id, seller_id, status, item_price_snapshot,
+          delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
+          recipient_phone, city_id, address_line1, expires_at)
+       VALUES ($1, $2, $3, 'active', 100, 0, 100, 'PKR', 'Fixture buyer',
+               '+15551234567', $4, '12 Fixture Street', now() + interval '1 second')
+       RETURNING id`,
+      [fixture.listingId, fixture.otherUserId, fixture.userId, fixture.cityId]
+    );
+    const reservationId = reservationRows[0].id;
+    const { rows: versionRows } = await db.query(
+      'SELECT search_version FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    await listingSearch.processListingSearchJob({
+      listingId: fixture.listingId, searchVersion: String(versionRows[0].search_version),
+    });
+    expect(await indexedListing(fixture.listingId)).toMatchObject({
+      is_reserved: false,
+      is_sold: false,
+      reserved_until: expect.any(Date),
+    });
+    const query = `Fixture listing ${fixture.suffix}`;
+    expect((await discovery.searchListings({ q: query })).items)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.listingId, reserved: true })]));
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    expect((await discovery.searchListings({ q: query })).items)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.listingId, reserved: false })]));
+
+    await db.query(
+      "UPDATE reservations SET status = 'paid', paid_at = now() WHERE id = $1",
+      [reservationId]
+    );
+    await db.query(
+      `INSERT INTO orders
+         (accepted_offer_id, reservation_id, listing_id, buyer_id, seller_id,
+          agreed_item_price, delivery_fee, delivery_address, payment_method_preference, status)
+       VALUES (NULL, $1, $2, $3, $4, 100, 0, '[reservation snapshot]', 'fixed_price_gateway', 'funded')`,
+      [reservationId, fixture.listingId, fixture.otherUserId, fixture.userId]
+    );
+    await listingSearch.processListingSearchJob({
+      listingId: fixture.listingId, searchVersion: String(versionRows[0].search_version),
+    });
+    expect(await indexedListing(fixture.listingId)).toMatchObject({ is_sold: true });
+    expect((await discovery.searchListings({ q: query })).items)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.listingId })]));
+
+    await db.query("UPDATE orders SET status = 'cancelled' WHERE reservation_id = $1", [reservationId]);
+    await listingSearch.processListingSearchJob({
+      listingId: fixture.listingId, searchVersion: String(versionRows[0].search_version),
+    });
+    expect(await indexedListing(fixture.listingId)).toMatchObject({ is_sold: false });
+    expect((await discovery.searchListings({ q: query })).items)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.listingId, reserved: false })]));
+
+    await db.query(
+      "UPDATE reservations SET status = 'released', ended_at = now(), end_reason = 'released' WHERE id = $1",
+      [reservationId]
+    );
+    await listingSearch.processListingSearchJob({
+      listingId: fixture.listingId, searchVersion: String(versionRows[0].search_version),
+    });
+    expect(await indexedListing(fixture.listingId)).toMatchObject({ is_sold: false, reserved_until: null });
+    expect((await discovery.searchListings({ q: query })).items)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.listingId, reserved: false })]));
+  });
+
   test('pause, resume, unpublish, and seller removal keep the index aligned with publication', async () => {
     const fixture = await makePublishedFixture();
     expect(await indexedListing(fixture.listingId)).not.toBeNull();
@@ -174,7 +246,7 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
     expect(await indexedListing(removable.listingId)).toBeNull();
   });
 
-  test('checkout reservation is indexed and delivery marks the listing sold and removes it', async () => {
+  test('FR-80a: legacy delivery projects sold in the index without writing a sold listing status', async () => {
     const fixture = await makePublishedFixture();
     const { rows: conversationRows } = await db.query(
       `INSERT INTO conversations (listing_id, buyer_id, seller_id)
@@ -211,9 +283,11 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
 
     await orders.setOrderStatus(orderRows[0].id, 'delivered');
     await waitForListingSearchJobs(fixture.listingId);
-    expect(await indexedListing(fixture.listingId)).toBeNull();
+    expect(await indexedListing(fixture.listingId)).toMatchObject({ is_sold: true });
     const { rows: listingRows } = await db.query('SELECT status FROM listings WHERE id = $1', [fixture.listingId]);
-    expect(listingRows[0].status).toBe('sold');
+    expect(listingRows[0].status).toBe('published');
+    expect((await discovery.searchListings({ q: `Fixture listing ${fixture.suffix}` })).items)
+      .not.toEqual(expect.arrayContaining([expect.objectContaining({ id: fixture.listingId })]));
   });
 
   test('concurrent publish/unpublish uses version checks and the rebuild reflects live published rows', async () => {

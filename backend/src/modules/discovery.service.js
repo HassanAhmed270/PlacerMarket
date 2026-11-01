@@ -8,26 +8,21 @@ const users = require('./users.service');
 const orders = require('./orders.service');
 const listings = require('./listings.service');
 const catalog = require('./catalog.service');
-const { getSharedRedisClient } = require('../lib/redis');
 const { buildSeoPayload } = require('../lib/listingSeo');
 const { canonicalListingUrl, listingUrlKey, parseListingUrlKey } = require('../lib/listingUrls');
 const { ValidationError } = require('../lib/errors');
+const availability = require('./availability.service');
 
 const PUBLIC_LISTING_COLUMNS = `l.id, l.main_category_id, l.sub_category_id, l.condition,
   l.replica_disclosure, l.title, l.description, l.asking_price, l.fabric_material, l.brand, l.color,
   l.fabric_id, l.brand_id, l.color_id, l.slug, l.short_id,
   l.embellishment_detail, l.created_at, l.updated_at`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const RESERVED_ORDER_STATUSES = [
-  'bag', 'order_placed', 'seller_preparing', 'handed_to_delivery',
-  'out_for_delivery', 'delivered', 'held',
-];
 const SEARCH_DEFAULT_LIMIT = 20;
 const SEARCH_MAX_LIMIT = 50;
 const SEARCH_MAX_QUERY_LENGTH = 120;
 const SEARCH_MAX_TERMS = 5;
 const SEARCH_MAX_FILTERS = 8;
-const SEARCH_CACHE_TTL_SECONDS = 60;
 const SEARCH_SINGLE_FLIGHT = new Map();
 
 function pageValue(value, fallback, maximum) {
@@ -38,10 +33,9 @@ function pageValue(value, fallback, maximum) {
 
 function getLiveStatus(row) {
   if (row.status === 'removed' || row.status === 'unpublished') return 'removed';
-  if (row.status === 'sold') return 'sold';
+  if (row.status === 'sold' || row.has_sold) return 'sold';
   if (row.status === 'paused') return 'unavailable';
   if (row.status !== 'published') return null;
-  if (row.has_completed_order) return 'sold';
   return row.has_reservation ? 'reserved' : 'available';
 }
 
@@ -55,13 +49,6 @@ function liveStatusFields(liveStatus) {
     removed: liveStatus === 'removed',
     unavailable: liveStatus === 'unavailable',
   };
-}
-
-function orderExistsSql(statuses) {
-  return `EXISTS (
-    SELECT 1 FROM orders o
-     WHERE o.listing_id = l.id AND o.status = ANY($${statuses})
-  )`;
 }
 
 function encodeFavoritesCursor(row) {
@@ -143,11 +130,6 @@ function validateCatalogFilter(name, value) {
   }
 }
 
-function buildSearchCacheKey(params) {
-  const normalized = JSON.stringify(params);
-  return `search:v1:${crypto.createHash('sha256').update(normalized).digest('hex')}`;
-}
-
 async function withSingleFlight(key, work) {
   const existing = SEARCH_SINGLE_FLIGHT.get(key);
   if (existing) return existing;
@@ -155,27 +137,6 @@ async function withSingleFlight(key, work) {
   SEARCH_SINGLE_FLIGHT.set(key, promise);
   promise.finally(() => SEARCH_SINGLE_FLIGHT.delete(key));
   return promise;
-}
-
-async function readSearchCache(key) {
-  const client = getSharedRedisClient();
-  if (!client || typeof client.get !== 'function') return null;
-  try {
-    const value = await client.get(key);
-    return value ? JSON.parse(value) : null;
-  } catch {
-    return null;
-  }
-}
-
-async function writeSearchCache(key, payload) {
-  const client = getSharedRedisClient();
-  if (!client || typeof client.set !== 'function') return;
-  try {
-    await client.set(key, JSON.stringify(payload), { EX: SEARCH_CACHE_TTL_SECONDS });
-  } catch {
-    // Best-effort cache: ignore Redis write failures without blocking search results.
-  }
 }
 
 async function expandSearchTerms(terms) {
@@ -301,7 +262,7 @@ async function executeSearchQuery({ query, filters, sort, limit, cursor }) {
   const termSet = queryTerms.length ? await expandSearchTerms(queryTerms) : [];
   const baseTerms = termSet.length ? termSet : queryTerms;
   const filterClause = buildSearchClauses({ ...filterSet, queryTerms: baseTerms, sort: normalizedSort });
-  const where = [`${filterClause.clauses}`];
+  const where = [`${filterClause.clauses}`, 's.is_sold = FALSE'];
   const params = [...filterClause.params];
 
   let orderBy = 'ORDER BY s.published_at DESC, s.listing_id DESC';
@@ -344,10 +305,10 @@ async function executeSearchQuery({ query, filters, sort, limit, cursor }) {
             s.color,
             s.fabric,
             s.brand,
-            s.is_reserved AS reserved,
+            (s.reserved_until > now() OR s.is_reserved) AS reserved,
             s.published_at,
             s.search_text,
-            CASE WHEN s.is_reserved THEN 'reserved' ELSE 'available' END AS live_status,
+            CASE WHEN (s.reserved_until > now() OR s.is_reserved) THEN 'reserved' ELSE 'available' END AS live_status,
             l.status
      FROM listing_search s
      JOIN listings l ON l.id = s.listing_id
@@ -402,14 +363,8 @@ async function searchListings(keywordOrFilters, options = {}) {
   const limit = input.limit ?? SEARCH_DEFAULT_LIMIT;
   const cursor = input.cursor;
 
-  const searchKey = buildSearchCacheKey({ q, sort, limit, cursor, filters });
-  const cached = await readSearchCache(searchKey);
-  if (cached) return cached;
-
-  const run = async () => executeSearchQuery({ query: q, filters, sort, limit, cursor });
-  const result = await withSingleFlight(searchKey, run);
-  await writeSearchCache(searchKey, result);
-  return result;
+  const searchKey = JSON.stringify({ q, sort, limit, cursor, filters });
+  return withSingleFlight(searchKey, () => executeSearchQuery({ query: q, filters, sort, limit, cursor }));
 }
 
 /** FR-80c: return the current worker-built search suggestion vocabulary. */
@@ -452,7 +407,7 @@ async function filterListings({
     }
   }
   // cross-module read: users (owned by users.service.js), permitted for this multi-table public listing filter.
-  const clauses = ["l.status = 'published'"];
+  const clauses = ["l.status = 'published'", `NOT ${availability.soldPredicateSql('l')}`];
   const params = [];
   if (mainCategoryId) { params.push(mainCategoryId); clauses.push(`l.main_category_id = $${params.length}`); }
   if (subCategoryId) { params.push(subCategoryId); clauses.push(`l.sub_category_id = $${params.length}`); }
@@ -500,10 +455,10 @@ async function getListingDetail(listingKey) {
   const { rows } = await db.read(
     `SELECT ${PUBLIC_LISTING_COLUMNS}, l.seller_id, l.status,
             l.seo_choice, l.seo_title, l.seo_description,
-            ${orderExistsSql(2)} AS has_reservation,
-            EXISTS (SELECT 1 FROM orders o WHERE o.listing_id = l.id AND o.status = 'completed') AS has_completed_order
+            ${availability.reservedPredicateSql('l')} AS has_reservation,
+            ${availability.soldPredicateSql('l')} AS has_sold
        FROM listings l WHERE ${keyColumn} = $1`,
-    [keyValue, RESERVED_ORDER_STATUSES]
+    [keyValue]
   );
   if (!rows[0]) return null;
   const row = rows[0];
@@ -512,7 +467,7 @@ async function getListingDetail(listingKey) {
   if (liveStatus === 'removed') return { ...liveStatusFields(liveStatus) };
   const {
     seller_id: sellerId, status: _status, has_reservation: _hasReservation,
-    has_completed_order: _hasCompletedOrder, ...listing
+    has_sold: _hasSold, ...listing
   } = row;
   const [seller, images] = await Promise.all([
     getSellerPublicCard(sellerId),
@@ -544,15 +499,16 @@ async function getListingDetail(listingKey) {
 async function getSimilarListings(listing) {
   const { rows } = await db.read(
     `SELECT ${PUBLIC_LISTING_COLUMNS},
-            ${orderExistsSql(4)} AS has_reservation
+            ${availability.reservedPredicateSql('l')} AS has_reservation
        FROM listings l
       WHERE l.status = 'published'
+        AND NOT ${availability.soldPredicateSql('l')}
         AND l.sub_category_id = $1
         AND l.id <> $2
         AND l.asking_price BETWEEN $3::numeric * 0.7 AND $3::numeric * 1.3
       ORDER BY l.created_at DESC, l.id DESC
       LIMIT 6`,
-    [listing.sub_category_id, listing.id, listing.asking_price, RESERVED_ORDER_STATUSES]
+    [listing.sub_category_id, listing.id, listing.asking_price]
   );
   return rows.map((row) => {
     const { has_reservation: hasReservation, ...item } = row;
@@ -569,10 +525,10 @@ async function getListingStatus(listingId) {
   const keyValue = parsedKey.listingId || parsedKey.shortId;
   const { rows } = await db.read(
     `SELECT l.status,
-            ${orderExistsSql(2)} AS has_reservation,
-            EXISTS (SELECT 1 FROM orders o WHERE o.listing_id = l.id AND o.status = 'completed') AS has_completed_order
+            ${availability.reservedPredicateSql('l')} AS has_reservation,
+            ${availability.soldPredicateSql('l')} AS has_sold
        FROM listings l WHERE ${keyColumn} = $1`,
-    [keyValue, RESERVED_ORDER_STATUSES]
+    [keyValue]
   );
   if (!rows[0]) return null;
   const liveStatus = getLiveStatus(rows[0]);
@@ -598,33 +554,32 @@ async function getFavorites(userId, { limit = 20, cursor } = {}) {
   if (safeLimit < 1) throw new ValidationError('limit must be at least 1');
   const decodedCursor = decodeFavoritesCursor(cursor);
   const cursorClause = decodedCursor ? 'AND (f.created_at, f.listing_id) < ($2::timestamptz, $3::uuid)' : '';
-  const orderStatusParameter = decodedCursor ? 4 : 2;
-  const limitParameter = decodedCursor ? '$5' : '$3';
+  const limitParameter = decodedCursor ? '$4' : '$2';
   const { rows } = await db.read(
     `SELECT ${PUBLIC_LISTING_COLUMNS},
             to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS favorite_created_at,
             l.status,
-            ${orderExistsSql(orderStatusParameter)} AS has_reservation,
-            EXISTS (SELECT 1 FROM orders o WHERE o.listing_id = l.id AND o.status = 'completed') AS has_completed_order
+            ${availability.reservedPredicateSql('l')} AS has_reservation,
+            ${availability.soldPredicateSql('l')} AS has_sold
        FROM favorites f
        JOIN listings l ON l.id = f.listing_id
       WHERE f.user_id = $1 ${cursorClause}
       ORDER BY f.created_at DESC, f.listing_id DESC
       LIMIT ${limitParameter}`,
     decodedCursor
-      ? [userId, decodedCursor.createdAt, decodedCursor.listingId, RESERVED_ORDER_STATUSES, safeLimit + 1]
-      : [userId, RESERVED_ORDER_STATUSES, safeLimit + 1]
+      ? [userId, decodedCursor.createdAt, decodedCursor.listingId, safeLimit + 1]
+      : [userId, safeLimit + 1]
   );
   const hasMore = rows.length > safeLimit;
   const page = rows.slice(0, safeLimit).map((row) => {
     const {
-      status, has_reservation: hasReservation, has_completed_order: hasCompletedOrder,
+      status, has_reservation: hasReservation, has_sold: hasSold,
       ...item
     } = row;
     return {
       ...item,
       ...liveStatusFields(getLiveStatus({
-        status, has_reservation: hasReservation, has_completed_order: hasCompletedOrder,
+        status, has_reservation: hasReservation, has_sold: hasSold,
       })),
     };
   });

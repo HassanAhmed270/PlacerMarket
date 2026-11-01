@@ -25,14 +25,12 @@ const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
 const pageSnapshots = require('./pageSnapshots.service');
+const availability = require('./availability.service');
 const {
   NotFoundError, ValidationError, ForbiddenError, ConflictError, NotYetSpecifiedError,
 } = require('../lib/errors');
 
 const PRE_DISPATCH_STATUSES = new Set(['bag', 'order_placed', 'seller_preparing']); // FR-33a cutoff
-const RESERVED_ORDER_STATUSES = [
-  'order_placed', 'seller_preparing', 'handed_to_delivery', 'out_for_delivery',
-];
 
 async function lockListingForOrder(client, listingId) {
   const { rows } = await client.query(
@@ -41,22 +39,24 @@ async function lockListingForOrder(client, listingId) {
   return rows[0] || null;
 }
 
-async function hasReservedOrder(client, listingId) {
+async function readListingAvailability(client, listingId) {
   const { rows } = await client.query(
-    'SELECT EXISTS (SELECT 1 FROM orders WHERE listing_id = $1 AND status = ANY($2::order_status[])) AS reserved',
-    [listingId, RESERVED_ORDER_STATUSES]
+    `SELECT ${availability.reservedPredicateSql('l', availability.LEGACY_ORDER_SYNC_RESERVED_STATUSES)} AS is_reserved,
+            ${availability.soldPredicateSql('l')} AS is_sold
+     FROM listings l WHERE l.id = $1`,
+    [listingId]
   );
-  return rows[0].reserved;
+  return rows[0] || { is_reserved: false, is_sold: false };
 }
 
-async function syncListingAfterOrderTransition(client, listingId, listing, wasReserved, markSold = false) {
-  const isReserved = await hasReservedOrder(client, listingId);
-  const nextStatus = markSold && ['published', 'paused'].includes(listing.status) ? 'sold' : listing.status;
-  if (isReserved === wasReserved && nextStatus === listing.status) return;
+async function syncListingAfterOrderTransition(client, listingId, previousAvailability) {
+  const currentAvailability = await readListingAvailability(client, listingId);
+  if (currentAvailability.is_reserved === previousAvailability.is_reserved
+      && currentAvailability.is_sold === previousAvailability.is_sold) return;
   const { rows } = await client.query(
-    `UPDATE listings SET status = $1, search_version = search_version + 1, updated_at = now()
-     WHERE id = $2 RETURNING search_version`,
-    [nextStatus, listingId]
+    `UPDATE listings SET search_version = search_version + 1, updated_at = now()
+     WHERE id = $1 RETURNING search_version`,
+    [listingId]
   );
   if (rows[0]) {
     await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
@@ -114,7 +114,7 @@ async function checkoutFromBag(orderId, buyerId, { deliveryAddress, paymentMetho
     if (order.status !== 'bag') throw new ValidationError('Order is not in "bag" state');
 
     const listing = await lockListingForOrder(client, order.listing_id);
-    const wasReserved = listing ? await hasReservedOrder(client, order.listing_id) : false;
+    const previousAvailability = listing ? await readListingAvailability(client, order.listing_id) : null;
     const { rows: updated } = await client.query(
       `UPDATE orders
        SET delivery_address = $1, payment_method_preference = $2, delivery_fee = $3,
@@ -122,7 +122,7 @@ async function checkoutFromBag(orderId, buyerId, { deliveryAddress, paymentMetho
        WHERE id = $4 RETURNING *`,
       [deliveryAddress, paymentMethodPreference, deliveryFee, orderId]
     );
-    if (listing) await syncListingAfterOrderTransition(client, order.listing_id, listing, wasReserved);
+    if (listing) await syncListingAfterOrderTransition(client, order.listing_id, previousAvailability);
     await eventBus.emitAsync(events.ORDER_STATUS_CHANGED, { orderId, status: 'order_placed' }, { transaction: client });
     return updated[0];
   });
@@ -145,13 +145,13 @@ async function setOrderStatus(orderId, newStatus, meta = {}) {
     const order = existing[0];
     if (!order) throw new NotFoundError('order', orderId);
     const listing = await lockListingForOrder(client, order.listing_id);
-    const wasReserved = listing ? await hasReservedOrder(client, order.listing_id) : false;
+    const previousAvailability = listing ? await readListingAvailability(client, order.listing_id) : null;
     const { rows } = await client.query(
       `UPDATE orders SET status = $1 ${setClause} WHERE id = $2 RETURNING *`,
       [newStatus, orderId]
     );
     if (listing) {
-      await syncListingAfterOrderTransition(client, order.listing_id, listing, wasReserved, newStatus === 'delivered');
+      await syncListingAfterOrderTransition(client, order.listing_id, previousAvailability);
     }
     await eventBus.emitAsync(events.ORDER_STATUS_CHANGED, { orderId, status: newStatus, ...meta }, { transaction: client });
     return rows[0];
@@ -172,12 +172,12 @@ async function cancelOrder(orderId, buyerId) {
       throw new ValidationError('Order has already been handed to delivery — cancellation window has passed (FR-33a)');
     }
     const listing = await lockListingForOrder(client, order.listing_id);
-    const wasReserved = listing ? await hasReservedOrder(client, order.listing_id) : false;
+    const previousAvailability = listing ? await readListingAvailability(client, order.listing_id) : null;
     const { rows: cancelled } = await client.query(
       `UPDATE orders SET status = 'cancelled', cancelled_at = now() WHERE id = $1 RETURNING *`,
       [orderId]
     );
-    if (listing) await syncListingAfterOrderTransition(client, order.listing_id, listing, wasReserved);
+    if (listing) await syncListingAfterOrderTransition(client, order.listing_id, previousAvailability);
     return cancelled[0];
   });
   eventBus.emit(events.ORDER_CANCELLED, { orderId });

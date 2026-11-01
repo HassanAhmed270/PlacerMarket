@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const db = require('../db.service');
 const queue = require('../lib/queue');
 const { NotFoundError, ValidationError } = require('../lib/errors');
+const availability = require('./availability.service');
 
 const SEARCH_QUEUE = queue.QUEUES.LISTING_SEARCH;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -9,7 +10,7 @@ const SEARCH_COLUMNS = [
   'listing_id', 'search_version', 'title', 'description', 'main_category_id', 'main_category',
   'sub_category_id', 'sub_category', 'condition', 'asking_price', 'seller_city_id', 'seller_city',
   'color_id', 'color', 'fabric_id', 'fabric', 'brand_id', 'brand', 'embellishment_detail',
-  'published_at', 'is_reserved', 'search_text',
+  'published_at', 'is_reserved', 'reserved_until', 'is_sold', 'search_text',
 ];
 const SEARCH_UPDATE_COLUMNS = SEARCH_COLUMNS.filter((column) => column !== 'listing_id');
 const SEARCH_UPSERT_CLAUSE = `
@@ -25,11 +26,9 @@ const LISTING_SEARCH_SELECT = `
          l.color_id, l.color, l.fabric_id, l.fabric_material AS fabric,
          l.brand_id, l.brand, l.embellishment_detail,
          COALESCE(l.published_at, l.created_at) AS published_at,
-         EXISTS (
-           SELECT 1 FROM orders reserved_order
-           WHERE reserved_order.listing_id = l.id
-             AND reserved_order.status IN ('order_placed', 'seller_preparing')
-         ) AS is_reserved,
+         ${availability.legacySearchReservationExistsSql('l')} AS is_reserved,
+         ${availability.latestActiveReservationExpirySql('l')} AS reserved_until,
+         ${availability.soldPredicateSql('l')} AS is_sold,
          concat_ws(' ', l.title, l.description, main.name, sub.name, l.condition::text,
                    l.color, l.fabric_material, l.brand, l.embellishment_detail, city.name,
                    measurements.search_terms) AS search_text,

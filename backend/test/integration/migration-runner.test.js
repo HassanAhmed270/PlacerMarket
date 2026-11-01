@@ -34,6 +34,7 @@ fs.copyFileSync(
 );
 const phase4MigrationDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poshaak-phase4-migrations-'));
 const previousHeadMigrationDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poshaak-previous-head-migrations-'));
+const preAvailabilityMigrationDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poshaak-pre-availability-migrations-'));
 for (const migration of fs.readdirSync(migrationsDir).filter((file) => /^\d+_[a-z0-9_-]+\.sql$/i.test(file))) {
   const migrationNumber = Number(migration.match(/^\d+/)[0]);
   let contents = fs.readFileSync(path.join(migrationsDir, migration), 'utf8');
@@ -42,6 +43,9 @@ for (const migration of fs.readdirSync(migrationsDir).filter((file) => /^\d+_[a-
     contents = contents.replace('search_text gin_trgm_ops', 'search_text public.gin_trgm_ops');
   }
   fs.writeFileSync(path.join(phase4MigrationDir, migration), contents);
+  if (migrationNumber < 21) {
+    fs.writeFileSync(path.join(preAvailabilityMigrationDir, migration), contents);
+  }
   if (migrationNumber < 20) {
     fs.writeFileSync(path.join(previousHeadMigrationDir, migration), contents);
   }
@@ -206,6 +210,7 @@ afterAll(() => {
   fs.rmSync(authMigrationDir, { recursive: true, force: true });
   fs.rmSync(phase4MigrationDir, { recursive: true, force: true });
   fs.rmSync(previousHeadMigrationDir, { recursive: true, force: true });
+  fs.rmSync(preAvailabilityMigrationDir, { recursive: true, force: true });
 });
 
 describe('FR-79b PostgreSQL migration runner', () => {
@@ -346,7 +351,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     const schema = newSchemaName();
     await resetPgBossSchema();
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(19);
+    expect(applied).toHaveLength(20);
 
     const relations = await db.query(
       `SELECT table_name FROM information_schema.tables
@@ -370,6 +375,14 @@ describe('FR-79b PostgreSQL migration runner', () => {
       'reservation_id', 'funded_at', 'handover_deadline_at', 'handed_over_at',
       'courier_pickup_at', 'handover_recorded_at',
     ]));
+    const searchColumns = await db.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = $1 AND table_name = 'listing_search'`,
+      [schema]
+    );
+    expect(searchColumns.rows.map((row) => row.column_name)).toEqual(expect.arrayContaining([
+      'reserved_until', 'is_sold',
+    ]));
 
     const enumLabels = await db.query(
       `SELECT e.enumlabel
@@ -382,6 +395,44 @@ describe('FR-79b PostgreSQL migration runner', () => {
     expect(enumLabels.rows.map((row) => row.enumlabel)).toEqual(expect.arrayContaining([
       'reserved', 'payment_pending', 'funded',
     ]));
+  });
+
+  test('FR-80a: migration 021 preserves and backfills legacy listing_search rows', async () => {
+    const schema = newSchemaName();
+    await resetPgBossSchema();
+    await runMigrations({ databaseUrl, schema, migrationsDir: preAvailabilityMigrationDir });
+
+    let fixture;
+    await withSchemaClient(schema, async (client) => {
+      fixture = await insertPhase4Fixture(client);
+      await client.query("UPDATE listings SET status = 'published' WHERE id = $1", [fixture.listingId]);
+      await client.query(
+        `INSERT INTO listing_search
+           (listing_id, search_version, title, description, main_category_id, main_category,
+            sub_category_id, sub_category, condition, asking_price, published_at, is_reserved, search_text)
+         VALUES ($1, 1, 'Legacy indexed title', 'Legacy description', $2, 'Phase 4',
+                 $3, 'Phase 4', 'brand_new', 1000, now(), false, 'Legacy search content')`,
+        [fixture.listingId, fixture.mainCategoryId, fixture.subcategoryId]
+      );
+      await insertReservation(client, fixture);
+    });
+
+    await expect(runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir }))
+      .resolves.toHaveLength(1);
+    await withSchemaClient(schema, async (client) => {
+      const { rows } = await client.query(
+        'SELECT title, search_text, is_reserved, reserved_until, is_sold FROM listing_search WHERE listing_id = $1',
+        [fixture.listingId]
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        title: 'Legacy indexed title',
+        search_text: 'Legacy search content',
+        is_reserved: false,
+        is_sold: false,
+      });
+      expect(rows[0].reserved_until).toBeInstanceOf(Date);
+    });
   });
 
   test('FR-79b: migration preserves legacy COD rows and legacy order inserts', async () => {
@@ -419,7 +470,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(1);
+    expect(applied).toHaveLength(2);
 
     await withSchemaClient(schema, async (client) => {
       const preservedOrders = await client.query(

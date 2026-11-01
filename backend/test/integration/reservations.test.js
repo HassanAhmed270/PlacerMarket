@@ -2,8 +2,11 @@ const request = require('supertest');
 const db = require('../../src/db.service');
 const app = require('../../src/app');
 const orders = require('../../src/modules/orders.service');
+const listings = require('../../src/modules/listings.service');
+const revisions = require('../../src/modules/listingRevisions.service');
 const payments = require('../../src/modules/payments.service');
 const payout = require('../../src/modules/payout.service');
+const queue = require('../../src/lib/queue');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { createFixture } = require('./fixtures');
 
@@ -58,6 +61,9 @@ async function createListing({ status = 'published', askingPrice = '1250.50' } =
      VALUES ($1, $2, $3, 'brand_new', $4, $5, $6) RETURNING id`,
     [fixture.userId, fixture.categoryId, fixture.subCategoryId, `Reservation listing ${Date.now()}-${Math.random()}`, askingPrice, status]
   );
+  if (status === 'published') {
+    await db.query('UPDATE listings SET published_at = now() WHERE id = $1', [rows[0].id]);
+  }
   listingIds.push(rows[0].id);
   return rows[0].id;
 }
@@ -130,6 +136,16 @@ async function countOrdersAndReservations(listingId) {
     [listingId]
   );
   return rows[0];
+}
+
+async function queuedSearchVersions(listingId) {
+  const { rows } = await db.query(
+    `SELECT data->>'searchVersion' AS version
+     FROM pgboss.job
+     WHERE name = $1 AND data->>'listingId' = $2`,
+    [queue.QUEUES.LISTING_SEARCH, listingId]
+  );
+  return rows.map((row) => row.version);
 }
 
 beforeEach(async () => {
@@ -257,6 +273,11 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
       status: 'reserved',
       total_cod_amount: '1550.50',
     });
+    const { rows: listingRows } = await db.query(
+      'SELECT search_version FROM listings WHERE id = $1', [fixture.listingId]
+    );
+    expect(await queuedSearchVersions(fixture.listingId))
+      .toContain(String(listingRows[0].search_version));
     expect(Date.parse(response.body.expiresAt)).toBeGreaterThan(Date.now());
   });
 
@@ -398,7 +419,43 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     await buy(activeListingId, buyerId).expect(409);
   });
 
+  test('FR-20: sellers cannot pause or remove reserved or paid listings; admin take-down remains allowed', async () => {
+    await createReservation({ listingId: fixture.listingId });
+    await expect(listings.setOwnListingPaused(fixture.listingId, fixture.userId, true))
+      .rejects.toMatchObject({ statusCode: 409, code: 'reservation_active' });
+    await expect(listings.removeOwnListing(fixture.listingId, fixture.userId))
+      .rejects.toMatchObject({ statusCode: 409, code: 'reservation_active' });
+    const response = await request(app)
+      .post(`/api/listings/${fixture.listingId}/pause`)
+      .set('Authorization', authHeader(fixture.userId))
+      .expect(409);
+    expect(response.body.code).toBe('reservation_active');
+    const { rows } = await db.query('SELECT status FROM listings WHERE id = $1', [fixture.listingId]);
+    expect(rows[0].status).toBe('published');
+
+    const paidListingId = await createListing();
+    const paidReservationId = await createReservation({ listingId: paidListingId, status: 'paid' });
+    await createReservationOrder(paidReservationId, paidListingId, 'funded');
+    await expect(listings.setOwnListingPaused(paidListingId, fixture.userId, true))
+      .rejects.toMatchObject({ statusCode: 409, code: 'reservation_active' });
+    await expect(listings.removeOwnListing(paidListingId, fixture.userId))
+      .rejects.toMatchObject({ statusCode: 409, code: 'reservation_active' });
+
+    const adminListingId = await createListing();
+    const adminReservationId = await createReservation({ listingId: adminListingId });
+    await expect(listings.rejectOrUnpublishListing(adminListingId, {
+      reviewerId: fixture.otherUserId, reason: 'Admin take-down regression test',
+    })).resolves.toMatchObject({ status: 'unpublished' });
+    const { rows: adminReservationRows } = await db.query(
+      'SELECT status FROM reservations WHERE id = $1', [adminReservationId]
+    );
+    expect(adminReservationRows[0].status).toBe('active');
+  });
+
   test('FR-63a: Buy expires stale reservation state and cancels its unpaid order before reserving again', async () => {
+    const { rows: initialVersionRows } = await db.query(
+      'SELECT search_version FROM listings WHERE id = $1', [fixture.listingId]
+    );
     const oldReservationId = await createReservation({
       listingId: fixture.listingId,
       expires: "now() - interval '1 minute'",
@@ -419,6 +476,44 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     expect(oldOrderRows[0].status).toBe('cancelled');
     expect(oldOrderRows[0].cancelled_at).toBeInstanceOf(Date);
     expect(response.body.reservationId).not.toBe(oldReservationId);
+    expect(await queuedSearchVersions(fixture.listingId)).toEqual(expect.arrayContaining([
+      String(Number(initialVersionRows[0].search_version) + 1),
+      String(Number(initialVersionRows[0].search_version) + 2),
+    ]));
+  });
+
+  test('FR-73: six PostgreSQL approve/Buy races never reserve the pre-approval price after approval commits', async () => {
+    const races = await Promise.allSettled(Array.from({ length: 6 }, async () => {
+      const listingId = await createListing();
+      const raceBuyerId = await createBuyer();
+      const revision = await revisions.submitListingRevision(listingId, fixture.userId, {
+        askingPrice: '1500.00',
+      });
+      const [approval, purchase] = await Promise.allSettled([
+        revisions.approveListingRevision(revision.id, fixture.otherUserId),
+        buy(listingId, raceBuyerId),
+      ]);
+
+      expect(purchase.status).toBe('fulfilled');
+      expect(purchase.value.status).toBe(201);
+      const { rows: reservationRows } = await db.query(
+        'SELECT item_price_snapshot FROM reservations WHERE id = $1',
+        [purchase.value.body.reservationId]
+      );
+      if (approval.status === 'fulfilled') {
+        expect(reservationRows[0].item_price_snapshot).toBe('1500.00');
+        const { rows: listingRows } = await db.query(
+          'SELECT asking_price FROM listings WHERE id = $1', [listingId]
+        );
+        expect(listingRows[0].asking_price).toBe('1500.00');
+      } else {
+        expect(approval.reason).toMatchObject({ statusCode: 409, code: 'reservation_active' });
+        expect(reservationRows[0].item_price_snapshot).toBe('1250.50');
+      }
+      return approval.status;
+    }));
+    expect(races).toHaveLength(6);
+    expect(races.filter((race) => race.status === 'rejected').map((race) => race.reason.message)).toEqual([]);
   });
 
   test('FR-63c: only active unexpired reservations count against the buyer cap', async () => {

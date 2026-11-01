@@ -1,5 +1,6 @@
 const db = require('../db.service');
 const queue = require('../lib/queue');
+const availability = require('./availability.service');
 const { canonicalListingUrl, parseListingUrlKey } = require('../lib/listingUrls');
 const { generateSeoRecommendation } = require('../lib/listingSeo');
 
@@ -23,7 +24,7 @@ const PUBLIC_LISTING_QUERY = `
          l.sub_category_id, sub.name AS sub_category,
          seller.city_id, city.name AS city_name,
          cover.id AS image_id, cover.social_key,
-         EXISTS (SELECT 1 FROM orders o WHERE o.listing_id = l.id AND o.status IN ('delivered', 'held', 'completed')) AS completed_order
+         ${availability.soldPredicateSql('l')} AS completed_order
   FROM listings l
   JOIN main_categories main ON main.id = l.main_category_id
   JOIN sub_categories sub ON sub.id = l.sub_category_id

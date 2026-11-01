@@ -142,6 +142,14 @@ later): `disputes.service.fileDispute()` (reads `orders`),
 | 11. Notifications | FR-51 | `modules/notifications.service.js` | notifications |
 | 12. Administration | FR-52–59 | `modules/admin.service.js` | **none** — thin orchestration only |
 
+`modules/availability.service.js` owns no tables; it provides shared SQL
+fragments for live reservation/sold predicates, search-index projection, and
+seller-action guards. `reservations.service.js` enqueues listing-search and
+page-snapshot updates in the Buy transaction. `orders.service.js` keeps those
+projections synchronized for legacy order transitions. Listing revision
+approval and seller pause/removal call the shared predicates synchronously;
+blocked revision notices use the existing notification event/queue path.
+
 Root-level, not tied to one module:
 - `db.service.js` — the only file that imports `pg` directly; exports `read`, `write`, compatibility `query`, `many`, `one`, `withTransaction` (one planned, named exception: `lib/queue.js`, `rules.md` Section 11).
 - `lib/errors.js` — shared error classes (`NotYetSpecifiedError`, `NotImplementedError`, `NotFoundError`, `ValidationError`, `ForbiddenError`) — which to use when is in `rules.md` Section 4.
@@ -201,6 +209,14 @@ purpose so the schema works whichever way this eventually gets decided.
   the recipient user id(s) itself (see its `registerListeners()`). Its
   listeners are registered as a **require-time side effect** — `app.js`
   requires it explicitly so this isn't hidden.
+- **Availability projections (FR-63, FR-73, FR-80a)**:
+  `availability.service.js` is the shared source for active-reservation,
+  paid-reservation and legacy-order SQL predicates. `discovery.service.js`,
+  `listingSearch.service.js`, `pageSnapshots.service.js`, `orders.service.js`,
+  `listingRevisions.service.js` and `listings.service.js` reuse those fragments.
+  Buy and legacy order transitions increment `listings.search_version` and
+  transactionally enqueue the existing projection queues; expiry is read by
+  comparing indexed `reserved_until` with database `now()`.
 - **`admin.service.js`** owns no tables and should stay that way. If you
   catch yourself writing a SQL query in this file, the logic belongs in the
   owning module's service file instead — `admin.service.js` only calls

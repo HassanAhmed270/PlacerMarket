@@ -6,8 +6,9 @@ const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
 const pageSnapshots = require('./pageSnapshots.service');
+const availability = require('./availability.service');
 const { validateSeoChoice } = require('../lib/listingSeo');
-const { ValidationError, ForbiddenError, NotFoundError } = require('../lib/errors');
+const { ValidationError, ForbiddenError, NotFoundError, ConflictError } = require('../lib/errors');
 
 const FIELDS = Object.freeze({
   title: 'proposed_title', condition: 'proposed_condition', replicaDisclosure: 'proposed_replica_disclosure',
@@ -248,9 +249,14 @@ async function getSellerRevisionHistory(listingId, sellerId) {
   if (!owner[0]) throw new NotFoundError('listing', listingId);
   if (owner[0].seller_id !== sellerId) throw new ForbiddenError('Not your listing');
   const { rows } = await db.query(
-    `SELECT r.*, coalesce((SELECT jsonb_agg(jsonb_build_object('fieldDefId', m.field_def_id, 'value', m.value)
+    `SELECT r.*,
+            (r.status = 'pending_review' AND ${availability.activeReservationExistsSql('l')})
+              AS "approvalBlockedByReservation",
+            coalesce((SELECT jsonb_agg(jsonb_build_object('fieldDefId', m.field_def_id, 'value', m.value)
       ORDER BY m.field_def_id) FROM listing_revision_measurements m WHERE m.revision_id = r.id), '[]'::jsonb) AS measurements
-     FROM listing_revisions r WHERE r.listing_id = $1 ORDER BY r.submitted_at DESC, r.id DESC LIMIT 100`, [listingId]
+     FROM listing_revisions r
+     JOIN listings l ON l.id = r.listing_id
+     WHERE r.listing_id = $1 ORDER BY r.submitted_at DESC, r.id DESC LIMIT 100`, [listingId]
   );
   return rows;
 }
@@ -297,7 +303,7 @@ async function getListingRevision(revisionId) {
 /** FR-73, FR-73e: approve a revision atomically using listing-then-revision lock order. */
 async function approveListingRevision(revisionId, reviewerId) {
   assertEnabled();
-  return db.withTransaction(async (client) => {
+  const result = await db.withTransaction(async (client) => {
     const { rows: ref } = await client.query('SELECT listing_id FROM listing_revisions WHERE id = $1', [revisionId]);
     if (!ref[0]) throw new NotFoundError('listing revision', revisionId);
     const { rows: listings } = await client.query('SELECT * FROM listings WHERE id = $1 FOR UPDATE', [ref[0].listing_id]);
@@ -305,6 +311,16 @@ async function approveListingRevision(revisionId, reviewerId) {
     const { rows: revisions } = await client.query('SELECT * FROM listing_revisions WHERE id = $1 FOR UPDATE', [revisionId]);
     const revision = revisions[0];
     if (revision.status !== 'pending_review') throw conflict('This revision has already been decided');
+    const { rows: reservationRows } = await client.query(
+      `SELECT ${availability.activeReservationExistsSql('l')} AS active_reservation
+       FROM listings l WHERE l.id = $1`,
+      [listing.id]
+    );
+    if (reservationRows[0].active_reservation) {
+      await eventBus.emitAsync(events.LISTING_REVISION_BLOCKED_BY_RESERVATION,
+        { listingId: listing.id, revisionId }, { transaction: client });
+      return { blockedByReservation: true };
+    }
     if (Number(revision.base_content_version) !== Number(listing.content_version)) throw conflict('The listing changed after this revision was submitted; ask the seller to correct and resubmit');
     if (!listing.published_at || !['published', 'paused'].includes(listing.status)) throw conflict('This listing is no longer eligible for revision approval');
     const definitions = await catalog.getMeasurementFieldDefs(listing.sub_category_id, { includeInactive: true });
@@ -344,6 +360,12 @@ async function approveListingRevision(revisionId, reviewerId) {
       { listingId: listing.id, revisionId, decision: 'approved' }, { transaction: client });
     return decided[0];
   });
+  if (result.blockedByReservation) {
+    const error = new ConflictError('A revision cannot be approved while the listing is reserved.');
+    error.code = 'reservation_active';
+    throw error;
+  }
+  return result;
 }
 
 /** FR-73: reject a pending revision with a required reason while preserving public listing content. */

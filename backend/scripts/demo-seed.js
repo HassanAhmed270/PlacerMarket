@@ -88,6 +88,12 @@ async function main() {
       `INSERT INTO cities (name, is_active) VALUES ('Lahore Demo', true)
        ON CONFLICT (name) DO UPDATE SET is_active = true RETURNING id`
     );
+    await db.query(
+      `INSERT INTO supported_delivery_cities (city_id, active)
+       VALUES ($1, true)
+       ON CONFLICT (city_id) DO UPDATE SET active = true, updated_at = now()`,
+      [cityRows[0].id]
+    );
     const { rows: categoryRows } = await db.query(
       `INSERT INTO main_categories (name) VALUES ('Women Demo')
        ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`

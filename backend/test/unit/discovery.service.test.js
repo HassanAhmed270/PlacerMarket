@@ -36,7 +36,7 @@ describe('discovery.service public listings and favorites', () => {
   test('FR-25, FR-27a: published detail includes price, live status, and only rating and join date for seller', async () => {
     db.read.mockResolvedValueOnce({ rows: [{
       id: listingId, seller_id: sellerId, status: 'published', title: 'Public item',
-      asking_price: '125.00', has_reservation: false, has_completed_order: false,
+      asking_price: '125.00', has_reservation: false, has_sold: false,
       main_category_id: 'category-id', sub_category_id: 'subcategory-id',
     }] });
     users.getSellerProfile.mockResolvedValue({
@@ -63,7 +63,7 @@ describe('discovery.service public listings and favorites', () => {
     db.read
       .mockResolvedValueOnce({ rows: [{
         id: listingId, seller_id: sellerId, status: 'sold', title: 'Sold item', asking_price: '100.00',
-        sub_category_id: 'subcategory-id', has_reservation: false, has_completed_order: false,
+        sub_category_id: 'subcategory-id', has_reservation: false, has_sold: false,
       }] })
       .mockResolvedValueOnce({ rows: [{ id: 'similar-1', has_reservation: true }] });
     users.getSellerProfile.mockResolvedValue({ created_at: new Date() });
@@ -76,17 +76,17 @@ describe('discovery.service public listings and favorites', () => {
     expect(db.read.mock.calls[1][0]).toContain('l.asking_price BETWEEN $3::numeric * 0.7 AND $3::numeric * 1.3');
     expect(db.read.mock.calls[1][0]).toContain('ORDER BY l.created_at DESC, l.id DESC');
     expect(db.read.mock.calls[1][0]).toContain('LIMIT 6');
-    expect(db.read.mock.calls[1][1]).toEqual(['subcategory-id', listingId, '100.00', expect.any(Array)]);
+    expect(db.read.mock.calls[1][1]).toEqual(['subcategory-id', listingId, '100.00']);
   });
 
   test('FR-26: add/remove are safe to repeat and keyset pages use a deterministic cursor', async () => {
     db.read
       .mockResolvedValueOnce({ rows: [{
-        id: listingId, status: 'published', has_reservation: false, has_completed_order: false,
+        id: listingId, status: 'published', has_reservation: false, has_sold: false,
         favorite_created_at: '2025-03-01T00:00:00.000123Z', title: 'Saved item',
       }, {
         id: '123e4567-e89b-42d3-a456-426614174002', status: 'published',
-        has_reservation: false, has_completed_order: false,
+        has_reservation: false, has_sold: false,
         favorite_created_at: '2025-03-01T00:00:00.000122Z', title: 'Next saved item',
       }] })
       .mockResolvedValueOnce({ rows: [] });
@@ -111,7 +111,7 @@ describe('discovery.service public listings and favorites', () => {
     await discovery.getFavorites(sellerId, { limit: 1, cursor: firstPage.nextCursor });
     expect(db.read.mock.calls[1][0]).toContain('(f.created_at, f.listing_id) < ($2::timestamptz, $3::uuid)');
     expect(db.read.mock.calls[1][0]).toContain('ORDER BY f.created_at DESC, f.listing_id DESC');
-    expect(db.read.mock.calls[1][1]).toEqual([sellerId, '2025-03-01T00:00:00.000123Z', listingId, expect.any(Array), 2]);
+    expect(db.read.mock.calls[1][1]).toEqual([sellerId, '2025-03-01T00:00:00.000123Z', listingId, 2]);
   });
 
   test('FR-26: malformed cursors and zero-size pages are rejected', async () => {
