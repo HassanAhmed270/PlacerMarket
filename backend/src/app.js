@@ -34,6 +34,9 @@ app.use((req, _res, next) => {
   next();
 });
 app.use('/api', routes);
+if (process.env.NODE_ENV !== 'production' && process.env.PAYMENT_GATEWAY_PROVIDER === 'fake') {
+  app.use('/fake-gateway', require('./routes/fakeGateway.routes'));
+}
 if (process.env.NODE_ENV !== 'production' && process.env.DEV_FAKES === '1') {
   app.use('/api/dev', require('./routes/dev.routes'));
 }
