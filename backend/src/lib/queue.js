@@ -16,11 +16,13 @@ const QUEUES = Object.freeze({
   EMAIL: 'email',
   LISTING_SEARCH: 'listing-search',
   PAGE_SNAPSHOTS: 'page-snapshots',
+  PAYMENT_WEBHOOKS: 'payment-webhooks',
   DEAD_LETTER: 'dead-letter',
 });
 
 const QUEUE_NAMES = Object.freeze([
-  QUEUES.MONEY, QUEUES.MEDIA, QUEUES.NOTIFICATIONS, QUEUES.EMAIL, QUEUES.LISTING_SEARCH, QUEUES.PAGE_SNAPSHOTS,
+  QUEUES.MONEY, QUEUES.MEDIA, QUEUES.NOTIFICATIONS, QUEUES.EMAIL, QUEUES.LISTING_SEARCH,
+  QUEUES.PAGE_SNAPSHOTS, QUEUES.PAYMENT_WEBHOOKS,
 ]);
 const WORKER_CONCURRENCY = Object.freeze({
   [QUEUES.MONEY]: 1,
@@ -29,6 +31,7 @@ const WORKER_CONCURRENCY = Object.freeze({
   [QUEUES.EMAIL]: 2,
   [QUEUES.LISTING_SEARCH]: 4,
   [QUEUES.PAGE_SNAPSHOTS]: 1,
+  [QUEUES.PAYMENT_WEBHOOKS]: 2,
 });
 
 const RETRY_LIMIT = 5;
@@ -56,6 +59,58 @@ function asQueueDatabase(transaction) {
     throw new TypeError('Queue transactions require a pg client or transaction client.');
   }
   return { executeSql: (text, values = []) => client.query(text, values) };
+}
+
+function createPaymentWebhookInboxReceiver({ withTransaction, enqueueJob, resolvePaymentId }) {
+  if (typeof withTransaction !== 'function' || typeof enqueueJob !== 'function' ||
+      typeof resolvePaymentId !== 'function') {
+    throw new TypeError('Payment webhook inbox requires transaction, enqueue, and payment lookup functions.');
+  }
+
+  return async function receivePaymentWebhook({
+    provider, event, rawBody, signatureMetadata, timestampMetadata, verifiedAt,
+  }) {
+    if (typeof provider !== 'string' || !provider ||
+        !event || typeof event.eventId !== 'string' || !event.eventId ||
+        typeof event.type !== 'string' || !event.type ||
+        typeof event.providerPaymentRef !== 'string' || !event.providerPaymentRef ||
+        !Buffer.isBuffer(rawBody)) {
+      throw new TypeError('Verified payment webhook receipt is invalid.');
+    }
+
+    return withTransaction(async (client) => {
+      const paymentId = await resolvePaymentId(client, {
+        provider,
+        providerPaymentRef: event.providerPaymentRef,
+      });
+      const { rows } = await client.query(
+        `INSERT INTO webhook_inbox
+           (provider, provider_event_id, event_type, raw_body, signature_metadata,
+            timestamp_metadata, verified_at, status, payment_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, 'received', $8)
+         ON CONFLICT (provider, provider_event_id) DO NOTHING
+         RETURNING id`,
+        [
+          provider,
+          event.eventId,
+          event.type,
+          rawBody,
+          JSON.stringify(signatureMetadata),
+          JSON.stringify(timestampMetadata),
+          verifiedAt,
+          paymentId,
+        ]
+      );
+      if (!rows[0]) return false;
+
+      await enqueueJob(QUEUES.PAYMENT_WEBHOOKS, { webhookInboxId: rows[0].id }, {
+        idempotencyKey: `${provider}:${event.eventId}`,
+        orderingKey: rows[0].id,
+        transaction: client,
+      });
+      return true;
+    });
+  };
 }
 
 function validatePayload(data) {
@@ -257,6 +312,7 @@ module.exports = {
   QUEUES,
   WORKER_CONCURRENCY,
   createQueueClient,
+  createPaymentWebhookInboxReceiver,
   deterministicJobId,
   asQueueDatabase,
   startProducer,

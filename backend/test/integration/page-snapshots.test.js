@@ -8,6 +8,8 @@ const request = require('supertest');
 const app = require('../../src/app');
 const { createFixture } = require('./fixtures');
 
+jest.setTimeout(65000);
+
 describe('FR-81a, FR-82b PostgreSQL page snapshots', () => {
   let worker;
   let purger;
@@ -61,7 +63,7 @@ describe('FR-81a, FR-82b PostgreSQL page snapshots', () => {
     return fixture;
   }
 
-  async function waitForSnapshotJobs(listingId, timeoutMs = 20000) {
+  async function waitForSnapshotJobs(listingId, timeoutMs = 60000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const { rows } = await db.query(

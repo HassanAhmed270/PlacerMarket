@@ -154,6 +154,7 @@ function createConfiguredRateLimiters(env = process.env, clientProvider = getSha
       clientProvider,
     }),
     security: make('security', 'SECURITY'),
+    payments: make('payments', 'PAYMENTS'),
     emailCodeIpSignal: createSoftChallengeSignal({
       threshold: limits.EMAIL_CODE_IP_SOFT_HOURLY_SIGNAL,
       windowSeconds: limits.EMAIL_CODE_IP_SIGNAL_WINDOW_SECONDS,

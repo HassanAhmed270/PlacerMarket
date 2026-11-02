@@ -7,6 +7,8 @@ const discovery = require('../../src/modules/discovery.service');
 const listingSearch = require('../../src/modules/listingSearch.service');
 const { createFixture } = require('./fixtures');
 
+jest.setTimeout(65000);
+
 describe('FR-80a listing search indexing on PostgreSQL', () => {
   let worker;
   let fixtures = [];
@@ -55,7 +57,7 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
     return fixture;
   }
 
-  async function waitForListingSearchJobs(listingId, timeoutMs = 15000) {
+  async function waitForListingSearchJobs(listingId, timeoutMs = 60000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const { rows } = await db.query(

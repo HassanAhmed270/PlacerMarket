@@ -29,7 +29,7 @@ function paymentError(error, res, next) {
 function createEscrowPaymentsRouter({
   service = escrowPayments,
   auth = requireAuth,
-  limiter = limiters.security,
+  limiter = limiters.payments,
 } = {}) {
   const router = Router();
   const noStore = (_req, res, next) => {

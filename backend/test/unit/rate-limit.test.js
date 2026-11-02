@@ -1,4 +1,9 @@
-const { createRateLimiter, createAccountRateLimiter, createSoftChallengeSignal } = require('../../src/middleware/rateLimit');
+const {
+  createRateLimiter,
+  createAccountRateLimiter,
+  createSoftChallengeSignal,
+  createConfiguredRateLimiters,
+} = require('../../src/middleware/rateLimit');
 const { getSecurityLimits } = require('../../src/config');
 
 function counterRedis() {
@@ -85,6 +90,8 @@ describe('account messaging rate limits', () => {
       RATE_LIMIT_CONVERSATION_DAILY_MAX: 30,
       RATE_LIMIT_MESSAGE_MINUTE_MAX: 10,
       RATE_LIMIT_MESSAGE_HOURLY_MAX: 60,
+      RATE_LIMIT_PAYMENTS_ACCOUNT_MAX: 20,
+      RATE_LIMIT_PAYMENTS_IP_MAX: 60,
     });
   });
 
@@ -126,5 +133,41 @@ describe('account messaging rate limits', () => {
     await unavailable({ user: { id: 'account-1' } }, response(), (error) => { redisError = error; });
     expect(redisError.statusCode).toBe(503);
     expect(redisError.message).not.toContain('private redis failure');
+  });
+});
+
+describe('payment request limits', () => {
+  test('payment limits enforce account and IP caps independently from security limits', async () => {
+    const redis = counterRedis();
+    const limiters = createConfiguredRateLimiters({
+      RATE_LIMIT_PAYMENTS_IP_MAX: '2',
+      RATE_LIMIT_PAYMENTS_ACCOUNT_MAX: '1',
+      RATE_LIMIT_SECURITY_IP_MAX: '2',
+      RATE_LIMIT_SECURITY_ACCOUNT_MAX: '1',
+    }, () => redis);
+
+    async function statusFor(limiter, req) {
+      const res = response();
+      await limiter(req, res, (error) => { if (error) throw error; });
+      return res.statusCode;
+    }
+
+    const firstRequest = { ip: '203.0.113.80', user: { id: 'buyer-1' } };
+    expect(await statusFor(limiters.security, firstRequest)).toBe(200);
+    expect(await statusFor(limiters.payments, firstRequest)).toBe(200);
+    expect(await statusFor(limiters.payments, firstRequest)).toBe(429);
+    expect(await statusFor(limiters.payments, {
+      ip: '203.0.113.81',
+      user: { id: 'buyer-2' },
+    })).toBe(200);
+    expect(await statusFor(limiters.payments, {
+      ip: '203.0.113.81',
+      user: { id: 'buyer-3' },
+    })).toBe(200);
+    expect(await statusFor(limiters.payments, {
+      ip: '203.0.113.81',
+      user: { id: 'buyer-4' },
+    })).toBe(429);
+    expect(await statusFor(limiters.security, firstRequest)).toBe(429);
   });
 });

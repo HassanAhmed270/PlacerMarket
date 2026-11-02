@@ -203,6 +203,11 @@ purpose so the schema works whichever way this eventually gets decided.
   setting). Instead `payout.service.releasePayout()` reads the resolved
   amount via `disputes.service.getResolvedResolutionAmount()` and passes it
   into `settlement.service.calculateSettlement()` as a parameter.
+- **FR-77b payment webhook inbox**: `escrowPayments.service.js` resolves the
+  optional payment link through its payments-table ownership, then delegates
+  the webhook inbox insert and transactional `payment-webhooks` enqueue to
+  `lib/queue.js`. Stage 5a records verified events only; the worker consumer
+  remains for Stage 5b.
 - **Notifications**: every other service just does
   `eventBus.emit(events.SOMETHING, payload)` and knows nothing about
   `notifications.service.js`. That file is the only listener; it resolves

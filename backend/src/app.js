@@ -14,6 +14,7 @@ const { createCorsMiddleware } = require('./middleware/cors');
 const { cachePolicy, pageCachePolicy } = require('./middleware/cachePolicy');
 const pageSnapshots = require('./modules/pageSnapshots.service');
 const { NotFoundError } = require('./lib/errors');
+const paymentWebhooks = require('./routes/paymentWebhooks.routes');
 
 // modules/notifications.service.js registers its eventBus listeners as a
 // side effect of being required — requiring the routes above already pulls
@@ -26,6 +27,7 @@ app.use(requestId);
 app.use(helmet());
 app.use('/api', cachePolicy);
 app.use(createCorsMiddleware());
+app.use('/api/webhooks/payments', paymentWebhooks);
 app.use(express.json({ limit: '1mb' }));
 app.use('/api/media/listings', express.raw({ type: 'application/octet-stream', limit: '5mb' }));
 // Express 5 leaves req.body undefined when a request has no body (Express 4 gave {}); handlers read req.body.x.

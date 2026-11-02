@@ -41,7 +41,7 @@ function fakeBossFactory() {
 }
 
 describe('FR-77, FR-77a: PostgreSQL queue configuration and durable enqueue API', () => {
-  test('FR-77a: queue setup disables runtime migrations and configures retry, FIFO, and dead-letter behavior', async () => {
+  test('FR-77a, FR-77b: queue setup applies retry, FIFO, and dead-letter behavior to the webhook queue', async () => {
     const fakeBoss = fakeBossFactory();
     const client = queue.createQueueClient({ connectionString: 'postgres://local/db', PgBossClass: fakeBoss });
     await client.start();
@@ -49,11 +49,13 @@ describe('FR-77, FR-77a: PostgreSQL queue configuration and durable enqueue API'
     expect(client.boss.constructorOptions).toEqual(expect.objectContaining({
       schema: 'pgboss', migrate: false, createSchema: false, useListenNotify: false, schedule: false,
     }));
-    expect(client.boss.queues).toHaveLength(7);
+    expect(client.boss.queues).toHaveLength(8);
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.EMAIL).options.retryLimit).toBe(5);
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.LISTING_SEARCH).options.retryLimit).toBe(5);
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.PAGE_SNAPSHOTS).options)
       .toEqual(expect.objectContaining({ policy: 'key_strict_fifo', retryLimit: 5 }));
+    expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.PAYMENT_WEBHOOKS).options)
+      .toEqual(expect.objectContaining({ policy: 'key_strict_fifo', retryLimit: 5, retryBackoff: true }));
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.NOTIFICATIONS).options)
       .toEqual(expect.objectContaining({ policy: 'key_strict_fifo', retryLimit: 5, retryBackoff: true, heartbeatSeconds: 60, deadLetter: queue.QUEUES.DEAD_LETTER, notify: true }));
     await client.stop();

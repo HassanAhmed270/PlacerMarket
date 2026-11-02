@@ -4,6 +4,7 @@
  */
 
 const db = require('../db.service');
+const queue = require('../lib/queue');
 const paymentGateway = require('../lib/adapters/paymentGateway');
 const {
   ConflictError,
@@ -17,6 +18,23 @@ const {
 } = paymentGateway;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function resolveWebhookPaymentId(client, { provider, providerPaymentRef }) {
+  const { rows } = await client.query(
+    `SELECT id
+     FROM payments
+     WHERE provider = $1 AND provider_payment_id = $2
+     LIMIT 1`,
+    [provider, providerPaymentRef]
+  );
+  return rows[0]?.id || null;
+}
+
+const receivePaymentWebhook = queue.createPaymentWebhookInboxReceiver({
+  withTransaction: db.withTransaction,
+  enqueueJob: queue.enqueue,
+  resolvePaymentId: resolveWebhookPaymentId,
+});
 
 function validateOrderId(orderId) {
   if (typeof orderId !== 'string' || !UUID.test(orderId)) {
@@ -239,4 +257,9 @@ async function getPaymentStatus({ orderId, buyerId }) {
   };
 }
 
-module.exports = { createOrReusePayment, getPaymentStatus };
+/** FR-77b: store verified payment events and enqueue processing atomically in PostgreSQL. */
+async function receiveVerifiedPaymentWebhook(receipt) {
+  return receivePaymentWebhook(receipt);
+}
+
+module.exports = { createOrReusePayment, getPaymentStatus, receiveVerifiedPaymentWebhook };
