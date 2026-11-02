@@ -10,6 +10,7 @@ const { keyProviderFromEnv } = require('./src/lib/keyProvider');
 const media = require('./src/modules/media.service');
 const listingSearch = require('./src/modules/listingSearch.service');
 const pageSnapshots = require('./src/modules/pageSnapshots.service');
+const escrowPayments = require('./src/modules/escrowPayments.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 
 async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
@@ -70,6 +71,13 @@ async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
           await selectedCdnPurger.purge(result.paths);
         }
       }
+    );
+    await queue.boss.work(
+      QUEUES.PAYMENT_WEBHOOKS,
+      { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.PAYMENT_WEBHOOKS], transactional: false },
+      async ([job]) => escrowPayments.processPaymentWebhookJob({
+        webhookInboxId: job.data?.webhookInboxId,
+      })
     );
     // eslint-disable-next-line no-console
     console.log('Poshaak worker started');

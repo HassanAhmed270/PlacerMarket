@@ -128,18 +128,26 @@ not part of the transcript.
 and counters, API authorization and CORS, worker processing, local-disk image
 uploads and generated variants, listing search indexing, favorites and
 messaging persistence, revision approval, snapshots, sitemap output, and
-route cache headers.
+route cache headers. The fake payment flow also uses a verified signed webhook,
+the PostgreSQL inbox/worker, and stored order/payment state.
 
 **FAKED or development-only behavior:** email delivery uses the development
 outbox; seller identity verification is manually simulated; the demo Admin
 approval is a local demonstration; payout guard checks do not send money.
-Checkout is only the “Checkout opens soon” placeholder. There is no live
-payment provider, real payout, external email sender, or identity provider.
+Checkout uses the local fake gateway only. There is no live payment provider,
+real payout, gateway refund execution, external email sender, or identity provider.
 
 ## Buy and reservation demo
 
-Start the local API with `PAYMENTS_ENABLED=1`, then sign in as a buyer and use
-the seeded `Lahore Demo` city. The city is enabled for delivery by
+Use only a disposable local demo database for payment demonstrations. Set
+`PAYMENTS_ENABLED=1`, `PAYMENT_GATEWAY_PROVIDER=fake`,
+`PUBLIC_BASE_URL=http://127.0.0.1:5173`, and
+`PAYMENT_WEBHOOK_URL=http://127.0.0.1:3000/api/webhooks/payments/fake` for
+both the API and worker. Generate a fresh `FAKE_GATEWAY_WEBHOOK_SECRET` locally
+with at least 32 random bytes, use the same value in both processes, and keep it
+only in ignored local configuration such as `backend/.demo.env`. Never commit
+or paste the secret. Start PostgreSQL, Redis, the API, and worker as described
+above. Sign in as a buyer and use the seeded `Lahore Demo` city, enabled by
 `demo:seed`. Send the authenticated request to
 `POST /api/listings/{listingId}/buy` with a delivery address:
 
@@ -156,14 +164,45 @@ the seeded `Lahore Demo` city. The city is enabled for delivery by
 
 Expect HTTP 201 with `status: "reserved"`, an `orderId`, a `reservationId`,
 `expiresAt`, and server-calculated `itemPrice`, `deliveryFee`, and `total`.
-The listing is unavailable while its reservation is active; after expiry it
-becomes available again without requiring a worker run. This demonstrates
-reservation creation only: `payment` remains `null`, no payment provider is
-configured, and the browser checkout screen remains a placeholder.
+Then follow the successful fake-checkout path:
+
+1. POST `/api/orders/{orderId}/payment`; the response contains the stored
+   amount/currency and a local fake checkout URL.
+2. Open that URL and select **Pay (success)**. The fake checkout signs the
+   event and POSTs it to the real `/api/webhooks/payments/fake` route.
+3. The route stores the verified event and durable worker job before returning
+   success. Poll `GET /api/orders/{orderId}/payment` until `orderStatus` is
+   `funded` and payment status is `succeeded`.
+
+The failure-and-retry path is: choose **Fail** on the fake checkout, poll until
+the payment status is `failed`, POST `/api/orders/{orderId}/payment` again to
+create a new attempt with a new idempotency key, then use its checkout URL and
+select **Pay (success)**.
+
+For the late-payment path, first create the reservation and payment intent,
+then—only in the disposable demo database—set that reservation's `expires_at`
+into the past before selecting **Pay (success)**. The worker records the
+payment as `late`, leaves the reservation/order unfunded, and creates one
+full-amount `system_expiry` refund request for stage 6a. No gateway refund is
+executed yet.
+
+Use the `reservationId` returned by Buy in this disposable-database SQL:
+
+```sql
+UPDATE reservations
+SET expires_at = now() - INTERVAL '1 minute'
+WHERE id = '<reservationId>' AND status = 'active';
+```
+
+Returning to the site or polling payment status never funds an order; only the
+verified webhook worker does. The listing becomes sold after successful
+funding and the transactional listing-search/page-snapshot sync jobs run.
 
 ## Successful demo transcript
 
-The following is the complete successful `npm.cmd run demo:smoke` output.
+The following is a historical Phase 3 smoke transcript; its checkout-placeholder
+line predates the fake hosted-checkout and webhook-worker flow documented above.
+It is the complete successful `npm.cmd run demo:smoke` output from that run.
 The generated seller email is non-secret; credentials, verification codes,
 backup codes, and storage keys are omitted by the smoke.
 

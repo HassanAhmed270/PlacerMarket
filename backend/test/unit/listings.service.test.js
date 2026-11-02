@@ -25,6 +25,8 @@ const db = require('../../src/db.service');
 const catalog = require('../../src/modules/catalog.service');
 const users = require('../../src/modules/users.service');
 const listings = require('../../src/modules/listings.service');
+const listingSearch = require('../../src/modules/listingSearch.service');
+const pageSnapshots = require('../../src/modules/pageSnapshots.service');
 const { ForbiddenError } = require('../../src/lib/errors');
 
 describe('listings.service submission flow', () => {
@@ -64,6 +66,23 @@ describe('listings.service submission flow', () => {
     await expect(listings.submitListingForReview('listing-1', 'seller-1'))
       .rejects.toBeInstanceOf(ForbiddenError);
     expect(db.withTransaction).not.toHaveBeenCalled();
+  });
+
+  test('FR-61: availability changes bump the listing version and enqueue both projections in the transaction', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [{ search_version: 12 }] }),
+    };
+    const searchSync = jest.spyOn(listingSearch, 'enqueueListingSearchSync').mockResolvedValue();
+    const snapshotSync = jest.spyOn(pageSnapshots, 'enqueueListingSnapshotSync').mockResolvedValue();
+
+    await expect(listings.syncAvailabilityProjection(client, 'listing-1')).resolves.toBe(12);
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining('search_version = search_version + 1'),
+      ['listing-1']
+    );
+    expect(searchSync).toHaveBeenCalledWith(client, 'listing-1', 12);
+    expect(snapshotSync).toHaveBeenCalledWith(client, 'listing-1', 12);
+    jest.restoreAllMocks();
   });
 
   test('FR-15: createListing validates a non-empty bounded title and rejects retired fields', async () => {

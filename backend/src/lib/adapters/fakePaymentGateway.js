@@ -104,11 +104,11 @@ function createFakePaymentGateway({
         throw new PaymentWebhookVerificationError('invalid_event');
       }
       if (!event || typeof event !== 'object' || Array.isArray(event) ||
-          !['payment.succeeded', 'payment.failed'].includes(event.type) ||
+          typeof event.type !== 'string' || !event.type ||
           typeof event.eventId !== 'string' || !event.eventId ||
           typeof event.providerPaymentRef !== 'string' || !event.providerPaymentRef ||
           typeof event.amount !== 'string' || !/^\d{1,10}\.\d{2}$/.test(event.amount) ||
-          event.currency !== 'PKR') {
+          typeof event.currency !== 'string' || !event.currency) {
         throw new PaymentWebhookVerificationError('invalid_event');
       }
       return {

@@ -158,6 +158,31 @@ async function setOrderStatus(orderId, newStatus, meta = {}) {
   });
 }
 
+/** FR-61, FR-62: fund a reservation-backed order using database time. */
+async function fundReservationOrder(client, orderId, reservationId) {
+  const { rows } = await client.query(
+    `UPDATE orders
+     SET status = 'funded', funded_at = now(),
+         handover_deadline_at = now() + INTERVAL '72 hours'
+     WHERE id = $1 AND reservation_id = $2 AND status = 'payment_pending'
+     RETURNING id`,
+    [orderId, reservationId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-61, FR-62: cancel an unpaid reservation-backed order after expiry. */
+async function cancelUnpaidReservationOrder(client, orderId) {
+  const { rows } = await client.query(
+    `UPDATE orders
+     SET status = 'cancelled', cancelled_at = now()
+     WHERE id = $1 AND status IN ('reserved', 'payment_pending')
+     RETURNING id`,
+    [orderId]
+  );
+  return rows[0] || null;
+}
+
 /** FR-33a: free cancellation before handover to delivery partner, no fee. */
 async function cancelOrder(orderId, buyerId) {
   const updated = await db.withTransaction(async (client) => {
@@ -258,6 +283,8 @@ module.exports = {
   createBagEntry,
   checkoutFromBag,
   setOrderStatus,
+  fundReservationOrder,
+  cancelUnpaidReservationOrder,
   cancelOrder,
   assertLegacyOrder,
   handleRefusalAtDoor,

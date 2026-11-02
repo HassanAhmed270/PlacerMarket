@@ -132,6 +132,30 @@ async function bumpListingSearchVersion(client, listingId) {
   await pageSnapshots.enqueueListingSnapshotSync(client, listingId, rows[0].search_version);
 }
 
+/** FR-61, FR-62: mark a still-valid reservation paid using database time. */
+async function markReservationPaid(client, reservationId) {
+  const { rows } = await client.query(
+    `UPDATE reservations
+     SET status = 'paid', paid_at = now()
+     WHERE id = $1 AND status = 'active' AND expires_at > now()
+     RETURNING id`,
+    [reservationId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-61, FR-62: expire an active reservation after a confirmed late payment. */
+async function expireReservationForLatePayment(client, reservationId) {
+  const { rows } = await client.query(
+    `UPDATE reservations
+     SET status = 'expired', ended_at = now(), end_reason = 'expired'
+     WHERE id = $1 AND status = 'active' AND expires_at <= now()
+     RETURNING id`,
+    [reservationId]
+  );
+  return rows[0] || null;
+}
+
 /** FR-32a, FR-63, FR-63a: atomically reserve a published listing for one buyer. */
 async function buyListing(listingId, buyerId, input) {
   if (typeof listingId !== 'string' || !UUID.test(listingId)) {
@@ -282,4 +306,10 @@ async function buyListing(listingId, buyerId, input) {
   }
 }
 
-module.exports = { validateAddress, parseReservationSettings, buyListing };
+module.exports = {
+  validateAddress,
+  parseReservationSettings,
+  markReservationPaid,
+  expireReservationForLatePayment,
+  buyListing,
+};

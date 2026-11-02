@@ -109,6 +109,21 @@ async function assertApprovedSeller(sellerId) {
   }
 }
 
+/** FR-61, FR-62: enqueue search and page snapshots after availability changes. */
+async function syncAvailabilityProjection(client, listingId) {
+  const { rows } = await client.query(
+    `UPDATE listings
+     SET search_version = search_version + 1, updated_at = now()
+     WHERE id = $1
+     RETURNING search_version`,
+    [listingId]
+  );
+  if (!rows[0]) throw new NotFoundError('listing', listingId);
+  await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
+  await pageSnapshots.enqueueListingSnapshotSync(client, listingId, rows[0].search_version);
+  return rows[0].search_version;
+}
+
 // ---- FR-15, FR-15a, FR-15b: create listing ----
 
 /** FR-15, FR-15a, FR-15b: approved sellers create a draft listing. */
@@ -667,6 +682,7 @@ async function resubmitListing(listingId, sellerId) {
 }
 
 module.exports = {
+  syncAvailabilityProjection,
   createListing,
   getSeoRecommendation,
   getReferencedMeasurementDefinitionIds,

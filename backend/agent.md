@@ -133,8 +133,10 @@ later): `disputes.service.fileDispute()` (reads `orders`),
 | 3. Listings | FR-15–21a | `modules/listings.service.js` | listings, listing_measurements, listing_images, listing_evidence |
 | 4. Search & Discovery | FR-22–27b | `modules/discovery.service.js` | favorites (listing images read via listings.service.js; reviews read via orders.service.js) |
 | 5. Messaging & Negotiation | FR-28–31 | `modules/negotiation.service.js` | conversations, messages, offers |
-| 6. Orders | FR-32–34 | `modules/orders.service.js` | orders, reviews (FR-27b lives here, not in module 4) |
-| 7. Payments & COD (escrow replaces COD; the code is still COD-shaped) | FR-36–38 | `modules/payments.service.js` | cod_collections (also owns FR-41a reconciliation — see correction note below) |
+| 6. Orders | FR-32–34, FR-61–62 owner operations | `modules/orders.service.js` | orders, reviews (FR-27b lives here, not in module 4) |
+| 6a. Reservations | FR-32a, FR-61–63a | `modules/reservations.service.js` | reservations, supported_delivery_cities |
+| 7. Payments & COD (legacy COD paths) | FR-36–38 | `modules/payments.service.js` | cod_collections (also owns FR-41a reconciliation — see correction note below) |
+| 7a. Escrow Payments | FR-60a, FR-61–62, FR-77b | `modules/escrowPayments.service.js` | payments, webhook_inbox, refunds, ledger_entries, money_audit_events |
 | 8. Delivery | FR-39–42 | `modules/delivery.service.js` | delivery_partners, delivery_status_log |
 | 9. Disputes, Returns & Refunds | FR-43–45a | `modules/disputes.service.js` | disputes, dispute_evidence |
 | 9a. Payout Hold Window | FR-45b–45h | `modules/payout.service.js` | payout_holds |
@@ -206,8 +208,10 @@ purpose so the schema works whichever way this eventually gets decided.
 - **FR-77b payment webhook inbox**: `escrowPayments.service.js` resolves the
   optional payment link through its payments-table ownership, then delegates
   the webhook inbox insert and transactional `payment-webhooks` enqueue to
-  `lib/queue.js`. Stage 5a records verified events only; the worker consumer
-  remains for Stage 5b.
+  `lib/queue.js`. Its Stage 5b consumer owns webhook, capture-ledger,
+  system-expiry-refund-request and money-audit writes; it calls exported
+  transaction-aware operations in `orders.service.js`,
+  `reservations.service.js` and `listings.service.js` for those owners' tables.
 - **Notifications**: every other service just does
   `eventBus.emit(events.SOMETHING, payload)` and knows nothing about
   `notifications.service.js`. That file is the only listener; it resolves

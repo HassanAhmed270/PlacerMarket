@@ -62,3 +62,33 @@ describe('FR-63 reservation setting parsing', () => {
     expect(() => parseReservationSettings(values)).toThrow();
   });
 });
+
+describe('FR-61 reservation funding transitions', () => {
+  test('FR-61: paid transition is conditional on an active unexpired reservation', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [{ id: 'reservation-1' }] }),
+    };
+    const reservations = require('../../src/modules/reservations.service');
+
+    await expect(reservations.markReservationPaid(client, 'reservation-1'))
+      .resolves.toEqual({ id: 'reservation-1' });
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'active' AND expires_at > now()"),
+      ['reservation-1']
+    );
+  });
+
+  test('FR-61: late-payment expiry only transitions an active already-expired reservation', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [{ id: 'reservation-1' }] }),
+    };
+    const reservations = require('../../src/modules/reservations.service');
+
+    await expect(reservations.expireReservationForLatePayment(client, 'reservation-1'))
+      .resolves.toEqual({ id: 'reservation-1' });
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("status = 'active' AND expires_at <= now()"),
+      ['reservation-1']
+    );
+  });
+});
