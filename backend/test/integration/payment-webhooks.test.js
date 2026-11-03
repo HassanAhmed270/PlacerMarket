@@ -561,6 +561,185 @@ describe('FR-61, FR-62 payment webhook worker', () => {
     expect(noGatewayCalls[0].total).toBe(0);
   });
 
+  test('FR-61, FR-62: a second capture after funding is refunded without changing the funded order', async () => {
+    const firstInboxId = await receiveSignedEvent(await createSignedEvent());
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: firstInboxId });
+
+    const { rows: beforeRows } = await db.query(
+      `SELECT p.status AS payment_status, p.succeeded_at, o.status AS order_status,
+              o.funded_at, r.status AS reservation_status, r.paid_at
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id
+       JOIN reservations r ON r.id = o.reservation_id
+       WHERE p.id = $1`,
+      [paymentId]
+    );
+    const providerPaymentRef = `second-payment-${crypto.randomUUID()}`;
+    const { rows: secondPaymentRows } = await db.query(
+      `INSERT INTO payments
+         (order_id, provider, provider_payment_id, provider_reference, status,
+          amount, currency, gateway_fee_currency, idempotency_key)
+       SELECT order_id, provider, $2, $2, 'pending',
+              amount, currency, gateway_fee_currency, $3
+       FROM payments
+       WHERE id = $1
+       RETURNING id, amount::text AS amount, currency`,
+      [paymentId, providerPaymentRef, `test:${crypto.randomUUID()}`]
+    );
+    expect(secondPaymentRows).toHaveLength(1);
+
+    const signed = await createSignedEvent(undefined, {
+      providerPaymentRef,
+      amount: secondPaymentRows[0].amount,
+      currency: secondPaymentRows[0].currency,
+    });
+    const inboxId = await receiveSignedEvent(signed);
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId });
+
+    const { rows: afterRows } = await db.query(
+      `SELECT p.status AS payment_status, p.succeeded_at, o.status AS order_status,
+              o.funded_at, r.status AS reservation_status, r.paid_at
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id
+       JOIN reservations r ON r.id = o.reservation_id
+       WHERE p.id = $1`,
+      [paymentId]
+    );
+    expect(afterRows).toEqual(beforeRows);
+
+    const { rows: capturedRows } = await db.query(
+      `SELECT p.status, p.succeeded_at,
+              (SELECT count(*)::int FROM ledger_entries
+               WHERE payment_id = p.id AND entry_type = 'capture') AS ledger_count,
+              (SELECT idempotency_key FROM ledger_entries
+               WHERE payment_id = p.id AND entry_type = 'capture') AS ledger_key,
+              (SELECT count(*)::int FROM money_audit_events WHERE payment_id = p.id) AS audit_count
+       FROM payments p
+       WHERE p.id = $1`,
+      [secondPaymentRows[0].id]
+    );
+    expect(capturedRows[0]).toMatchObject({
+      status: 'late',
+      ledger_count: 1,
+      ledger_key: `capture:${secondPaymentRows[0].id}`,
+      audit_count: 1,
+    });
+    expect(capturedRows[0].succeeded_at).toBeInstanceOf(Date);
+
+    const { rows: refundRows } = await db.query(
+      `SELECT refund.trigger, refund.status, refund.amount::text AS refund_amount,
+              payment.amount::text AS payment_amount, refund.idempotency_key, refund.reason
+       FROM refunds refund
+       JOIN payments payment ON payment.id = refund.payment_id
+       WHERE refund.payment_id = $1`,
+      [secondPaymentRows[0].id]
+    );
+    expect(refundRows).toEqual([{
+      trigger: 'system_expiry',
+      status: 'requested',
+      refund_amount: secondPaymentRows[0].amount,
+      payment_amount: secondPaymentRows[0].amount,
+      idempotency_key: `refund:${secondPaymentRows[0].id}:late`,
+      reason: 'Duplicate capture: reservation already paid',
+    }]);
+    expect(Number(refundRows[0].refund_amount)).toBeLessThanOrEqual(
+      Number(refundRows[0].payment_amount)
+    );
+
+    const { rows: auditRows } = await db.query(
+      `SELECT actor_id, action, reason
+       FROM money_audit_events
+       WHERE payment_id = $1`,
+      [secondPaymentRows[0].id]
+    );
+    expect(auditRows).toEqual([{
+      actor_id: null,
+      action: 'late_payment_refund_requested',
+      reason: 'duplicate_capture',
+    }]);
+    const { rows: inboxRows } = await db.query(
+      'SELECT status FROM webhook_inbox WHERE id = $1',
+      [inboxId]
+    );
+    expect(inboxRows).toEqual([{ status: 'processed' }]);
+  });
+
+  test('FR-61, FR-62: an active unexpired reservation with an ineligible order is refunded without funding', async () => {
+    await db.query(
+      "UPDATE orders SET status = 'reserved' WHERE id = $1",
+      [orderId]
+    );
+    const inboxId = await receiveSignedEvent(await createSignedEvent());
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId });
+
+    const { rows: stateRows } = await db.query(
+      `SELECT p.status AS payment_status, p.succeeded_at,
+              o.status AS order_status, r.status AS reservation_status,
+              r.expires_at > now() AS reservation_unexpired,
+              (SELECT count(*)::int FROM ledger_entries WHERE payment_id = p.id) AS ledger_count,
+              (SELECT count(*)::int FROM refunds WHERE payment_id = p.id) AS refund_count
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id
+       JOIN reservations r ON r.id = o.reservation_id
+       WHERE p.id = $1`,
+      [paymentId]
+    );
+    expect(stateRows[0]).toMatchObject({
+      payment_status: 'late',
+      order_status: 'reserved',
+      reservation_status: 'active',
+      reservation_unexpired: true,
+      ledger_count: 1,
+      refund_count: 1,
+    });
+    expect(stateRows[0].succeeded_at).toBeInstanceOf(Date);
+    const { rows: refundRows } = await db.query(
+      `SELECT trigger, status, amount::text AS amount, idempotency_key, reason
+       FROM refunds WHERE payment_id = $1`,
+      [paymentId]
+    );
+    expect(refundRows).toEqual([{
+      trigger: 'system_expiry',
+      status: 'requested',
+      amount: '1550.50',
+      idempotency_key: `refund:${paymentId}:late`,
+      reason: 'Ineligible capture: order not awaiting payment',
+    }]);
+  });
+
+  test('FR-61, FR-62: parallel processing and replay create one refund, capture, and audit for an ineligible capture', async () => {
+    await db.query(
+      "UPDATE orders SET status = 'reserved' WHERE id = $1",
+      [orderId]
+    );
+    const signed = await createSignedEvent();
+    const inboxId = await receiveSignedEvent(signed);
+    await Promise.all(Array.from({ length: 5 }, () =>
+      escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId })));
+
+    await postWebhook(signed.rawBody, signed.headers).expect(200, { received: true });
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId });
+
+    const { rows } = await db.query(
+      `SELECT
+         (SELECT count(*)::int FROM ledger_entries
+          WHERE payment_id = $1 AND entry_type = 'capture') AS ledger_count,
+         (SELECT count(*)::int FROM refunds
+          WHERE payment_id = $1) AS refund_count,
+         (SELECT count(*)::int FROM refunds
+          WHERE payment_id = $1 AND idempotency_key = $2) AS refund_key_count,
+         (SELECT count(*)::int FROM money_audit_events
+          WHERE payment_id = $1) AS audit_count`,
+      [paymentId, `refund:${paymentId}:late`]
+    );
+    expect(rows[0]).toEqual({
+      ledger_count: 1,
+      refund_count: 1,
+      refund_key_count: 1,
+      audit_count: 1,
+    });
+  });
+
   test.each([
     ['amount mismatch', { amount: '1550.51' }, 'amount_mismatch'],
     ['currency mismatch', { currency: 'USD' }, 'currency_mismatch'],

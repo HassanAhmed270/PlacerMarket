@@ -458,18 +458,25 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
         return recordWebhookProcessed(client, inbox);
       }
 
+      if (!order) {
+        return recordWebhookFailure(client, inbox, payment, 'unmatched_payment');
+      }
       const isLate = !reservation ||
         ['expired', 'released', 'cancelled'].includes(reservation.status) ||
         (reservation.status === 'active' && !reservation.is_unexpired) ||
         order?.status === 'cancelled';
-      if (!order || !reservation) {
-        return recordWebhookFailure(client, inbox, payment, 'unmatched_payment');
-      }
-      if (!isLate &&
-          (reservation.status !== 'active' || !reservation.is_unexpired ||
-           order.status !== 'payment_pending')) {
-        return recordWebhookProcessed(client, inbox);
-      }
+      const isFunding = reservation?.status === 'active' &&
+        reservation.is_unexpired && order.status === 'payment_pending';
+      const refundReason = isLate
+        ? 'Late payment after reservation ended'
+        : reservation?.status === 'paid'
+          ? 'Duplicate capture: reservation already paid'
+          : 'Ineligible capture: order not awaiting payment';
+      const auditReason = isLate
+        ? 'late_payment'
+        : reservation?.status === 'paid'
+          ? 'duplicate_capture'
+          : 'ineligible_capture';
 
       await client.query(
         `UPDATE payments
@@ -478,7 +485,7 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
              provider_reference = COALESCE(provider_reference, $3),
              updated_at = now()
          WHERE id = $1`,
-        [payment.id, isLate ? 'late' : 'succeeded', event.providerPaymentRef]
+        [payment.id, isFunding ? 'succeeded' : 'late', event.providerPaymentRef]
       );
       await client.query(
         `INSERT INTO ledger_entries
@@ -488,8 +495,8 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
         [order.id, payment.id, payment.currency, payment.amount, `capture:${payment.id}`]
       );
 
-      if (isLate) {
-        if (reservation.status === 'active' && !reservation.is_unexpired) {
+      if (!isFunding) {
+        if (isLate && reservation?.status === 'active' && !reservation.is_unexpired) {
           const expired = await reservations.expireReservationForLatePayment(client, reservation.id);
           if (expired) {
             await orders.cancelUnpaidReservationOrder(client, order.id);
@@ -499,24 +506,31 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
         const { rows: refundRows } = await client.query(
           `INSERT INTO refunds
              (payment_id, order_id, trigger, amount, currency, status, idempotency_key, reason)
-           VALUES ($1, $2, 'system_expiry', $3::numeric, $4, 'requested', $5, 'Late payment after reservation ended')
+           VALUES ($1, $2, 'system_expiry', $3::numeric, $4, 'requested', $5, $6)
            ON CONFLICT (idempotency_key) DO NOTHING
            RETURNING id`,
-          [payment.id, order.id, payment.amount, payment.currency, `refund:${payment.id}:late`]
+          [
+            payment.id,
+            order.id,
+            payment.amount,
+            payment.currency,
+            `refund:${payment.id}:late`,
+            refundReason,
+          ]
         );
         await client.query(
           `INSERT INTO money_audit_events
              (actor_id, action, order_id, payment_id, refund_id, reason, metadata)
-           VALUES (NULL, 'late_payment_refund_requested', $1, $2, $3, 'late_payment', $4::jsonb)`,
+           VALUES (NULL, 'late_payment_refund_requested', $1, $2, $3, $4, $5::jsonb)`,
           [
             order.id,
             payment.id,
             refundRows[0]?.id || null,
+            auditReason,
             JSON.stringify({ trigger: 'system_expiry' }),
           ]
         );
-      } else if (reservation.status === 'active' && reservation.is_unexpired &&
-                 order.status === 'payment_pending') {
+      } else {
         const paid = await reservations.markReservationPaid(client, reservation.id);
         const funded = await orders.fundReservationOrder(client, order.id, reservation.id);
         if (!paid || !funded) {
