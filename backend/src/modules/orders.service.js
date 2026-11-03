@@ -183,6 +183,15 @@ async function cancelUnpaidReservationOrder(client, orderId) {
   return rows[0] || null;
 }
 
+/** FR-69: lock the owning order before an escrow refund locks payment and refund rows. */
+async function lockOrderForRefund(client, orderId) {
+  const { rows } = await client.query(
+    'SELECT id FROM orders WHERE id = $1 FOR UPDATE',
+    [orderId]
+  );
+  return rows[0] || null;
+}
+
 /** FR-33a: free cancellation before handover to delivery partner, no fee. */
 async function cancelOrder(orderId, buyerId) {
   const updated = await db.withTransaction(async (client) => {
@@ -285,6 +294,7 @@ module.exports = {
   setOrderStatus,
   fundReservationOrder,
   cancelUnpaidReservationOrder,
+  lockOrderForRefund,
   cancelOrder,
   assertLegacyOrder,
   handleRefusalAtDoor,

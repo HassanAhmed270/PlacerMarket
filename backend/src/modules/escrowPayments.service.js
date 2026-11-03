@@ -1,5 +1,5 @@
 /**
- * Owns: FR-60a hosted checkout intents, FR-61 funding, and FR-77b webhooks.
+ * Owns: FR-60a hosted checkout intents, FR-61 funding, FR-69 refunds, and FR-77b webhooks.
  * Tables owned: payments, webhook_inbox, refunds, ledger_entries, money_audit_events
  */
 
@@ -23,6 +23,21 @@ const {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const WEBHOOK_AMOUNT = /^\d{1,10}(?:\.\d{1,2})?$/;
 const SUPPORTED_PAYMENT_EVENTS = new Set(['payment.succeeded', 'payment.failed']);
+
+/** FR-69: enqueue one refund job in the caller's transaction for system and manual refund creators. */
+async function enqueueRefundJob(transaction, refundId) {
+  if (typeof refundId !== 'string' || !UUID.test(refundId)) {
+    throw new ValidationError('refundId must be a UUID.');
+  }
+  if (!transaction) throw new TypeError('Refund jobs must be enqueued in the refund transaction.');
+  queue.asQueueDatabase(transaction);
+  const key = `refund:${refundId}`;
+  return queue.enqueue(queue.QUEUES.REFUNDS, { refundId }, {
+    idempotencyKey: key,
+    orderingKey: key,
+    transaction,
+  });
+}
 
 async function resolveWebhookPaymentId(client, { provider, providerPaymentRef }) {
   const { rows } = await client.query(
@@ -112,6 +127,185 @@ const receivePaymentWebhook = queue.createPaymentWebhookInboxReceiver({
   enqueueJob: queue.enqueue,
   resolvePaymentId: resolveWebhookPaymentId,
 });
+
+async function lockRefundPaymentOrder(client, orderId, paymentId, refundId) {
+  const order = await orders.lockOrderForRefund(client, orderId);
+  if (!order) return null;
+
+  const { rows: paymentRows } = await client.query(
+    `SELECT id, order_id, provider_payment_id, amount
+     FROM payments
+     WHERE id = $1
+     FOR UPDATE`,
+    [paymentId]
+  );
+  const payment = paymentRows[0];
+  if (!payment || payment.order_id !== order.id) return null;
+
+  const { rows: refundRows } = await client.query(
+    `SELECT id, order_id, payment_id, amount, currency, status, idempotency_key,
+            trigger, reason
+     FROM refunds
+     WHERE id = $1
+     FOR UPDATE`,
+    [refundId]
+  );
+  const refund = refundRows[0];
+  if (!refund || refund.order_id !== order.id || refund.payment_id !== payment.id) return null;
+  return { order, payment, refund };
+}
+
+/** FR-69: execute a stored refund intent through the idempotent gateway outside database transactions. */
+async function processRefundJob({ refundId, gateway } = {}) {
+  if (typeof refundId !== 'string' || !UUID.test(refundId)) {
+    throw new ValidationError('refundId must be a UUID.');
+  }
+  const { rows: initialRefundRows } = await db.read(
+    'SELECT id, order_id, payment_id FROM refunds WHERE id = $1',
+    [refundId]
+  );
+  const initialRefund = initialRefundRows[0];
+  if (!initialRefund) return { outcome: 'missing' };
+
+  const refundIntent = await db.withTransaction(async (client) => {
+    const locked = await lockRefundPaymentOrder(
+      client,
+      initialRefund.order_id,
+      initialRefund.payment_id,
+      refundId
+    );
+    if (!locked) return null;
+    const { refund, payment } = locked;
+    if (!['requested', 'pending', 'failed'].includes(refund.status)) {
+      return { outcome: 'skipped', status: refund.status };
+    }
+    if (gateway && process.env.NODE_ENV === 'production') {
+      throw new PaymentGatewayConfigurationError();
+    }
+
+    await client.query(
+      `UPDATE refunds
+       SET status = 'pending', updated_at = now()
+       WHERE id = $1`,
+      [refund.id]
+    );
+    return {
+      orderId: refund.order_id,
+      paymentId: payment.id,
+      providerPaymentRef: payment.provider_payment_id,
+      amount: String(refund.amount),
+      idempotencyKey: refund.idempotency_key,
+    };
+  });
+  if (!refundIntent) return { outcome: 'missing' };
+  if (refundIntent.outcome) return refundIntent;
+
+  const selectedGateway = gateway || paymentGateway.getPaymentGateway();
+  let gatewayResult;
+  try {
+    if (typeof refundIntent.providerPaymentRef !== 'string' || !refundIntent.providerPaymentRef) {
+      throw new PaymentGatewayUnavailableError();
+    }
+    gatewayResult = await selectedGateway.createRefund({
+      providerPaymentRef: refundIntent.providerPaymentRef,
+      amount: refundIntent.amount,
+      idempotencyKey: refundIntent.idempotencyKey,
+    });
+    if (!gatewayResult || typeof gatewayResult.providerRefundRef !== 'string' ||
+        !gatewayResult.providerRefundRef ||
+        gatewayResult.providerPaymentRef !== refundIntent.providerPaymentRef ||
+        String(gatewayResult.amount) !== refundIntent.amount ||
+        gatewayResult.status !== 'succeeded') {
+      throw new PaymentGatewayUnavailableError();
+    }
+  } catch {
+    await db.withTransaction(async (client) => {
+      const locked = await lockRefundPaymentOrder(
+        client,
+        refundIntent.orderId,
+        refundIntent.paymentId,
+        refundId
+      );
+      if (!locked) return;
+      await client.query(
+        `UPDATE refunds
+         SET status = 'failed', updated_at = now()
+         WHERE id = $1 AND status = 'pending'`,
+        [refundId]
+      );
+    });
+    throw new PaymentGatewayUnavailableError();
+  }
+
+  return db.withTransaction(async (client) => {
+    const locked = await lockRefundPaymentOrder(
+      client,
+      refundIntent.orderId,
+      refundIntent.paymentId,
+      refundId
+    );
+    if (!locked) return { outcome: 'missing' };
+    const { order, payment, refund } = locked;
+    if (!['requested', 'pending', 'failed'].includes(refund.status)) {
+      return { outcome: 'skipped', status: refund.status };
+    }
+
+    const { rowCount } = await client.query(
+      `UPDATE refunds
+       SET status = 'succeeded', provider_refund_id = $2,
+           completed_at = COALESCE(completed_at, now()), updated_at = now()
+       WHERE id = $1 AND status IN ('requested', 'pending', 'failed')`,
+      [refundId, gatewayResult.providerRefundRef]
+    );
+    if (!rowCount) return { outcome: 'skipped', status: refund.status };
+
+    await client.query(
+      `INSERT INTO ledger_entries
+         (order_id, payment_id, refund_id, currency, amount, entry_type, idempotency_key)
+       VALUES ($1, $2, $3, $4, -($5::numeric), 'refund', $6)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [
+        order.id,
+        payment.id,
+        refund.id,
+        refund.currency,
+        refund.amount,
+        `refund:${refund.id}`,
+      ]
+    );
+    await client.query(
+      `INSERT INTO money_audit_events
+         (actor_id, action, order_id, payment_id, refund_id, reason, metadata)
+       VALUES (NULL, 'system_refund_succeeded', $1, $2, $3, $4, $5::jsonb)`,
+      [
+        order.id,
+        payment.id,
+        refund.id,
+        refund.reason,
+        JSON.stringify({
+          trigger: refund.trigger,
+          providerRefundRef: gatewayResult.providerRefundRef,
+        }),
+      ]
+    );
+
+    const { rows: totalRows } = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) = $2::numeric AS fully_refunded
+       FROM refunds
+       WHERE payment_id = $1 AND status = 'succeeded'`,
+      [payment.id, payment.amount]
+    );
+    if (totalRows[0].fully_refunded) {
+      await client.query(
+        `UPDATE payments
+         SET status = 'refunded', updated_at = now()
+         WHERE id = $1 AND status <> 'refunded'`,
+        [payment.id]
+      );
+    }
+    return { outcome: 'succeeded', refundId };
+  });
+}
 
 function validateOrderId(orderId) {
   if (typeof orderId !== 'string' || !UUID.test(orderId)) {
@@ -518,6 +712,7 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
             refundReason,
           ]
         );
+        if (refundRows[0]) await enqueueRefundJob(client, refundRows[0].id);
         await client.query(
           `INSERT INTO money_audit_events
              (actor_id, action, order_id, payment_id, refund_id, reason, metadata)
@@ -566,6 +761,8 @@ async function receiveVerifiedPaymentWebhook(receipt) {
 module.exports = {
   createOrReusePayment,
   getPaymentStatus,
+  enqueueRefundJob,
+  processRefundJob,
   receiveVerifiedPaymentWebhook,
   processPaymentWebhookJob,
 };

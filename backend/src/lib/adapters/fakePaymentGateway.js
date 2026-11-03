@@ -35,6 +35,7 @@ function createFakePaymentGateway({
 
   const sessionsByKey = new Map();
   const sessionsByRef = new Map();
+  const refundsByKey = new Map();
   let createCalls = 0;
   let sessionsCreated = 0;
 
@@ -134,13 +135,18 @@ function createFakePaymentGateway({
     },
 
     async createRefund({ providerPaymentRef, amount, idempotencyKey }) {
+      const existingRefund = refundsByKey.get(idempotencyKey);
+      if (existingRefund) return { ...existingRefund };
+
       const digest = createHash('sha256').update(idempotencyKey).digest('hex').slice(0, 32);
-      return {
+      const refund = {
         providerRefundRef: `fake_refund_${digest}`,
         providerPaymentRef,
         amount: String(amount),
         status: 'succeeded',
       };
+      refundsByKey.set(idempotencyKey, refund);
+      return { ...refund };
     },
 
     getCheckoutSession(providerPaymentRef) {
@@ -153,6 +159,15 @@ function createFakePaymentGateway({
 
     getSessionCount() {
       return sessionsCreated;
+    },
+
+    getRefundCount() {
+      return refundsByKey.size;
+    },
+
+    getRefund(idempotencyKey) {
+      const refund = refundsByKey.get(idempotencyKey);
+      return refund ? { ...refund } : null;
     },
   };
 }

@@ -10,6 +10,7 @@ const listings = require('../../src/modules/listings.service');
 const listingSearch = require('../../src/modules/listingSearch.service');
 const discovery = require('../../src/modules/discovery.service');
 const { ConflictError } = require('../../src/lib/errors');
+const paymentGateway = require('../../src/lib/adapters/paymentGateway');
 const { buildSignedFakeEvent } = require('../../src/lib/adapters/fakePaymentGateway');
 const { createEscrowPaymentsRouter } = require('../../src/routes/escrowPayments.routes');
 const { createPaymentWebhooksRouter } = require('../../src/routes/paymentWebhooks.routes');
@@ -165,7 +166,13 @@ afterEach(async () => {
         [record.orderId]
       ) : { rows: [{ retained: false }] };
       if (!auditRows[0].retained) {
-        if (record.orderId) await db.query('DELETE FROM payments WHERE order_id = $1', [record.orderId]);
+        if (record.orderId) {
+          await db.query(
+            'DELETE FROM refunds WHERE payment_id IN (SELECT id FROM payments WHERE order_id = $1)',
+            [record.orderId]
+          );
+          await db.query('DELETE FROM payments WHERE order_id = $1', [record.orderId]);
+        }
         await db.query('DELETE FROM orders WHERE listing_id = $1', [record.fixture.listingId]);
         await db.query('DELETE FROM reservations WHERE listing_id = $1', [record.fixture.listingId]);
         await db.query('DELETE FROM supported_delivery_cities WHERE city_id = $1', [record.fixture.cityId]);
@@ -561,7 +568,340 @@ describe('FR-61, FR-62 payment webhook worker', () => {
     expect(noGatewayCalls[0].total).toBe(0);
   });
 
-  test('FR-61, FR-62: a second capture after funding is refunded without changing the funded order', async () => {
+  test('FR-69, FR-61: a late capture enqueues and executes its stored refund intent', async () => {
+    await db.query(
+      `UPDATE reservations SET expires_at = now() - INTERVAL '1 minute'
+       WHERE id = (SELECT reservation_id FROM orders WHERE id = $1)`,
+      [orderId]
+    );
+    const inboxId = await receiveSignedEvent(await createSignedEvent());
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId });
+    const { rows: refundRows } = await db.query(
+      `SELECT id, amount::text AS amount, idempotency_key
+       FROM refunds WHERE payment_id = $1`,
+      [paymentId]
+    );
+    expect(refundRows).toHaveLength(1);
+
+    const gateway = {
+      createRefund: jest.fn().mockResolvedValue({
+        providerRefundRef: 'fake_refund_integration_1',
+        providerPaymentRef: paymentRef,
+        amount: refundRows[0].amount,
+        status: 'succeeded',
+      }),
+    };
+    const { rows: beforeRows } = await db.query(
+      `SELECT p.status AS payment_status, o.status AS order_status,
+              reservation.status AS reservation_status
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id
+       JOIN reservations reservation ON reservation.id = o.reservation_id
+       WHERE p.id = $1`,
+      [paymentId]
+    );
+
+    await expect(escrowPayments.processRefundJob({
+      refundId: refundRows[0].id,
+      gateway,
+    })).resolves.toEqual({ outcome: 'succeeded', refundId: refundRows[0].id });
+
+    expect(gateway.createRefund).toHaveBeenCalledTimes(1);
+    expect(gateway.createRefund).toHaveBeenCalledWith({
+      providerPaymentRef: paymentRef,
+      amount: refundRows[0].amount,
+      idempotencyKey: refundRows[0].idempotency_key,
+    });
+    const { rows: afterRows } = await db.query(
+      `SELECT p.status AS payment_status, o.status AS order_status,
+              reservation.status AS reservation_status,
+              refund.status AS refund_status, refund.provider_refund_id,
+              (SELECT count(*)::int FROM ledger_entries
+               WHERE refund_id = refund.id AND entry_type = 'refund') AS ledger_count,
+              (SELECT amount::text FROM ledger_entries
+               WHERE refund_id = refund.id AND entry_type = 'refund') AS ledger_amount,
+              (SELECT idempotency_key FROM ledger_entries
+               WHERE refund_id = refund.id AND entry_type = 'refund') AS ledger_key,
+              (SELECT count(*)::int FROM money_audit_events
+               WHERE refund_id = refund.id AND action = 'system_refund_succeeded') AS success_audit_count,
+              (SELECT count(*)::int FROM pgboss.job
+               WHERE name = $2 AND data->>'refundId' = refund.id::text) AS refund_job_count
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id
+       JOIN reservations reservation ON reservation.id = o.reservation_id
+       JOIN refunds refund ON refund.payment_id = p.id
+       WHERE p.id = $1`,
+      [paymentId, queue.QUEUES.REFUNDS]
+    );
+    expect(afterRows[0]).toMatchObject({
+      payment_status: 'refunded',
+      order_status: beforeRows[0].order_status,
+      reservation_status: beforeRows[0].reservation_status,
+      refund_status: 'succeeded',
+      provider_refund_id: 'fake_refund_integration_1',
+      ledger_count: 1,
+      ledger_amount: '-1550.50',
+      ledger_key: `refund:${refundRows[0].id}`,
+      success_audit_count: 1,
+      refund_job_count: 1,
+    });
+  });
+
+  test('FR-69, FR-77b: a refund enqueue failure rolls back the late-capture state change', async () => {
+    await db.query(
+      `UPDATE reservations SET expires_at = now() - INTERVAL '1 minute'
+       WHERE id = (SELECT reservation_id FROM orders WHERE id = $1)`,
+      [orderId]
+    );
+    const inboxId = await receiveSignedEvent(await createSignedEvent());
+    const originalEnqueue = queue.enqueue.bind(queue);
+    const enqueue = jest.spyOn(queue, 'enqueue').mockImplementation(async (name, ...args) => {
+      if (name === queue.QUEUES.REFUNDS) throw new Error('synthetic refund enqueue failure');
+      return originalEnqueue(name, ...args);
+    });
+
+    await expect(escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId }))
+      .rejects.toThrow('synthetic refund enqueue failure');
+    enqueue.mockRestore();
+
+    const { rows } = await db.query(
+      `SELECT p.status AS payment_status, o.status AS order_status,
+              reservation.status AS reservation_status,
+              (SELECT count(*)::int FROM refunds WHERE payment_id = p.id) AS refund_count,
+              (SELECT count(*)::int FROM ledger_entries WHERE payment_id = p.id) AS ledger_count,
+              (SELECT count(*)::int FROM money_audit_events WHERE payment_id = p.id) AS audit_count
+       FROM payments p
+       JOIN orders o ON o.id = p.order_id
+       JOIN reservations reservation ON reservation.id = o.reservation_id
+       WHERE p.id = $1`,
+      [paymentId]
+    );
+    expect(rows[0]).toEqual({
+      payment_status: 'pending',
+      order_status: 'payment_pending',
+      reservation_status: 'active',
+      refund_count: 0,
+      ledger_count: 0,
+      audit_count: 0,
+    });
+  });
+
+  test('FR-69: a failed gateway call leaves a retryable refund and retries with the same idempotency key', async () => {
+    await db.query(
+      `UPDATE reservations SET expires_at = now() - INTERVAL '1 minute'
+       WHERE id = (SELECT reservation_id FROM orders WHERE id = $1)`,
+      [orderId]
+    );
+    const inboxId = await receiveSignedEvent(await createSignedEvent());
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId });
+    const { rows: refundRows } = await db.query(
+      `SELECT id, idempotency_key, amount::text AS amount
+       FROM refunds WHERE payment_id = $1`,
+      [paymentId]
+    );
+    const fakeGateway = paymentGateway.getPaymentGateway();
+    const createFakeRefund = jest.spyOn(fakeGateway, 'createRefund');
+    let failOnce = true;
+    const gateway = {
+      createRefund: jest.fn(async (requestOptions) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('sensitive provider detail must not escape');
+        }
+        return fakeGateway.createRefund(requestOptions);
+      }),
+    };
+
+    await expect(escrowPayments.processRefundJob({
+      refundId: refundRows[0].id,
+      gateway,
+    })).rejects.toMatchObject({
+      code: 'payment_gateway_unavailable',
+      message: 'Payment gateway is temporarily unavailable.',
+    });
+    const { rows: failedRows } = await db.query(
+      `SELECT refund.status,
+              (SELECT count(*)::int FROM ledger_entries
+               WHERE refund_id = refund.id AND entry_type = 'refund') AS ledger_count
+       FROM refunds refund WHERE refund.id = $1`,
+      [refundRows[0].id]
+    );
+    expect(failedRows[0]).toEqual({ status: 'failed', ledger_count: 0 });
+
+    await expect(escrowPayments.processRefundJob({
+      refundId: refundRows[0].id,
+      gateway,
+    })).resolves.toEqual({ outcome: 'succeeded', refundId: refundRows[0].id });
+
+    expect(gateway.createRefund).toHaveBeenCalledTimes(2);
+    expect(gateway.createRefund.mock.calls.map(([options]) => options.idempotencyKey))
+      .toEqual([refundRows[0].idempotency_key, refundRows[0].idempotency_key]);
+    expect(createFakeRefund).toHaveBeenCalledTimes(1);
+    expect(fakeGateway.getRefundCount()).toBe(1);
+    const { rows: completedRows } = await db.query(
+      `SELECT status, provider_refund_id,
+              (SELECT count(*)::int FROM ledger_entries
+               WHERE refund_id = refunds.id AND entry_type = 'refund') AS ledger_count
+       FROM refunds WHERE id = $1`,
+      [refundRows[0].id]
+    );
+    expect(completedRows[0]).toMatchObject({
+      status: 'succeeded',
+      provider_refund_id: expect.stringMatching(/^fake_refund_/),
+      ledger_count: 1,
+    });
+    createFakeRefund.mockRestore();
+  });
+
+  test('FR-69: five parallel refund runs, replay, and repeated enqueue create one refund job and ledger row', async () => {
+    await db.query(
+      `UPDATE reservations SET expires_at = now() - INTERVAL '1 minute'
+       WHERE id = (SELECT reservation_id FROM orders WHERE id = $1)`,
+      [orderId]
+    );
+    const inboxId = await receiveSignedEvent(await createSignedEvent());
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId });
+    const { rows: refundRows } = await db.query(
+      `SELECT id, idempotency_key FROM refunds WHERE payment_id = $1`,
+      [paymentId]
+    );
+    const refundId = refundRows[0].id;
+
+    await db.withTransaction((client) => escrowPayments.enqueueRefundJob(client, refundId));
+    await db.withTransaction((client) => escrowPayments.enqueueRefundJob(client, refundId));
+    await Promise.all(Array.from({ length: 5 }, () =>
+      escrowPayments.processRefundJob({ refundId })));
+    await escrowPayments.processRefundJob({ refundId });
+
+    const fakeGateway = paymentGateway.getPaymentGateway();
+    expect(fakeGateway.getRefundCount()).toBe(1);
+    expect(fakeGateway.getRefund(refundRows[0].idempotency_key)).toMatchObject({
+      providerPaymentRef: paymentRef,
+      amount: '1550.50',
+      status: 'succeeded',
+    });
+    const { rows: stateRows } = await db.query(
+      `SELECT refund.status AS refund_status,
+              (SELECT count(*)::int FROM ledger_entries
+               WHERE refund_id = refund.id AND entry_type = 'refund') AS ledger_count,
+              (SELECT count(*)::int FROM money_audit_events
+               WHERE refund_id = refund.id AND action = 'system_refund_succeeded') AS success_audit_count,
+              (SELECT count(*)::int FROM pgboss.job
+               WHERE name = $2 AND data->>'refundId' = refund.id::text) AS refund_job_count
+       FROM refunds refund WHERE refund.id = $1`,
+      [refundId, queue.QUEUES.REFUNDS]
+    );
+    expect(stateRows[0]).toEqual({
+      refund_status: 'succeeded',
+      ledger_count: 1,
+      success_audit_count: 1,
+      refund_job_count: 1,
+    });
+  });
+
+  test('FR-69: the refund cap rejects a requested amount above the payment without enqueuing it', async () => {
+    const idempotencyKey = `refund-cap:${crypto.randomUUID()}`;
+    const { rows: jobsBefore } = await db.query(
+      'SELECT count(*)::int AS total FROM pgboss.job WHERE name = $1',
+      [queue.QUEUES.REFUNDS]
+    );
+    await expect(db.query(
+      `INSERT INTO refunds
+         (payment_id, order_id, trigger, amount, currency, status, idempotency_key)
+       VALUES ($1, $2, 'system_expiry', $3::numeric, 'PKR', 'requested', $4)`,
+      [paymentId, orderId, '1550.51', idempotencyKey]
+    )).rejects.toMatchObject({ code: '23514' });
+
+    const { rows } = await db.query(
+      `SELECT
+         (SELECT count(*)::int FROM refunds WHERE payment_id = $1) AS refund_count,
+         (SELECT count(*)::int FROM pgboss.job
+          WHERE name = $2) AS refund_job_count`,
+      [paymentId, queue.QUEUES.REFUNDS]
+    );
+    expect(rows[0]).toEqual({
+      refund_count: 0,
+      refund_job_count: jobsBefore[0].total,
+    });
+    expect(paymentGateway.getPaymentGateway().getRefundCount()).toBe(0);
+  });
+
+  test('FR-69: succeeded and reversed refunds are no-ops', async () => {
+    const { rows: succeededRows } = await db.query(
+      `INSERT INTO refunds
+         (payment_id, order_id, trigger, amount, currency, status,
+          provider_refund_id, idempotency_key)
+       SELECT id, order_id, 'system_expiry', amount, currency, 'succeeded',
+              'already-refunded', $2
+       FROM payments WHERE id = $1
+       RETURNING id`,
+      [paymentId, `refund-succeeded:${crypto.randomUUID()}`]
+    );
+    const { rows: reversedRows } = await db.query(
+      `INSERT INTO refunds
+         (payment_id, order_id, trigger, amount, currency, status, idempotency_key)
+       SELECT id, order_id, 'system_expiry', amount, currency, 'reversed', $2
+       FROM payments WHERE id = $1
+       RETURNING id`,
+      [paymentId, `refund-reversed:${crypto.randomUUID()}`]
+    );
+    const gateway = { createRefund: jest.fn() };
+
+    await expect(escrowPayments.processRefundJob({
+      refundId: succeededRows[0].id,
+      gateway,
+    })).resolves.toEqual({ outcome: 'skipped', status: 'succeeded' });
+    await expect(escrowPayments.processRefundJob({
+      refundId: reversedRows[0].id,
+      gateway,
+    })).resolves.toEqual({ outcome: 'skipped', status: 'reversed' });
+
+    expect(gateway.createRefund).not.toHaveBeenCalled();
+    const { rows } = await db.query(
+      `SELECT
+         (SELECT count(*)::int FROM ledger_entries WHERE payment_id = $1) AS ledger_count,
+         (SELECT count(*)::int FROM money_audit_events WHERE payment_id = $1) AS audit_count,
+         (SELECT status FROM payments WHERE id = $1) AS payment_status`,
+      [paymentId]
+    );
+    expect(rows[0]).toEqual({
+      ledger_count: 0,
+      audit_count: 0,
+      payment_status: 'pending',
+    });
+  });
+
+  test('FR-69: injected refund failures are rejected in production', async () => {
+    const { rows } = await db.query(
+      `INSERT INTO refunds
+         (payment_id, order_id, trigger, amount, currency, status, idempotency_key)
+       SELECT id, order_id, 'system_expiry', amount, currency, 'requested', $2
+       FROM payments WHERE id = $1
+       RETURNING id`,
+      [paymentId, `refund-production:${crypto.randomUUID()}`]
+    );
+    const gateway = { createRefund: jest.fn() };
+    const originalNodeEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      await expect(escrowPayments.processRefundJob({
+        refundId: rows[0].id,
+        gateway,
+      })).rejects.toBeInstanceOf(paymentGateway.PaymentGatewayConfigurationError);
+    } finally {
+      if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = originalNodeEnv;
+    }
+
+    expect(gateway.createRefund).not.toHaveBeenCalled();
+    const { rows: unchangedRows } = await db.query(
+      'SELECT status FROM refunds WHERE id = $1',
+      [rows[0].id]
+    );
+    expect(unchangedRows).toEqual([{ status: 'requested' }]);
+  });
+
+  test('FR-69, FR-61, FR-62: a duplicate capture refund executes without changing the funded order', async () => {
     const firstInboxId = await receiveSignedEvent(await createSignedEvent());
     await escrowPayments.processPaymentWebhookJob({ webhookInboxId: firstInboxId });
 
@@ -627,7 +967,7 @@ describe('FR-61, FR-62 payment webhook worker', () => {
     expect(capturedRows[0].succeeded_at).toBeInstanceOf(Date);
 
     const { rows: refundRows } = await db.query(
-      `SELECT refund.trigger, refund.status, refund.amount::text AS refund_amount,
+      `SELECT refund.id, refund.trigger, refund.status, refund.amount::text AS refund_amount,
               payment.amount::text AS payment_amount, refund.idempotency_key, refund.reason
        FROM refunds refund
        JOIN payments payment ON payment.id = refund.payment_id
@@ -635,6 +975,7 @@ describe('FR-61, FR-62 payment webhook worker', () => {
       [secondPaymentRows[0].id]
     );
     expect(refundRows).toEqual([{
+      id: expect.any(String),
       trigger: 'system_expiry',
       status: 'requested',
       refund_amount: secondPaymentRows[0].amount,
@@ -662,6 +1003,37 @@ describe('FR-61, FR-62 payment webhook worker', () => {
       [inboxId]
     );
     expect(inboxRows).toEqual([{ status: 'processed' }]);
+
+    const fakeGateway = paymentGateway.getPaymentGateway();
+    await escrowPayments.processRefundJob({ refundId: refundRows[0].id });
+    expect(fakeGateway.getRefundCount()).toBe(1);
+    const { rows: executedRows } = await db.query(
+      `SELECT payment.status AS payment_status,
+              order_row.status AS order_status,
+              reservation.status AS reservation_status,
+              refund.status AS refund_status,
+              (SELECT count(*)::int FROM ledger_entries
+               WHERE refund_id = refund.id AND entry_type = 'refund') AS ledger_count,
+              (SELECT amount::text FROM ledger_entries
+               WHERE refund_id = refund.id AND entry_type = 'refund') AS ledger_amount,
+              (SELECT count(*)::int FROM money_audit_events
+               WHERE refund_id = refund.id AND action = 'system_refund_succeeded') AS success_audit_count
+       FROM refunds refund
+       JOIN payments payment ON payment.id = refund.payment_id
+       JOIN orders order_row ON order_row.id = refund.order_id
+       JOIN reservations reservation ON reservation.id = order_row.reservation_id
+       WHERE refund.id = $1`,
+      [refundRows[0].id]
+    );
+    expect(executedRows[0]).toMatchObject({
+      payment_status: 'refunded',
+      order_status: beforeRows[0].order_status,
+      reservation_status: beforeRows[0].reservation_status,
+      refund_status: 'succeeded',
+      ledger_count: 1,
+      ledger_amount: `-${secondPaymentRows[0].amount}`,
+      success_audit_count: 1,
+    });
   });
 
   test('FR-61, FR-62: an active unexpired reservation with an ineligible order is refunded without funding', async () => {

@@ -7,6 +7,7 @@ const mockQueue = {
     LISTING_SEARCH: 'listing-search',
     PAGE_SNAPSHOTS: 'page-snapshots',
     PAYMENT_WEBHOOKS: 'payment-webhooks',
+    REFUNDS: 'refunds',
   },
   WORKER_CONCURRENCY: {
     notifications: 4,
@@ -14,6 +15,7 @@ const mockQueue = {
     'listing-search': 4,
     'page-snapshots': 1,
     'payment-webhooks': 2,
+    refunds: 2,
   },
   createQueueClient: jest.fn(),
   startProducer: jest.fn().mockResolvedValue(undefined),
@@ -23,7 +25,10 @@ const mockRedis = { createRedisClient: jest.fn() };
 const mockNotifications = { processNotificationJob: jest.fn() };
 const mockListingSearch = { processListingSearchJob: jest.fn() };
 const mockPageSnapshots = { processSnapshotJob: jest.fn(), enqueueFullSnapshotRebuild: jest.fn().mockResolvedValue('startup-job') };
-const mockEscrowPayments = { processPaymentWebhookJob: jest.fn() };
+const mockEscrowPayments = {
+  processPaymentWebhookJob: jest.fn(),
+  processRefundJob: jest.fn(),
+};
 const { encryptEmailPayload } = require('../../src/lib/emailQueuePayload');
 
 jest.mock('../../src/lib/queue', () => mockQueue);
@@ -63,7 +68,7 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
     }
   });
 
-  test('FR-77d: starts Redis and the durable notification consumer with configured transactional concurrency', async () => {
+  test('FR-69, FR-77d: starts the worker and registers refund and notification consumers', async () => {
     const boss = new EventEmitter();
     boss.work = jest.fn().mockResolvedValue(undefined);
     const queue = { boss, start: jest.fn().mockResolvedValue(undefined), stop: jest.fn().mockResolvedValue(undefined) };
@@ -121,9 +126,17 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
         { batchSize: 1, localConcurrency: 2, transactional: false },
         expect.any(Function)
       );
+      expect(boss.work).toHaveBeenCalledWith(
+        'refunds',
+        { batchSize: 1, localConcurrency: 2, transactional: false },
+        expect.any(Function)
+      );
       const paymentWebhookHandler = boss.work.mock.calls.find(([name]) => name === 'payment-webhooks')[2];
       await paymentWebhookHandler([{ data: { webhookInboxId: 'inbox-1' } }]);
       expect(mockEscrowPayments.processPaymentWebhookJob).toHaveBeenCalledWith({ webhookInboxId: 'inbox-1' });
+      const refundHandler = boss.work.mock.calls.find(([name]) => name === 'refunds')[2];
+      await refundHandler([{ data: { refundId: 'refund-1' } }]);
+      expect(mockEscrowPayments.processRefundJob).toHaveBeenCalledWith({ refundId: 'refund-1' });
       const snapshotHandler = boss.work.mock.calls.find(([name]) => name === 'page-snapshots')[2];
       await snapshotHandler([{ data: { listingId: 'listing-1', searchVersion: '2' } }]);
       expect(mockPageSnapshots.processSnapshotJob).toHaveBeenCalledWith({ listingId: 'listing-1', searchVersion: '2' });

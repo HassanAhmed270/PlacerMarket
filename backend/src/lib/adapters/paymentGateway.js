@@ -5,8 +5,8 @@
  * - verifyWebhook({ rawBody, headers, now }) resolves to a normalized event or
  *   rejects with PaymentWebhookVerificationError.
  * - fetchPayment({ providerPaymentRef }) resolves to normalized provider state.
- * - createRefund({ providerPaymentRef, amount, idempotencyKey }) resolves to a
- *   normalized refund result.
+ * - createRefund({ providerPaymentRef, amount, idempotencyKey }) resolves to
+ *   { providerRefundRef, providerPaymentRef, amount, status: 'succeeded' }.
  *
  * Implementations must be idempotent for a repeated idempotencyKey. Only the
  * non-production fake implementation is available in this stage.

@@ -120,7 +120,7 @@ describe('PaymentGateway fake adapter contract', () => {
     })).rejects.toMatchObject({ code: 'invalid_signature' });
   });
 
-  test('fake adapter fetch and refund results are deterministic', async () => {
+  test('FR-69: fake refund adapter reuses one result per idempotency key', async () => {
     const gateway = createFakePaymentGateway({ webhookSecret: SECRET });
     const create = {
       orderRef: 'order-2',
@@ -148,6 +148,8 @@ describe('PaymentGateway fake adapter contract', () => {
       idempotencyKey: 'refund:payment-1',
     });
     expect(secondRefund).toEqual(firstRefund);
+    expect(gateway.getRefundCount()).toBe(1);
+    expect(gateway.getRefund('refund:payment-1')).toEqual(firstRefund);
   });
 
   test('production refuses fake selection with a typed configuration error', () => {

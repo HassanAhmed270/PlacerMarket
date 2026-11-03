@@ -134,8 +134,8 @@ the PostgreSQL inbox/worker, and stored order/payment state.
 **FAKED or development-only behavior:** email delivery uses the development
 outbox; seller identity verification is manually simulated; the demo Admin
 approval is a local demonstration; payout guard checks do not send money.
-Checkout uses the local fake gateway only. There is no live payment provider,
-real payout, gateway refund execution, external email sender, or identity provider.
+Checkout and system refunds use the local fake gateway only. There is no live
+payment provider, real payout, external email sender, or identity provider.
 
 ## Buy and reservation demo
 
@@ -183,8 +183,11 @@ For the late-payment path, first create the reservation and payment intent,
 then—only in the disposable demo database—set that reservation's `expires_at`
 into the past before selecting **Pay (success)**. The worker records the
 payment as `late`, leaves the reservation/order unfunded, and creates one
-full-amount `system_expiry` refund request for stage 6a. No gateway refund is
-executed yet.
+full-amount `system_expiry` refund request, then enqueues it for the refund
+worker. The worker executes it through the local fake gateway. Check that the
+refund row is `succeeded` and that exactly one `ledger_entries` row exists for
+it with `entry_type = 'refund'` and a negative amount. The order and reservation
+remain unchanged by the refund worker.
 
 Use the `reservationId` returned by Buy in this disposable-database SQL:
 

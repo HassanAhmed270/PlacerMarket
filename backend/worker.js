@@ -79,6 +79,11 @@ async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
         webhookInboxId: job.data?.webhookInboxId,
       })
     );
+    await queue.boss.work(
+      QUEUES.REFUNDS,
+      { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.REFUNDS], transactional: false },
+      async ([job]) => escrowPayments.processRefundJob({ refundId: job.data?.refundId })
+    );
     // eslint-disable-next-line no-console
     console.log('Poshaak worker started');
 
