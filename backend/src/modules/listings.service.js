@@ -27,12 +27,16 @@ const events = require('../lib/events');
 const listingSearch = require('./listingSearch.service');
 const pageSnapshots = require('./pageSnapshots.service');
 const availability = require('./availability.service');
+const reservations = require('./reservations.service');
 const { validateSeoChoice, buildSeoPayload, generateSeoRecommendation } = require('../lib/listingSeo');
 const { canonicalListingUrl } = require('../lib/listingUrls');
-const { NotFoundError, ValidationError, ForbiddenError, ConflictError } = require('../lib/errors');
+const {
+  NotFoundError, ValidationError, ForbiddenError, ConflictError, ConfigurationError,
+} = require('../lib/errors');
 
 const MIN_LISTING_IMAGES = 3;
 const MAX_LISTING_IMAGES = 6;
+let systemTakedownHandler = null;
 const EDITABLE_LISTING_FIELDS = new Map([
   ['title', 'title'],
   ['mainCategoryId', 'main_category_id'],
@@ -122,6 +126,14 @@ async function syncAvailabilityProjection(client, listingId) {
   await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
   await pageSnapshots.enqueueListingSnapshotSync(client, listingId, rows[0].search_version);
   return rows[0].search_version;
+}
+
+/** FR-63a: inject the escrow-owned reservation handler without a circular service require. */
+function setSystemTakedownHandler(handler) {
+  if (typeof handler !== 'function') {
+    throw new ValidationError('The system take-down handler must be a function.');
+  }
+  systemTakedownHandler = handler;
 }
 
 // ---- FR-15, FR-15a, FR-15b: create listing ----
@@ -597,25 +609,51 @@ async function updateOwnListing(listingId, sellerId, patch) {
 
 /** FR-21: admin can unpublish/reject a live listing post-publication, with a reason. */
 async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
-  return db.withTransaction(async (client) => {
-    const { rows } = await client.query(
-      `UPDATE listings
-       SET status = CASE WHEN status = 'published' THEN 'unpublished'::listing_status ELSE 'rejected'::listing_status END,
-           reviewed_by = $1, rejection_reason = $2, search_version = search_version + 1, updated_at = now()
-       WHERE id = $3 AND status IN ('pending_review', 'published')
-       RETURNING *`,
-      [reviewerId, reason, listingId]
-    );
-    if (!rows[0]) {
-      const { rows: existing } = await client.query('SELECT id FROM listings WHERE id = $1', [listingId]);
-      if (!existing[0]) throw new NotFoundError('listing', listingId);
-      throw new ValidationError('Only listings pending review or published can be rejected or unpublished');
-    }
-    await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
-    await pageSnapshots.enqueueListingSnapshotSync(client, listingId, rows[0].search_version);
-    await eventBus.emitAsync(events.LISTING_STATUS_CHANGED, { listingId, status: rows[0].status, reason }, { transaction: client });
-    return rows[0];
-  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await db.withTransaction(async (client) => {
+      const liveReservation = await reservations.getLiveReservationForListing(client, listingId);
+      let handledReservation = false;
+      if (liveReservation) {
+        if (!systemTakedownHandler) {
+          throw new ConfigurationError('The escrow take-down handler is not configured.');
+        }
+        handledReservation = await systemTakedownHandler(client, listingId);
+      }
+
+      const { rows: listingRows } = await client.query(
+        'SELECT id, status FROM listings WHERE id = $1 FOR UPDATE',
+        [listingId]
+      );
+      if (!listingRows[0]) throw new NotFoundError('listing', listingId);
+
+      if (!handledReservation &&
+          await reservations.getLiveReservationForListing(client, listingId)) {
+        return { retry: true };
+      }
+      if (!['pending_review', 'published'].includes(listingRows[0].status)) {
+        throw new ValidationError('Only listings pending review or published can be rejected or unpublished');
+      }
+
+      const { rows: updated } = await client.query(
+        `UPDATE listings
+         SET status = CASE WHEN status = 'published' THEN 'unpublished'::listing_status ELSE 'rejected'::listing_status END,
+             reviewed_by = $1, rejection_reason = $2, search_version = search_version + 1, updated_at = now()
+         WHERE id = $3
+         RETURNING *`,
+        [reviewerId, reason, listingId]
+      );
+      await listingSearch.enqueueListingSearchSync(client, listingId, updated[0].search_version);
+      await pageSnapshots.enqueueListingSnapshotSync(client, listingId, updated[0].search_version);
+      await eventBus.emitAsync(
+        events.LISTING_STATUS_CHANGED,
+        { listingId, status: updated[0].status, reason },
+        { transaction: client }
+      );
+      return { retry: false, listing: updated[0] };
+    });
+    if (!result.retry) return result.listing;
+  }
+  throw new ConflictError('The listing reservation changed during take-down. Please retry.');
 }
 
 /** FR-20: sellers may immediately pause or resume a published listing they own. */
@@ -683,6 +721,7 @@ async function resubmitListing(listingId, sellerId) {
 
 module.exports = {
   syncAvailabilityProjection,
+  setSystemTakedownHandler,
   createListing,
   getSeoRecommendation,
   getReferencedMeasurementDefinitionIds,

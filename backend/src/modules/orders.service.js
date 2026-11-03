@@ -192,6 +192,41 @@ async function lockOrderForRefund(client, orderId) {
   return rows[0] || null;
 }
 
+/** FR-33a, FR-63a, FR-72: lock an escrow order before its reservation and payment. */
+async function lockReservationOrderForSystemAction(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT id, listing_id, reservation_id, buyer_id, status, handed_over_at,
+            handover_deadline_at,
+            handover_deadline_at IS NOT NULL AND handover_deadline_at <= now() AS handover_due
+     FROM orders
+     WHERE id = $1
+     FOR UPDATE`,
+    [orderId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-33a, FR-63a, FR-72: update the owning order after a system cancellation decision. */
+async function cancelReservationOrder(client, orderId, allowedStatuses) {
+  const { rows } = await client.query(
+    `UPDATE orders
+     SET status = 'cancelled', cancelled_at = COALESCE(cancelled_at, now())
+     WHERE id = $1 AND status::text = ANY($2::text[])
+     RETURNING id`,
+    [orderId, allowedStatuses]
+  );
+  return rows[0] || null;
+}
+
+/** FR-63a: read the owning reservation-backed order id for a reservation. */
+async function getOrderIdForReservation(client, reservationId) {
+  const { rows } = await client.query(
+    'SELECT id FROM orders WHERE reservation_id = $1',
+    [reservationId]
+  );
+  return rows[0]?.id || null;
+}
+
 /** FR-33a: free cancellation before handover to delivery partner, no fee. */
 async function cancelOrder(orderId, buyerId) {
   const updated = await db.withTransaction(async (client) => {
@@ -295,6 +330,9 @@ module.exports = {
   fundReservationOrder,
   cancelUnpaidReservationOrder,
   lockOrderForRefund,
+  lockReservationOrderForSystemAction,
+  cancelReservationOrder,
+  getOrderIdForReservation,
   cancelOrder,
   assertLegacyOrder,
   handleRefusalAtDoor,

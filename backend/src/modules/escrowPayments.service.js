@@ -39,6 +39,64 @@ async function enqueueRefundJob(transaction, refundId) {
   });
 }
 
+function getSystemRefundCause(trigger, reason) {
+  if (trigger === 'system_expiry') return 'late';
+  if (trigger === 'system_handover_timeout') return 'handover_timeout';
+  if (trigger === 'system_cancel') return reason === 'Listing taken down' ? 'takedown' : 'cancel';
+  throw new ValidationError('Unsupported system refund trigger.');
+}
+
+/** FR-69: create one auditable, idempotent system refund intent in the caller's transaction. */
+async function createSystemRefundIntent(client, { payment, order, trigger, reason }) {
+  const cause = getSystemRefundCause(trigger, reason);
+  if (!payment?.id || !payment.amount || !payment.currency || !order?.id) {
+    throw new ValidationError('A payment and its owning order are required for a system refund.');
+  }
+  const idempotencyKey = `refund:${payment.id}:${cause}`;
+  const { rows: inserted } = await client.query(
+    `INSERT INTO refunds
+       (payment_id, order_id, trigger, amount, currency, status, idempotency_key, reason)
+     VALUES ($1, $2, $3, $4::numeric, $5, 'requested', $6, $7)
+     ON CONFLICT (idempotency_key) DO NOTHING
+     RETURNING id, status`,
+    [payment.id, order.id, trigger, payment.amount, payment.currency, idempotencyKey, reason]
+  );
+  const refund = inserted[0] || (await client.query(
+    `SELECT id, status
+     FROM refunds
+     WHERE idempotency_key = $1`,
+    [idempotencyKey]
+  )).rows[0];
+  if (!refund) throw new ConflictError('The system refund intent could not be loaded.');
+
+  if (inserted[0]) {
+    await enqueueRefundJob(client, refund.id);
+    const isLateCapture = trigger === 'system_expiry';
+    const auditReason = isLateCapture
+      ? reason === 'Late payment after reservation ended'
+        ? 'late_payment'
+        : reason === 'Duplicate capture: reservation already paid'
+          ? 'duplicate_capture'
+          : 'ineligible_capture'
+      : reason;
+    await client.query(
+      `INSERT INTO money_audit_events
+         (actor_id, action, order_id, payment_id, refund_id, reason, metadata)
+       VALUES (NULL, $1, $2, $3, $4, $5, $6::jsonb)`,
+      [
+        isLateCapture ? 'late_payment_refund_requested' : 'system_refund_requested',
+        order.id,
+        payment.id,
+        refund.id,
+        auditReason,
+        JSON.stringify(isLateCapture ? { trigger } : { trigger, cause }),
+      ]
+    );
+  }
+
+  return { refundId: refund.id, status: refund.status, created: Boolean(inserted[0]) };
+}
+
 async function resolveWebhookPaymentId(client, { provider, providerPaymentRef }) {
   const { rows } = await client.query(
     `SELECT id
@@ -304,6 +362,226 @@ async function processRefundJob({ refundId, gateway } = {}) {
       );
     }
     return { outcome: 'succeeded', refundId };
+  });
+}
+
+async function lockPaymentsForOrder(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT id, order_id, status, amount, currency
+     FROM payments
+     WHERE order_id = $1
+     ORDER BY created_at, id
+     FOR UPDATE`,
+    [orderId]
+  );
+  return rows;
+}
+
+function getCapturedPayment(payments) {
+  return payments.find((payment) => ['succeeded', 'refunded', 'partially_refunded'].includes(payment.status));
+}
+
+async function getBuyerCancellationRefund(client, orderId, payments) {
+  const keys = payments.map((payment) => `refund:${payment.id}:cancel`);
+  if (!keys.length) return null;
+  const { rows } = await client.query(
+    `SELECT status
+     FROM refunds
+     WHERE order_id = $1 AND idempotency_key = ANY($2::text[])
+     LIMIT 1`,
+    [orderId, keys]
+  );
+  return rows[0] ? { status: rows[0].status } : null;
+}
+
+/** FR-33a: cancel a reservation-backed buyer order and request its full system refund when captured. */
+async function cancelReservationOrder({ orderId, buyerId }) {
+  validateOrderId(orderId);
+  if (typeof buyerId !== 'string' || !UUID.test(buyerId)) {
+    throw new ValidationError('buyerId must be a UUID.');
+  }
+
+  return db.withTransaction(async (client) => {
+    const order = await orders.lockReservationOrderForSystemAction(client, orderId);
+    if (!order) throw new NotFoundError('order', orderId);
+    if (order.reservation_id === null) return { legacy: true };
+    if (order.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
+
+    const reservation = await reservations.lockReservationForSystemAction(client, order.reservation_id);
+    if (!reservation || reservation.listing_id !== order.listing_id) {
+      throw new ConflictError('The order reservation is no longer available.');
+    }
+    const payments = await lockPaymentsForOrder(client, order.id);
+
+    if (order.status === 'cancelled' && reservation.end_reason === 'buyer_cancelled') {
+      return {
+        legacy: false,
+        orderId: order.id,
+        status: 'cancelled',
+        refund: await getBuyerCancellationRefund(client, order.id, payments),
+      };
+    }
+
+    const isUnpaid = ['reserved', 'payment_pending'].includes(order.status) &&
+      reservation.status === 'active';
+    const isCaptured = ['funded', 'seller_preparing'].includes(order.status) &&
+      reservation.status === 'paid' && order.handed_over_at === null;
+    if (!isUnpaid && !isCaptured) {
+      throw new ConflictError('This order is no longer eligible for pre-handover cancellation.');
+    }
+
+    const cancelledOrder = await orders.cancelReservationOrder(
+      client,
+      order.id,
+      [order.status]
+    );
+    if (!cancelledOrder) throw new ConflictError('The order state changed before cancellation.');
+
+    const endedReservation = await reservations.endReservationForSystemAction(client, reservation.id, {
+      status: isUnpaid ? 'cancelled' : 'released',
+      endReason: 'buyer_cancelled',
+      allowedStatuses: [reservation.status],
+    });
+    if (!endedReservation) throw new ConflictError('The reservation state changed before cancellation.');
+
+    if (isUnpaid) {
+      await client.query(
+        `UPDATE payments
+         SET status = 'cancelled', updated_at = now()
+         WHERE order_id = $1 AND status IN ('created', 'pending')`,
+        [order.id]
+      );
+    }
+
+    let refund = null;
+    if (isCaptured) {
+      const payment = getCapturedPayment(payments);
+      if (!payment || payment.status !== 'succeeded') {
+        throw new ConflictError('The captured payment is not available for cancellation refund.');
+      }
+      const intent = await createSystemRefundIntent(client, {
+        payment,
+        order,
+        trigger: 'system_cancel',
+        reason: 'Buyer cancelled before courier handover',
+      });
+      refund = { status: intent.status };
+    }
+
+    await listings.syncAvailabilityProjection(client, order.listing_id);
+    return { legacy: false, orderId: order.id, status: 'cancelled', refund };
+  });
+}
+
+/** FR-63a: cancel a reserved listing's unpaid or unhanded paid order during moderator take-down. */
+async function handleListingTakedown(client, listingId) {
+  const candidate = await reservations.getLiveReservationForListing(client, listingId);
+  if (!candidate) return false;
+  const orderId = await orders.getOrderIdForReservation(client, candidate.id);
+  if (!orderId) throw new ConflictError('The live reservation has no owning order.');
+
+  const order = await orders.lockReservationOrderForSystemAction(client, orderId);
+  if (!order || order.reservation_id !== candidate.id || order.listing_id !== listingId) {
+    return false;
+  }
+  const reservation = await reservations.lockReservationForSystemAction(client, candidate.id);
+  if (!reservation || reservation.listing_id !== listingId) return false;
+  const payments = await lockPaymentsForOrder(client, order.id);
+
+  const isUnpaid = reservation.status === 'active' &&
+    ['reserved', 'payment_pending'].includes(order.status);
+  if (isUnpaid) {
+    const cancelledOrder = await orders.cancelReservationOrder(client, order.id, [order.status]);
+    const releasedReservation = await reservations.endReservationForSystemAction(client, reservation.id, {
+      status: 'released',
+      endReason: 'listing_taken_down',
+      allowedStatuses: ['active'],
+    });
+    if (!cancelledOrder || !releasedReservation) {
+      throw new ConflictError('The listing reservation changed during take-down.');
+    }
+    await client.query(
+      `UPDATE payments
+       SET status = 'cancelled', updated_at = now()
+       WHERE order_id = $1 AND status IN ('created', 'pending')`,
+      [order.id]
+    );
+    return true;
+  }
+
+  if (reservation.status === 'paid' && order.handed_over_at !== null) {
+    await client.query(
+      `INSERT INTO money_audit_events (actor_id, action, order_id, reason, metadata)
+       VALUES (NULL, 'takedown_after_handover', $1, 'Listing taken down after courier handover', $2::jsonb)`,
+      [order.id, JSON.stringify({ listingId })]
+    );
+    return true;
+  }
+
+  const isUnhandedPaidOrder = reservation.status === 'paid' &&
+    ['funded', 'seller_preparing'].includes(order.status) &&
+    order.handed_over_at === null;
+  if (!isUnhandedPaidOrder) return true;
+
+  const payment = getCapturedPayment(payments);
+  if (!payment || payment.status !== 'succeeded') {
+    throw new ConflictError('The captured payment is not available for take-down refund.');
+  }
+  const cancelledOrder = await orders.cancelReservationOrder(client, order.id, [order.status]);
+  const releasedReservation = await reservations.endReservationForSystemAction(client, reservation.id, {
+    status: 'released',
+    endReason: 'listing_taken_down',
+    allowedStatuses: ['paid'],
+  });
+  if (!cancelledOrder || !releasedReservation) {
+    throw new ConflictError('The listing reservation changed during take-down.');
+  }
+  await createSystemRefundIntent(client, {
+    payment,
+    order,
+    trigger: 'system_cancel',
+    reason: 'Listing taken down',
+  });
+  return true;
+}
+
+/** FR-72: cancel and fully refund a paid order after its database handover deadline. */
+async function refundUnhandedOverOrder({ orderId }) {
+  validateOrderId(orderId);
+  return db.withTransaction(async (client) => {
+    const order = await orders.lockReservationOrderForSystemAction(client, orderId);
+    if (!order || order.reservation_id === null) return { outcome: 'skipped' };
+    const reservation = await reservations.lockReservationForSystemAction(client, order.reservation_id);
+    if (!reservation) return { outcome: 'skipped' };
+    const payments = await lockPaymentsForOrder(client, order.id);
+
+    if (!['funded', 'seller_preparing'].includes(order.status) ||
+        order.handed_over_at !== null || !order.handover_due ||
+        reservation.status !== 'paid') {
+      return { outcome: 'not_due' };
+    }
+    const payment = getCapturedPayment(payments);
+    if (!payment || payment.status !== 'succeeded') {
+      return { outcome: 'skipped' };
+    }
+
+    const cancelledOrder = await orders.cancelReservationOrder(client, order.id, [order.status]);
+    const releasedReservation = await reservations.endReservationForSystemAction(client, reservation.id, {
+      status: 'released',
+      endReason: 'handover_timeout',
+      allowedStatuses: ['paid'],
+    });
+    if (!cancelledOrder || !releasedReservation) {
+      throw new ConflictError('The order state changed before the handover timeout.');
+    }
+    const intent = await createSystemRefundIntent(client, {
+      payment,
+      order,
+      trigger: 'system_handover_timeout',
+      reason: 'Seller handover deadline exceeded',
+    });
+    await listings.syncAvailabilityProjection(client, order.listing_id);
+    return { outcome: 'refunded', refundId: intent.refundId };
   });
 }
 
@@ -666,11 +944,6 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
         : reservation?.status === 'paid'
           ? 'Duplicate capture: reservation already paid'
           : 'Ineligible capture: order not awaiting payment';
-      const auditReason = isLate
-        ? 'late_payment'
-        : reservation?.status === 'paid'
-          ? 'duplicate_capture'
-          : 'ineligible_capture';
 
       await client.query(
         `UPDATE payments
@@ -697,34 +970,12 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
             await listings.syncAvailabilityProjection(client, order.listing_id);
           }
         }
-        const { rows: refundRows } = await client.query(
-          `INSERT INTO refunds
-             (payment_id, order_id, trigger, amount, currency, status, idempotency_key, reason)
-           VALUES ($1, $2, 'system_expiry', $3::numeric, $4, 'requested', $5, $6)
-           ON CONFLICT (idempotency_key) DO NOTHING
-           RETURNING id`,
-          [
-            payment.id,
-            order.id,
-            payment.amount,
-            payment.currency,
-            `refund:${payment.id}:late`,
-            refundReason,
-          ]
-        );
-        if (refundRows[0]) await enqueueRefundJob(client, refundRows[0].id);
-        await client.query(
-          `INSERT INTO money_audit_events
-             (actor_id, action, order_id, payment_id, refund_id, reason, metadata)
-           VALUES (NULL, 'late_payment_refund_requested', $1, $2, $3, $4, $5::jsonb)`,
-          [
-            order.id,
-            payment.id,
-            refundRows[0]?.id || null,
-            auditReason,
-            JSON.stringify({ trigger: 'system_expiry' }),
-          ]
-        );
+        await createSystemRefundIntent(client, {
+          payment,
+          order,
+          trigger: 'system_expiry',
+          reason: refundReason,
+        });
       } else {
         const paid = await reservations.markReservationPaid(client, reservation.id);
         const funded = await orders.fundReservationOrder(client, order.id, reservation.id);
@@ -758,10 +1009,14 @@ async function receiveVerifiedPaymentWebhook(receipt) {
   return receivePaymentWebhook(receipt);
 }
 
+listings.setSystemTakedownHandler(handleListingTakedown);
+
 module.exports = {
   createOrReusePayment,
   getPaymentStatus,
   enqueueRefundJob,
+  cancelReservationOrder,
+  refundUnhandedOverOrder,
   processRefundJob,
   receiveVerifiedPaymentWebhook,
   processPaymentWebhookJob,

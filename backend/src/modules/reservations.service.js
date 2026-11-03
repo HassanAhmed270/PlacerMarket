@@ -156,6 +156,47 @@ async function expireReservationForLatePayment(client, reservationId) {
   return rows[0] || null;
 }
 
+/** FR-33a, FR-63a, FR-72: find the live reservation owned by a listing. */
+async function getLiveReservationForListing(client, listingId) {
+  const { rows } = await client.query(
+    `SELECT id
+     FROM reservations
+     WHERE listing_id = $1
+       AND (status = 'paid' OR (status = 'active' AND expires_at > now()))
+     LIMIT 1`,
+    [listingId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-33a, FR-63a, FR-72: lock an owning reservation after its order is locked. */
+async function lockReservationForSystemAction(client, reservationId) {
+  const { rows } = await client.query(
+    `SELECT id, listing_id, status, expires_at, end_reason
+     FROM reservations
+     WHERE id = $1
+     FOR UPDATE`,
+    [reservationId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-33a, FR-63a, FR-72: close an owning reservation with its system end reason. */
+async function endReservationForSystemAction(client, reservationId, {
+  status,
+  endReason,
+  allowedStatuses,
+}) {
+  const { rows } = await client.query(
+    `UPDATE reservations
+     SET status = $2, ended_at = COALESCE(ended_at, now()), end_reason = $3
+     WHERE id = $1 AND status::text = ANY($4::text[])
+     RETURNING id`,
+    [reservationId, status, endReason, allowedStatuses]
+  );
+  return rows[0] || null;
+}
+
 /** FR-32a, FR-63, FR-63a: atomically reserve a published listing for one buyer. */
 async function buyListing(listingId, buyerId, input) {
   if (typeof listingId !== 'string' || !UUID.test(listingId)) {
@@ -311,5 +352,8 @@ module.exports = {
   parseReservationSettings,
   markReservationPaid,
   expireReservationForLatePayment,
+  getLiveReservationForListing,
+  lockReservationForSystemAction,
+  endReservationForSystemAction,
   buyListing,
 };

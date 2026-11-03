@@ -37,6 +37,31 @@ function createEscrowPaymentsRouter({
     return next();
   };
 
+  router.post('/:orderId/cancel', noStore, (req, res, next) => {
+    if (process.env.PAYMENTS_ENABLED !== '1') {
+      return res.status(503).json({
+        error: 'Payments are currently disabled.',
+        code: 'payments_disabled',
+      });
+    }
+    return next();
+  }, auth, limiter, async (req, res, next) => {
+    try {
+      const result = await service.cancelReservationOrder({
+        orderId: req.params.orderId,
+        buyerId: req.user.id,
+      });
+      if (result.legacy) return next();
+      return res.json({
+        orderId: result.orderId,
+        status: result.status,
+        refund: result.refund,
+      });
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   router.post('/:orderId/payment', noStore, (req, res, next) => {
     if (process.env.PAYMENTS_ENABLED !== '1') {
       return res.status(503).json({

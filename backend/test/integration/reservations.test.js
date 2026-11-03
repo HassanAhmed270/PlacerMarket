@@ -443,13 +443,21 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
 
     const adminListingId = await createListing();
     const adminReservationId = await createReservation({ listingId: adminListingId });
+    const adminOrderId = await createReservationOrder(adminReservationId, adminListingId);
     await expect(listings.rejectOrUnpublishListing(adminListingId, {
       reviewerId: fixture.otherUserId, reason: 'Admin take-down regression test',
     })).resolves.toMatchObject({ status: 'unpublished' });
     const { rows: adminReservationRows } = await db.query(
-      'SELECT status FROM reservations WHERE id = $1', [adminReservationId]
+      `SELECT reservation.status AS reservation_status, order_row.status AS order_status
+       FROM reservations reservation
+       JOIN orders order_row ON order_row.reservation_id = reservation.id
+       WHERE reservation.id = $1 AND order_row.id = $2`,
+      [adminReservationId, adminOrderId]
     );
-    expect(adminReservationRows[0].status).toBe('active');
+    expect(adminReservationRows[0]).toEqual({
+      reservation_status: 'released',
+      order_status: 'cancelled',
+    });
   });
 
   test('FR-63a: Buy expires stale reservation state and cancels its unpaid order before reserving again', async () => {

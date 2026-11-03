@@ -152,6 +152,11 @@ projections synchronized for legacy order transitions. Listing revision
 approval and seller pause/removal call the shared predicates synchronously;
 blocked revision notices use the existing notification event/queue path.
 
+For FR-63a moderator take-downs, `listings.service.js` reads live reservation
+state through `reservations.service.js`; `escrowPayments.service.js` injects
+the system-refund handler through `listings.setSystemTakedownHandler()` so the
+listing and escrow services do not introduce a circular require.
+
 Root-level, not tied to one module:
 - `db.service.js` — the only file that imports `pg` directly; exports `read`, `write`, compatibility `query`, `many`, `one`, `withTransaction` (one planned, named exception: `lib/queue.js`, `rules.md` Section 11).
 - `lib/errors.js` — shared error classes (`NotYetSpecifiedError`, `NotImplementedError`, `NotFoundError`, `ValidationError`, `ForbiddenError`) — which to use when is in `rules.md` Section 4.
