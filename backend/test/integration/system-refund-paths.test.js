@@ -699,6 +699,61 @@ describe('FR-72 handover timeout', () => {
     });
   });
 
+  test('FR-72: the handover sweep refunds only due, unhanded-over funded orders once', async () => {
+    const due = trackedFixtures[0];
+    const notDue = await createScenario();
+    const handedOver = await createScenario();
+    for (const scenario of [due, notDue, handedOver]) await fundOrder(scenario);
+    await db.query(
+      `UPDATE orders
+       SET funded_at = now() - INTERVAL '73 hours',
+           handover_deadline_at = (now() - INTERVAL '73 hours') + INTERVAL '72 hours'
+       WHERE id = $1`,
+      [due.orderId]
+    );
+    await db.query(
+      `UPDATE orders
+       SET funded_at = now() - INTERVAL '73 hours',
+           handover_deadline_at = (now() - INTERVAL '73 hours') + INTERVAL '72 hours',
+           handed_over_at = now()
+       WHERE id = $1`,
+      [handedOver.orderId]
+    );
+
+    await expect(escrowPayments.sweepUnhandedOverOrders({ logger: { info: jest.fn() } }))
+      .resolves.toEqual({ processed: 1, skipped: 0, failed: 0 });
+    expect(await refundRows(due)).toEqual([expect.objectContaining({
+      trigger: 'system_handover_timeout',
+      status: 'requested',
+      idempotency_key: `refund:${due.paymentId}:handover_timeout`,
+    })]);
+    expect(await refundRows(notDue)).toEqual([]);
+    expect(await refundRows(handedOver)).toEqual([]);
+  });
+
+  test('FR-72: parallel handover sweeps and buyer cancellation create one timeout refund', async () => {
+    const scenario = trackedFixtures[0];
+    await fundOrder(scenario);
+    await db.query(
+      `UPDATE orders
+       SET funded_at = now() - INTERVAL '73 hours',
+           handover_deadline_at = (now() - INTERVAL '73 hours') + INTERVAL '72 hours'
+       WHERE id = $1`,
+      [scenario.orderId]
+    );
+
+    const [buyerResult, firstSweep, secondSweep] = await Promise.all([
+      cancelThroughApi(scenario),
+      escrowPayments.sweepUnhandedOverOrders({ logger: { info: jest.fn() } }),
+      escrowPayments.sweepUnhandedOverOrders({ logger: { info: jest.fn() } }),
+    ]);
+    expect([200, 409]).toContain(buyerResult.status);
+    expect(firstSweep.failed + secondSweep.failed).toBe(0);
+    expect(firstSweep.processed + secondSweep.processed).toBeLessThanOrEqual(1);
+    expect(await refundRows(scenario)).toHaveLength(1);
+    expect(['system_handover_timeout', 'system_cancel']).toContain((await refundRows(scenario))[0].trigger);
+  });
+
   test('FR-72: a handed-over order is skipped by the timeout function', async () => {
     const scenario = trackedFixtures[0];
     await fundOrder(scenario);
@@ -730,10 +785,11 @@ describe('FR-72 handover timeout', () => {
       );
       const [cancelResponse, timeoutResult] = await Promise.all([
         cancelThroughApi(scenario),
-        escrowPayments.refundUnhandedOverOrder({ orderId: scenario.orderId }),
+        escrowPayments.sweepUnhandedOverOrders({ logger: { info: jest.fn() } }),
       ]);
       expect([200, 409]).toContain(cancelResponse.status);
-      expect(timeoutResult.outcome).toMatch(/^(refunded|not_due)$/);
+      expect(timeoutResult.failed).toBe(0);
+      expect(timeoutResult.processed + timeoutResult.skipped).toBeGreaterThanOrEqual(1);
       expect(await refundRows(scenario)).toHaveLength(1);
       const { rows } = await db.query(
         `SELECT orders.status AS order_status, reservations.status AS reservation_status,

@@ -201,6 +201,31 @@ Returning to the site or polling payment status never funds an order; only the
 verified webhook worker does. The listing becomes sold after successful
 funding and the transactional listing-search/page-snapshot sync jobs run.
 
+## Scheduled money maintenance
+
+The worker (not the API process) schedules reservation expiry every minute,
+the unhanded-over funded-order refund sweep every five minutes, and money
+reconciliation every ten minutes. The worker logs only processed, skipped, and
+failed counts. To demonstrate expiry in a disposable demo database, temporarily
+set `platform_settings.reservation_minutes` to `1`, create a reservation, and
+wait for it to expire and the next worker sweep; restore the setting afterward.
+To demonstrate the 72-hour sweep, use a funded order with no handover and move
+its deadline into the past while preserving the database's 72-hour consistency
+constraint:
+
+```sql
+UPDATE orders
+SET funded_at = now() - INTERVAL '73 hours',
+    handover_deadline_at = now() - INTERVAL '1 hour'
+WHERE id = '<orderId>'
+  AND status IN ('funded', 'seller_preparing')
+  AND handed_over_at IS NULL;
+```
+
+Reconciliation requeues stale refund and webhook work and looks up old pending
+payments through the selected fake gateway; any final outcome is still applied
+by the normal webhook processing path. No real payment provider is used.
+
 ## Successful demo transcript
 
 The following is a historical Phase 3 smoke transcript; its checkout-placeholder

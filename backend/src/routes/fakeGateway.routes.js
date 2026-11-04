@@ -1,7 +1,11 @@
 const { Router, urlencoded } = require('express');
 const db = require('../db.service');
 const { buildSignedFakeEvent } = require('../lib/adapters/fakePaymentGateway');
-const { buildPaymentReturnUrl, getPaymentWebhookUrl } = require('../lib/adapters/paymentGateway');
+const {
+  buildPaymentReturnUrl,
+  getPaymentGateway,
+  getPaymentWebhookUrl,
+} = require('../lib/adapters/paymentGateway');
 
 const SCENARIOS = Object.freeze({
   success: 'payment.succeeded',
@@ -103,6 +107,13 @@ function createFakeGatewayRouter({
         currency: payment.currency,
         eventId: `fake:${payment.provider_payment_id}:${req.body.scenario}`,
       });
+      const gateway = getPaymentGateway();
+      if (gateway.getCheckoutSession(payment.provider_payment_id)) {
+        gateway.setPaymentOutcome({
+          providerPaymentRef: payment.provider_payment_id,
+          status: eventType === 'payment.failed' ? 'failed' : 'succeeded',
+        });
+      }
       const target = webhookUrl || getPaymentWebhookUrl();
       const deliveries = req.body.scenario === 'duplicate' ? 2 : 1;
       const responses = [];

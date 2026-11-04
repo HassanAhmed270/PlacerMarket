@@ -258,6 +258,24 @@ async function getOrderIdForReservation(client, reservationId) {
   return rows[0]?.id || null;
 }
 
+/** FR-72: list a bounded batch of funded orders whose 72-hour handover deadline elapsed. */
+async function getDueHandoverOrderIds(limit = 100) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ValidationError('Handover sweep batch limit must be from 1 to 100.');
+  }
+  const { rows } = await db.read(
+    `SELECT id
+     FROM orders
+     WHERE status IN ('funded', 'seller_preparing')
+       AND handed_over_at IS NULL
+       AND handover_deadline_at <= now()
+     ORDER BY handover_deadline_at, id
+     LIMIT $1`,
+    [limit]
+  );
+  return rows.map(({ id }) => id);
+}
+
 /** FR-33a: free cancellation before handover to delivery partner, no fee. */
 async function cancelOrder(orderId, buyerId) {
   const updated = await db.withTransaction(async (client) => {
@@ -362,6 +380,7 @@ module.exports = {
   cancelUnpaidReservationOrder,
   getMoneyLockContext,
   cancelExpiredReservationOrders,
+  getDueHandoverOrderIds,
   lockOrderForRefund,
   lockReservationOrderForSystemAction,
   cancelReservationOrder,

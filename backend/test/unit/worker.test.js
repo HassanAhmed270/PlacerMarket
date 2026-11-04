@@ -4,6 +4,7 @@ const mockQueue = {
   QUEUES: {
     NOTIFICATIONS: 'notifications',
     EMAIL: 'email',
+    MONEY_MAINTENANCE: 'money-maintenance',
     LISTING_SEARCH: 'listing-search',
     PAGE_SNAPSHOTS: 'page-snapshots',
     PAYMENT_WEBHOOKS: 'payment-webhooks',
@@ -12,6 +13,7 @@ const mockQueue = {
   WORKER_CONCURRENCY: {
     notifications: 4,
     email: 2,
+    'money-maintenance': 1,
     'listing-search': 4,
     'page-snapshots': 1,
     'payment-webhooks': 2,
@@ -24,10 +26,13 @@ const mockQueue = {
 const mockRedis = { createRedisClient: jest.fn() };
 const mockNotifications = { processNotificationJob: jest.fn() };
 const mockListingSearch = { processListingSearchJob: jest.fn() };
+const mockListings = { expireDueReservations: jest.fn() };
 const mockPageSnapshots = { processSnapshotJob: jest.fn(), enqueueFullSnapshotRebuild: jest.fn().mockResolvedValue('startup-job') };
 const mockEscrowPayments = {
   processPaymentWebhookJob: jest.fn(),
   processRefundJob: jest.fn(),
+  sweepUnhandedOverOrders: jest.fn(),
+  reconcileMoneyState: jest.fn(),
 };
 const { encryptEmailPayload } = require('../../src/lib/emailQueuePayload');
 
@@ -35,6 +40,7 @@ jest.mock('../../src/lib/queue', () => mockQueue);
 jest.mock('../../src/lib/redis', () => mockRedis);
 jest.mock('../../src/modules/notifications.service', () => mockNotifications);
 jest.mock('../../src/modules/listingSearch.service', () => mockListingSearch);
+jest.mock('../../src/modules/listings.service', () => mockListings);
 jest.mock('../../src/modules/pageSnapshots.service', () => mockPageSnapshots);
 jest.mock('../../src/modules/escrowPayments.service', () => mockEscrowPayments);
 
@@ -71,6 +77,7 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
   test('FR-69, FR-77d: starts the worker and registers refund and notification consumers', async () => {
     const boss = new EventEmitter();
     boss.work = jest.fn().mockResolvedValue(undefined);
+    boss.schedule = jest.fn().mockResolvedValue(undefined);
     const queue = { boss, start: jest.fn().mockResolvedValue(undefined), stop: jest.fn().mockResolvedValue(undefined) };
     const redis = { start: jest.fn().mockResolvedValue(undefined), stop: jest.fn().mockResolvedValue(undefined) };
     mockQueue.createQueueClient.mockReturnValue(queue);
@@ -131,6 +138,36 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
         { batchSize: 1, localConcurrency: 2, transactional: false },
         expect.any(Function)
       );
+      expect(boss.work).toHaveBeenCalledWith(
+        'money-maintenance',
+        { batchSize: 1, localConcurrency: 1, transactional: false },
+        expect.any(Function)
+      );
+      expect(boss.schedule).toHaveBeenCalledWith(
+        'money-maintenance',
+        '* * * * *',
+        { task: 'reservation-expiry' },
+        { key: 'reservation-expiry', singletonKey: 'money-maintenance:reservation-expiry' }
+      );
+      expect(boss.schedule).toHaveBeenCalledWith(
+        'money-maintenance',
+        '*/5 * * * *',
+        { task: 'handover-timeout' },
+        { key: 'handover-timeout', singletonKey: 'money-maintenance:handover-timeout' }
+      );
+      expect(boss.schedule).toHaveBeenCalledWith(
+        'money-maintenance',
+        '*/10 * * * *',
+        { task: 'reconciliation' },
+        { key: 'reconciliation', singletonKey: 'money-maintenance:reconciliation' }
+      );
+      const maintenanceHandler = boss.work.mock.calls.find(([name]) => name === 'money-maintenance')[2];
+      await maintenanceHandler([{ data: { task: 'reservation-expiry' } }]);
+      expect(mockListings.expireDueReservations).toHaveBeenCalledTimes(1);
+      await maintenanceHandler([{ data: { task: 'handover-timeout' } }]);
+      expect(mockEscrowPayments.sweepUnhandedOverOrders).toHaveBeenCalledTimes(1);
+      await maintenanceHandler([{ data: { task: 'reconciliation' } }]);
+      expect(mockEscrowPayments.reconcileMoneyState).toHaveBeenCalledTimes(1);
       const paymentWebhookHandler = boss.work.mock.calls.find(([name]) => name === 'payment-webhooks')[2];
       await paymentWebhookHandler([{ data: { webhookInboxId: 'inbox-1' } }]);
       expect(mockEscrowPayments.processPaymentWebhookJob).toHaveBeenCalledWith({ webhookInboxId: 'inbox-1' });

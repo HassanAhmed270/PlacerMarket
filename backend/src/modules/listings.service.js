@@ -28,8 +28,10 @@ const listingSearch = require('./listingSearch.service');
 const pageSnapshots = require('./pageSnapshots.service');
 const availability = require('./availability.service');
 const reservations = require('./reservations.service');
+const orders = require('./orders.service');
 const { validateSeoChoice, buildSeoPayload, generateSeoRecommendation } = require('../lib/listingSeo');
 const { canonicalListingUrl } = require('../lib/listingUrls');
+const { performance } = require('node:perf_hooks');
 const {
   NotFoundError, ValidationError, ForbiddenError, ConflictError, ConfigurationError,
 } = require('../lib/errors');
@@ -126,6 +128,65 @@ async function syncAvailabilityProjection(client, listingId) {
   await listingSearch.enqueueListingSearchSync(client, listingId, rows[0].search_version);
   await pageSnapshots.enqueueListingSnapshotSync(client, listingId, rows[0].search_version);
   return rows[0].search_version;
+}
+
+async function expireOneDueReservation(reservationId) {
+  return db.withTransactionRetry(async (client) => {
+    const orderId = await orders.getOrderIdForReservation(client, reservationId);
+    if (!orderId) return false;
+    const context = await orders.getMoneyLockContext(client, orderId);
+    if (!context || context.reservation_id !== reservationId) return false;
+    if (!(await lockListingForMoneyAction(client, context.listing_id))) return false;
+    if (!(await users.lockBuyerForMoneyAction(client, context.buyer_id))) return false;
+
+    const order = await orders.lockReservationOrderForSystemAction(client, orderId);
+    if (!order || order.listing_id !== context.listing_id ||
+        order.buyer_id !== context.buyer_id || order.reservation_id !== reservationId) return false;
+    const reservation = await reservations.lockReservationForSystemAction(client, reservationId);
+    if (!reservation || reservation.status !== 'active' || !reservation.is_expired ||
+        !['reserved', 'payment_pending'].includes(order.status)) return false;
+
+    const cancelled = await orders.cancelExpiredReservationOrders(client, [reservationId]);
+    if (!cancelled.some((row) => row.id === orderId)) return false;
+    const expired = await reservations.endReservationForSystemAction(client, reservationId, {
+      status: 'expired',
+      endReason: 'expired',
+      allowedStatuses: ['active'],
+    });
+    if (!expired) throw new ConflictError('The reservation changed during expiry.');
+
+    await syncAvailabilityProjection(client, context.listing_id);
+    return true;
+  });
+}
+
+/** FR-63a: expire due unpaid reservations in bounded, independent transactions. */
+async function expireDueReservations({ limit = 100, timeBudgetMs = 20000, logger = console } = {}) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ValidationError('Reservation expiry batch limit must be from 1 to 100.');
+  }
+  if (!Number.isFinite(timeBudgetMs) || timeBudgetMs <= 0) {
+    throw new ValidationError('Reservation expiry time budget must be positive.');
+  }
+
+  const startedAt = performance.now();
+  const candidates = await reservations.getDueReservationIds(limit);
+  const counts = { processed: 0, skipped: 0, failed: 0 };
+  for (let index = 0; index < candidates.length; index += 1) {
+    if (performance.now() - startedAt >= timeBudgetMs) {
+      counts.skipped += candidates.length - index;
+      break;
+    }
+    try {
+      if (await expireOneDueReservation(candidates[index])) counts.processed += 1;
+      else counts.skipped += 1;
+    } catch {
+      counts.failed += 1;
+    }
+  }
+
+  logger.info('Reservation expiry sweep completed', counts);
+  return counts;
 }
 
 /** FR-63a, FR-69, FR-72: lock the listing before buyer, order, and escrow rows. */
@@ -731,6 +792,7 @@ async function resubmitListing(listingId, sellerId) {
 module.exports = {
   syncAvailabilityProjection,
   lockListingForMoneyAction,
+  expireDueReservations,
   setSystemTakedownHandler,
   createListing,
   getSeoRecommendation,

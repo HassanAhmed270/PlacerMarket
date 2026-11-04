@@ -108,6 +108,37 @@ async function receiveSignedEvent(signed) {
   return rows[0].id;
 }
 
+async function createReconciliationScenario() {
+  const scenarioFixture = await createFixture({ askingPrice: '1250.50', listingStatus: 'published' });
+  const record = { fixture: scenarioFixture, buyerId: null, orderId: null };
+  additionalFixtures.push(record);
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const { rows: buyerRows } = await db.query(
+    `INSERT INTO users (full_name, phone, password_hash, city_id, role)
+     VALUES ($1, $2, 'fixture-hash', $3, 'buyer') RETURNING id`,
+    [`Reconciliation buyer ${suffix}`, `+1556${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, scenarioFixture.cityId]
+  );
+  record.buyerId = buyerRows[0].id;
+  await db.query(
+    `INSERT INTO supported_delivery_cities (city_id, active)
+     VALUES ($1, true) ON CONFLICT (city_id) DO UPDATE SET active = true`,
+    [scenarioFixture.cityId]
+  );
+  const reservation = await reservations.buyListing(scenarioFixture.listingId, record.buyerId, {
+    address: { ...ADDRESS, cityId: scenarioFixture.cityId },
+  });
+  record.orderId = reservation.orderId;
+  const payment = await escrowPayments.createOrReusePayment({
+    orderId: record.orderId,
+    buyerId: record.buyerId,
+  });
+  return {
+    ...record,
+    reservationId: reservation.reservationId,
+    paymentId: payment.paymentId,
+  };
+}
+
 beforeEach(async () => {
   originalEnvironment = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   process.env.NODE_ENV = 'test';
@@ -1035,6 +1066,226 @@ describe('FR-61, FR-62 payment webhook worker', () => {
       ledger_amount: `-${secondPaymentRows[0].amount}`,
       success_audit_count: 1,
     });
+  });
+
+  test('FR-70: reconciliation re-enqueues orphan inbox rows and executes an orphan requested refund', async () => {
+    const inboxEvent = await createSignedEvent();
+    const inboxId = await receiveSignedEvent(inboxEvent);
+    await db.query(
+      `UPDATE webhook_inbox
+       SET received_at = now() - INTERVAL '3 minutes'
+       WHERE id = $1`,
+      [inboxId]
+    );
+    await db.query(
+      `DELETE FROM pgboss.job
+       WHERE name = $1 AND data->>'webhookInboxId' = $2`,
+      [queue.QUEUES.PAYMENT_WEBHOOKS, inboxId]
+    );
+
+    await expect(escrowPayments.reconcileMoneyState({ logger: { info: jest.fn() } }))
+      .resolves.toEqual({ processed: 1, skipped: 0, failed: 0 });
+    expect(await webhookCounts(eventIds[0])).toEqual({ inbox: 1, jobs: 1 });
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxId });
+
+    const { rows: insertedRefunds } = await db.query(
+      `INSERT INTO refunds
+         (payment_id, order_id, trigger, amount, currency, status, idempotency_key, reason,
+          requested_at, updated_at)
+       SELECT id, order_id, 'system_cancel', amount, currency, 'requested',
+              $2, 'orphan reconciliation test', now() - INTERVAL '3 minutes',
+              now() - INTERVAL '3 minutes'
+       FROM payments WHERE id = $1
+       RETURNING id`,
+      [paymentId, `refund:reconcile:${paymentId}`]
+    );
+    const refundId = insertedRefunds[0].id;
+
+    await expect(escrowPayments.reconcileMoneyState({ logger: { info: jest.fn() } }))
+      .resolves.toEqual({ processed: 1, skipped: 0, failed: 0 });
+    const { rows: refundJobs } = await db.query(
+      `SELECT count(*)::int AS count
+       FROM pgboss.job
+       WHERE name = $1 AND data->>'refundId' = $2`,
+      [queue.QUEUES.REFUNDS, refundId]
+    );
+    expect(refundJobs[0].count).toBe(1);
+    await escrowPayments.processRefundJob({ refundId });
+    const { rows: finalRefund } = await db.query(
+      'SELECT status FROM refunds WHERE id = $1',
+      [refundId]
+    );
+    expect(finalRefund).toEqual([{ status: 'succeeded' }]);
+  });
+
+  test('FR-70: gateway lookup outcomes enter one synthetic inbox event and use normal funding and failure processing', async () => {
+    const failed = await createReconciliationScenario();
+    const pending = await createReconciliationScenario();
+    await db.query(
+      `UPDATE payments
+       SET provider_created_at = now() - INTERVAL '16 minutes',
+           updated_at = now() - INTERVAL '16 minutes'
+       WHERE id = ANY($1::uuid[])`,
+      [[paymentId, failed.paymentId, pending.paymentId]]
+    );
+
+    const gateway = paymentGateway.getPaymentGateway();
+    gateway.setPaymentOutcome({ providerPaymentRef: paymentRef, status: 'succeeded' });
+    const { rows: failedPaymentRows } = await db.query(
+      'SELECT provider_payment_id FROM payments WHERE id = $1',
+      [failed.paymentId]
+    );
+    gateway.setPaymentOutcome({
+      providerPaymentRef: failedPaymentRows[0].provider_payment_id,
+      status: 'failed',
+    });
+
+    await expect(escrowPayments.reconcileMoneyState({ logger: { info: jest.fn() } }))
+      .resolves.toEqual({ processed: 2, skipped: 1, failed: 0 });
+    await expect(escrowPayments.reconcileMoneyState({ logger: { info: jest.fn() } }))
+      .resolves.toEqual({ processed: 0, skipped: 3, failed: 0 });
+
+    const syntheticEvents = [
+      { id: paymentId, outcome: 'succeeded' },
+      { id: failed.paymentId, outcome: 'failed' },
+    ];
+    for (const synthetic of syntheticEvents) {
+      const eventId = `reconcile:${synthetic.id}:${synthetic.outcome}`;
+      eventIds.push(eventId);
+      const { rows: inboxRows } = await db.query(
+        `SELECT id, event_type, signature_metadata, verified_at, raw_body
+         FROM webhook_inbox
+         WHERE provider = 'fake' AND provider_event_id = $1`,
+        [eventId]
+      );
+      expect(inboxRows).toHaveLength(1);
+      expect(inboxRows[0]).toMatchObject({
+        event_type: `payment.${synthetic.outcome}`,
+        signature_metadata: { reconciled: true, source: 'gateway_lookup' },
+      });
+      expect(inboxRows[0].verified_at).toBeInstanceOf(Date);
+      expect(JSON.parse(inboxRows[0].raw_body.toString())).toMatchObject({
+        eventId,
+        type: `payment.${synthetic.outcome}`,
+      });
+      await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxRows[0].id });
+    }
+
+    const { rows: states } = await db.query(
+      `SELECT payment.id, payment.status AS payment_status, order_row.status AS order_status
+       FROM payments payment
+       JOIN orders order_row ON order_row.id = payment.order_id
+       WHERE payment.id = ANY($1::uuid[])`,
+      [[paymentId, failed.paymentId, pending.paymentId]]
+    );
+    expect(states).toEqual(expect.arrayContaining([
+      { id: paymentId, payment_status: 'succeeded', order_status: 'funded' },
+      { id: failed.paymentId, payment_status: 'failed', order_status: 'payment_pending' },
+      { id: pending.paymentId, payment_status: 'pending', order_status: 'payment_pending' },
+    ]));
+  });
+
+  test('FR-70: a succeeded gateway lookup after reservation expiry is handled as a late capture', async () => {
+    await db.query(
+      `UPDATE reservations
+       SET status = 'expired', ended_at = now() - INTERVAL '1 minute', end_reason = 'expired'
+       WHERE id = (SELECT reservation_id FROM orders WHERE id = $1)`,
+      [orderId]
+    );
+    await db.query(
+      `UPDATE orders SET status = 'cancelled', cancelled_at = now() - INTERVAL '1 minute'
+       WHERE id = $1`,
+      [orderId]
+    );
+    await db.query(
+      `UPDATE payments
+       SET provider_created_at = now() - INTERVAL '16 minutes',
+           updated_at = now() - INTERVAL '16 minutes'
+       WHERE id = $1`,
+      [paymentId]
+    );
+    paymentGateway.getPaymentGateway().setPaymentOutcome({
+      providerPaymentRef: paymentRef,
+      status: 'succeeded',
+    });
+
+    await expect(escrowPayments.reconcileMoneyState({ logger: { info: jest.fn() } }))
+      .resolves.toEqual({ processed: 1, skipped: 0, failed: 0 });
+    const eventId = `reconcile:${paymentId}:succeeded`;
+    eventIds.push(eventId);
+    const { rows: inboxRows } = await db.query(
+      'SELECT id FROM webhook_inbox WHERE provider = $1 AND provider_event_id = $2',
+      ['fake', eventId]
+    );
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxRows[0].id });
+    const { rows: resultRows } = await db.query(
+      `SELECT payment.status AS payment_status, order_row.status AS order_status,
+              reservation.status AS reservation_status, refund.trigger, refund.status AS refund_status
+       FROM payments payment
+       JOIN orders order_row ON order_row.id = payment.order_id
+       JOIN reservations reservation ON reservation.id = order_row.reservation_id
+       JOIN refunds refund ON refund.payment_id = payment.id
+       WHERE payment.id = $1`,
+      [paymentId]
+    );
+    expect(resultRows[0]).toEqual({
+      payment_status: 'late',
+      order_status: 'cancelled',
+      reservation_status: 'expired',
+      trigger: 'system_expiry',
+      refund_status: 'requested',
+    });
+  });
+
+  test('FR-70: one gateway lookup error leaves that payment unchanged and does not stop later items', async () => {
+    const failing = await createReconciliationScenario();
+    const succeeding = await createReconciliationScenario();
+    const { rows: paymentRows } = await db.query(
+      'SELECT id, provider_payment_id FROM payments WHERE id = ANY($1::uuid[])',
+      [[failing.paymentId, succeeding.paymentId]]
+    );
+    const references = new Map(paymentRows.map((row) => [row.id, row.provider_payment_id]));
+    await db.query(
+      `UPDATE payments
+       SET provider_created_at = CASE id WHEN $1 THEN now() - INTERVAL '20 minutes'
+                                         ELSE now() - INTERVAL '19 minutes' END,
+           updated_at = now() - INTERVAL '20 minutes'
+       WHERE id = ANY($2::uuid[])`,
+      [failing.paymentId, [failing.paymentId, succeeding.paymentId]]
+    );
+    const gateway = {
+      fetchPayment: jest.fn(async ({ providerPaymentRef }) => {
+        if (providerPaymentRef === references.get(failing.paymentId)) throw new Error('injected gateway failure');
+        return { status: 'succeeded' };
+      }),
+    };
+
+    await expect(escrowPayments.reconcileMoneyState({
+      gateway,
+      logger: { info: jest.fn() },
+    })).resolves.toEqual({ processed: 1, skipped: 0, failed: 1 });
+    expect(gateway.fetchPayment).toHaveBeenCalledTimes(2);
+    const { rows: stateRows } = await db.query(
+      `SELECT id, status FROM payments WHERE id = ANY($1::uuid[])`,
+      [[failing.paymentId, succeeding.paymentId]]
+    );
+    expect(stateRows).toEqual(expect.arrayContaining([
+      { id: failing.paymentId, status: 'pending' },
+      { id: succeeding.paymentId, status: 'pending' },
+    ]));
+    const successEventId = `reconcile:${succeeding.paymentId}:succeeded`;
+    eventIds.push(successEventId);
+    const { rows: inboxRows } = await db.query(
+      'SELECT id FROM webhook_inbox WHERE provider = $1 AND provider_event_id = $2',
+      ['fake', successEventId]
+    );
+    expect(inboxRows).toHaveLength(1);
+    await escrowPayments.processPaymentWebhookJob({ webhookInboxId: inboxRows[0].id });
+    const { rows: completedRows } = await db.query(
+      'SELECT status FROM payments WHERE id = $1',
+      [succeeding.paymentId]
+    );
+    expect(completedRows).toEqual([{ status: 'succeeded' }]);
   });
 
   test('FR-61, FR-62: an active unexpired reservation with an ineligible order is refunded without funding', async () => {

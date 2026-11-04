@@ -173,7 +173,8 @@ async function getLiveReservationForListing(client, listingId) {
 /** FR-33a, FR-63a, FR-72: lock an owning reservation after its order is locked. */
 async function lockReservationForSystemAction(client, reservationId) {
   const { rows } = await client.query(
-    `SELECT id, listing_id, status, expires_at, end_reason
+    `SELECT id, listing_id, status, expires_at, end_reason,
+           expires_at <= now() AS is_expired
      FROM reservations
      WHERE id = $1
      FOR UPDATE`,
@@ -196,6 +197,25 @@ async function endReservationForSystemAction(client, reservationId, {
     [reservationId, status, endReason, allowedStatuses]
   );
   return rows[0] || null;
+}
+
+/** FR-63a: claim a bounded set of expired reservation ids without changing their state. */
+async function getDueReservationIds(limit = 100) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ValidationError('Reservation expiry batch limit must be from 1 to 100.');
+  }
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT id
+       FROM reservations
+       WHERE status = 'active' AND expires_at <= now()
+       ORDER BY expires_at, id
+       LIMIT $1
+       FOR UPDATE SKIP LOCKED`,
+      [limit]
+    );
+    return rows.map(({ id }) => id);
+  });
 }
 
 /** FR-32a, FR-63, FR-63a: atomically reserve a published listing for one buyer. */
@@ -355,6 +375,7 @@ module.exports = {
   parseReservationSettings,
   markReservationPaid,
   expireReservationForLatePayment,
+  getDueReservationIds,
   getLiveReservationForListing,
   lockReservationForSystemAction,
   endReservationForSystemAction,

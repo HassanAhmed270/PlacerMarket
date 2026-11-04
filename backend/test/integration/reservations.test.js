@@ -185,6 +185,10 @@ afterEach(async () => {
         'DELETE FROM cod_collections WHERE order_id IN (SELECT id FROM orders WHERE listing_id = ANY($1::uuid[]))',
         [listingIds]
       );
+      await db.query(
+        'DELETE FROM payments WHERE order_id IN (SELECT id FROM orders WHERE listing_id = ANY($1::uuid[]))',
+        [listingIds]
+      );
       await db.query('DELETE FROM orders WHERE listing_id = ANY($1::uuid[])', [listingIds]);
       await db.query('DELETE FROM reservations WHERE listing_id = ANY($1::uuid[])', [listingIds]);
       await db.query(
@@ -631,5 +635,211 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
       .send({ address: { ...ADDRESS, cityId: fixture.cityId } })
       .expect(401)
       .expect('Cache-Control', 'private, no-store');
+  });
+
+  test('FR-63a: expiry sweep expires due unpaid reservations, cancels orders, and synchronizes availability', async () => {
+    const dueListingId = await createListing();
+    const dueReservationId = await createReservation({
+      listingId: dueListingId,
+      expires: "now() - interval '1 minute'",
+    });
+    const dueOrderId = await createReservationOrder(dueReservationId, dueListingId, 'payment_pending');
+    await db.query(
+      `INSERT INTO payments
+         (order_id, provider, provider_payment_id, provider_reference, status,
+          amount, currency, gateway_fee_currency, idempotency_key)
+       VALUES ($1, 'fake', 'expiry-sweep-payment', 'expiry-sweep-payment', 'pending',
+               1550.50, 'PKR', 'PKR', $2)`,
+      [dueOrderId, `expiry-sweep:${dueOrderId}`]
+    );
+
+    const notDueListingId = await createListing();
+    const notDueReservationId = await createReservation({ listingId: notDueListingId });
+    const notDueOrderId = await createReservationOrder(notDueReservationId, notDueListingId);
+
+    const paidListingId = await createListing();
+    const paidReservationId = await createReservation({
+      listingId: paidListingId,
+      status: 'paid',
+      expires: "now() - interval '1 minute'",
+    });
+    const paidOrderId = await createReservationOrder(paidReservationId, paidListingId, 'funded');
+
+    const endedListingId = await createListing();
+    const endedReservationId = await createReservation({
+      listingId: endedListingId,
+      status: 'expired',
+      expires: "now() - interval '1 minute'",
+    });
+    const endedOrderId = await createReservationOrder(endedReservationId, endedListingId, 'cancelled');
+
+    const { rows: beforeVersion } = await db.query(
+      'SELECT search_version FROM listings WHERE id = $1',
+      [dueListingId]
+    );
+    const logger = { info: jest.fn() };
+    await expect(listings.expireDueReservations({ logger })).resolves.toEqual({
+      processed: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const { rows: dueRows } = await db.query(
+      `SELECT reservation.status AS reservation_status, reservation.ended_at,
+              reservation.end_reason, orders.status AS order_status,
+              payments.status AS payment_status, listings.search_version
+       FROM reservations reservation
+       JOIN orders ON orders.reservation_id = reservation.id
+       JOIN payments ON payments.order_id = orders.id
+       JOIN listings ON listings.id = reservation.listing_id
+       WHERE reservation.id = $1`,
+      [dueReservationId]
+    );
+    expect(dueRows[0]).toMatchObject({
+      reservation_status: 'expired',
+      end_reason: 'expired',
+      order_status: 'cancelled',
+      payment_status: 'pending',
+      search_version: String(Number(beforeVersion[0].search_version) + 1),
+    });
+    expect(dueRows[0].ended_at).toBeInstanceOf(Date);
+    const { rows: otherRows } = await db.query(
+      `SELECT id, status FROM reservations WHERE id = ANY($1::uuid[])
+       ORDER BY id`,
+      [[notDueReservationId, paidReservationId, endedReservationId]]
+    );
+    expect(otherRows).toEqual(expect.arrayContaining([
+      { id: notDueReservationId, status: 'active' },
+      { id: paidReservationId, status: 'paid' },
+      { id: endedReservationId, status: 'expired' },
+    ]));
+    const { rows: otherOrderRows } = await db.query(
+      'SELECT id, status FROM orders WHERE id = ANY($1::uuid[])',
+      [[notDueOrderId, paidOrderId, endedOrderId]]
+    );
+    expect(otherOrderRows).toEqual(expect.arrayContaining([
+      { id: notDueOrderId, status: 'reserved' },
+      { id: paidOrderId, status: 'funded' },
+      { id: endedOrderId, status: 'cancelled' },
+    ]));
+
+    const { rows: syncJobs } = await db.query(
+      `SELECT name, data->>'searchVersion' AS search_version
+       FROM pgboss.job
+       WHERE name = ANY($1::text[]) AND data->>'listingId' = $2`,
+      [[queue.QUEUES.LISTING_SEARCH, queue.QUEUES.PAGE_SNAPSHOTS], dueListingId]
+    );
+    expect(syncJobs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: queue.QUEUES.LISTING_SEARCH }),
+      expect.objectContaining({ name: queue.QUEUES.PAGE_SNAPSHOTS }),
+    ]));
+    expect(logger.info).toHaveBeenCalledWith('Reservation expiry sweep completed', {
+      processed: 1,
+      skipped: 0,
+      failed: 0,
+    });
+  });
+
+  test('FR-63a: expiry sweep honors its batch limit and isolates one failing reservation', async () => {
+    const limitedIds = [];
+    for (let index = 0; index < 3; index += 1) {
+      const listingId = await createListing();
+      const reservationId = await createReservation({
+        listingId,
+        expires: "now() - interval '1 minute'",
+      });
+      await createReservationOrder(reservationId, listingId);
+      limitedIds.push(reservationId);
+    }
+
+    const limited = await listings.expireDueReservations({ limit: 2, logger: { info: jest.fn() } });
+    expect(limited).toEqual({ processed: 2, skipped: 0, failed: 0 });
+    const { rows: limitedStates } = await db.query(
+      'SELECT status FROM reservations WHERE id = ANY($1::uuid[])',
+      [limitedIds]
+    );
+    expect(limitedStates.filter(({ status }) => status === 'expired')).toHaveLength(2);
+    expect(limitedStates.filter(({ status }) => status === 'active')).toHaveLength(1);
+    await listings.expireDueReservations({ logger: { info: jest.fn() } });
+
+    const failedListingId = await createListing();
+    const failedReservationId = await createReservation({
+      listingId: failedListingId,
+      expires: "now() - interval '2 minutes'",
+    });
+    await createReservationOrder(failedReservationId, failedListingId);
+    const successfulListingId = await createListing();
+    const successfulReservationId = await createReservation({
+      listingId: successfulListingId,
+      expires: "now() - interval '1 minute'",
+    });
+    await createReservationOrder(successfulReservationId, successfulListingId);
+    const suffix = `expiry_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+    const functionName = `${suffix}_failure`;
+    const triggerName = `${suffix}_trigger`;
+    try {
+      await db.query(
+        `CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+           IF NEW.id::text = TG_ARGV[0] AND NEW.status = 'expired' THEN
+             RAISE EXCEPTION 'injected expiry failure';
+           END IF;
+           RETURN NEW;
+         END;
+         $$`
+      );
+      await db.query(
+        `CREATE TRIGGER ${triggerName} BEFORE UPDATE ON reservations
+         FOR EACH ROW EXECUTE FUNCTION ${functionName}('${failedReservationId}')`
+      );
+      const isolated = await listings.expireDueReservations({ logger: { info: jest.fn() } });
+      expect(isolated).toEqual({ processed: 1, skipped: 0, failed: 1 });
+    } finally {
+      await db.query(`DROP TRIGGER IF EXISTS ${triggerName} ON reservations`);
+      await db.query(`DROP FUNCTION IF EXISTS ${functionName}()`);
+    }
+    const { rows: isolatedRows } = await db.query(
+      'SELECT id, status FROM reservations WHERE id = ANY($1::uuid[])',
+      [[failedReservationId, successfulReservationId]]
+    );
+    expect(isolatedRows).toEqual(expect.arrayContaining([
+      { id: failedReservationId, status: 'active' },
+      { id: successfulReservationId, status: 'expired' },
+    ]));
+  });
+
+  test('FR-63a: repeated and parallel expiry sweeps transition a reservation only once', async () => {
+    const listingId = await createListing();
+    const reservationId = await createReservation({
+      listingId,
+      expires: "now() - interval '1 minute'",
+    });
+    await createReservationOrder(reservationId, listingId);
+    const { rows: beforeVersion } = await db.query(
+      'SELECT search_version FROM listings WHERE id = $1',
+      [listingId]
+    );
+    const logger = { info: jest.fn() };
+    const results = await Promise.all([
+      listings.expireDueReservations({ logger }),
+      listings.expireDueReservations({ logger }),
+    ]);
+    expect(results.reduce((sum, result) => sum + result.processed, 0)).toBe(1);
+    expect(results.reduce((sum, result) => sum + result.failed, 0)).toBe(0);
+    await listings.expireDueReservations({ logger });
+    const { rows } = await db.query(
+      `SELECT reservation.status AS reservation_status, orders.status AS order_status,
+              listings.search_version
+       FROM reservations reservation
+       JOIN orders ON orders.reservation_id = reservation.id
+       JOIN listings ON listings.id = reservation.listing_id
+       WHERE reservation.id = $1`,
+      [reservationId]
+    );
+    expect(rows[0]).toMatchObject({
+      reservation_status: 'expired',
+      order_status: 'cancelled',
+      search_version: String(Number(beforeVersion[0].search_version) + 1),
+    });
   });
 });

@@ -120,6 +120,23 @@ describe('PaymentGateway fake adapter contract', () => {
     })).rejects.toMatchObject({ code: 'invalid_signature' });
   });
 
+  test('FR-70: fake fetchPayment reports the stored pending, succeeded, and failed outcome', async () => {
+    const gateway = createFakePaymentGateway({ webhookSecret: SECRET });
+    const { providerPaymentRef } = await gateway.createHostedCheckout({
+      orderRef: 'order-reconcile',
+      amount: '250.00',
+      currency: 'PKR',
+      idempotencyKey: 'pay:reservation-reconcile:1',
+      returnUrl: 'http://localhost:5173/',
+    });
+
+    await expect(gateway.fetchPayment({ providerPaymentRef })).resolves.toMatchObject({ status: 'pending' });
+    gateway.setPaymentOutcome({ providerPaymentRef, status: 'succeeded' });
+    await expect(gateway.fetchPayment({ providerPaymentRef })).resolves.toMatchObject({ status: 'succeeded' });
+    gateway.setPaymentOutcome({ providerPaymentRef, status: 'failed' });
+    await expect(gateway.fetchPayment({ providerPaymentRef })).resolves.toMatchObject({ status: 'failed' });
+  });
+
   test('FR-69: fake refund adapter reuses one result per idempotency key', async () => {
     const gateway = createFakePaymentGateway({ webhookSecret: SECRET });
     const create = {

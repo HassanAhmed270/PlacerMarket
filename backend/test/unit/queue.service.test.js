@@ -8,6 +8,7 @@ function fakeBossFactory() {
   instance.options = null;
   instance.queues = [];
   instance.sent = [];
+  instance.schedules = [];
   instance.started = false;
   instance.constructorOptions = null;
   return class FakeBoss extends EventEmitter {
@@ -20,6 +21,7 @@ function fakeBossFactory() {
     async start() { this.started = true; }
     async stop() { this.started = false; }
     async createQueue(name, options) { this.queues.push({ name, options }); }
+    async schedule(name, cron, data, options) { this.schedules.push({ name, cron, data, options }); }
     async send(name, data, options) { this.sent.push({ name, data, options }); return options.id; }
     async findJobs(_name, options) {
       this.findJobsOptions = options;
@@ -49,7 +51,7 @@ describe('FR-77, FR-77a: PostgreSQL queue configuration and durable enqueue API'
     expect(client.boss.constructorOptions).toEqual(expect.objectContaining({
       schema: 'pgboss', migrate: false, createSchema: false, useListenNotify: false, schedule: false,
     }));
-    expect(client.boss.queues).toHaveLength(9);
+    expect(client.boss.queues).toHaveLength(10);
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.EMAIL).options.retryLimit).toBe(5);
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.LISTING_SEARCH).options.retryLimit).toBe(5);
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.PAGE_SNAPSHOTS).options)
@@ -58,6 +60,10 @@ describe('FR-77, FR-77a: PostgreSQL queue configuration and durable enqueue API'
       .toEqual(expect.objectContaining({ policy: 'key_strict_fifo', retryLimit: 5, retryBackoff: true }));
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.REFUNDS).options)
       .toEqual(expect.objectContaining({ policy: 'key_strict_fifo', retryLimit: 5, retryBackoff: true }));
+    expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.MONEY_MAINTENANCE).options)
+      .toEqual(expect.objectContaining({ policy: 'key_strict_fifo', retryLimit: 5, retryBackoff: true }));
+    expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.MONEY_MAINTENANCE).options.retryDelayMax).toBe(300);
+    expect(client.boss.schedules).toHaveLength(0);
     expect(client.boss.queues.find(({ name }) => name === queue.QUEUES.NOTIFICATIONS).options)
       .toEqual(expect.objectContaining({ policy: 'key_strict_fifo', retryLimit: 5, retryBackoff: true, heartbeatSeconds: 60, deadLetter: queue.QUEUES.DEAD_LETTER, notify: true }));
     await client.stop();

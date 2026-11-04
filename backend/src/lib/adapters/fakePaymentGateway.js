@@ -134,6 +134,14 @@ function createFakePaymentGateway({
       };
     },
 
+    setPaymentOutcome({ providerPaymentRef, status }) {
+      const session = sessionsByRef.get(providerPaymentRef);
+      if (!session || !['pending', 'succeeded', 'failed'].includes(status)) {
+        throw new PaymentGatewayUnavailableError();
+      }
+      session.status = status;
+    },
+
     async createRefund({ providerPaymentRef, amount, idempotencyKey }) {
       const existingRefund = refundsByKey.get(idempotencyKey);
       if (existingRefund) return { ...existingRefund };

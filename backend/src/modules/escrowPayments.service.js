@@ -4,6 +4,7 @@
  */
 
 const db = require('../db.service');
+const { performance } = require('node:perf_hooks');
 const queue = require('../lib/queue');
 const paymentGateway = require('../lib/adapters/paymentGateway');
 const orders = require('./orders.service');
@@ -1051,6 +1052,186 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
   }
 }
 
+/** FR-72: sweep due handovers and issue timeout refunds through the existing idempotent path. */
+async function sweepUnhandedOverOrders({ limit = 100, timeBudgetMs = 20000, logger = console } = {}) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ValidationError('Handover sweep batch limit must be from 1 to 100.');
+  }
+  if (!Number.isFinite(timeBudgetMs) || timeBudgetMs <= 0) {
+    throw new ValidationError('Handover sweep time budget must be positive.');
+  }
+  const startedAt = performance.now();
+  const orderIds = await orders.getDueHandoverOrderIds(limit);
+  const counts = { processed: 0, skipped: 0, failed: 0 };
+  for (let index = 0; index < orderIds.length; index += 1) {
+    if (performance.now() - startedAt >= timeBudgetMs) {
+      counts.skipped += orderIds.length - index;
+      break;
+    }
+    try {
+      const result = await refundUnhandedOverOrder({ orderId: orderIds[index] });
+      if (result.outcome === 'refunded') counts.processed += 1;
+      else counts.skipped += 1;
+    } catch {
+      counts.failed += 1;
+    }
+  }
+  logger.info('Handover timeout sweep completed', counts);
+  return counts;
+}
+
+async function reenqueueOrphanRefund(refundContext) {
+  return db.withTransaction(async (client) => {
+    const locked = await lockRefundPaymentOrder(
+      client,
+      refundContext.order_id,
+      refundContext.payment_id,
+      refundContext.id
+    );
+    if (!locked) return false;
+    const { rows } = await client.query(
+      `SELECT id
+       FROM refunds
+       WHERE id = $1 AND (
+         (status = 'requested' AND requested_at <= now() - INTERVAL '2 minutes')
+         OR (status IN ('pending', 'failed') AND updated_at <= now() - INTERVAL '10 minutes')
+       )`,
+      [refundContext.id]
+    );
+    if (!rows[0]) return false;
+    await enqueueRefundJob(client, refundContext.id);
+    return true;
+  });
+}
+
+async function reenqueueOrphanWebhook(webhookInboxId) {
+  return db.withTransaction(async (client) => {
+    const { rows } = await client.query(
+      `SELECT provider, provider_event_id, received_at, status
+       FROM webhook_inbox
+       WHERE id = $1`,
+      [webhookInboxId]
+    );
+    const inbox = rows[0];
+    if (!inbox || inbox.status !== 'received') return false;
+    const { rows: dueRows } = await client.query(
+      `SELECT id
+       FROM webhook_inbox
+       WHERE id = $1 AND received_at <= now() - INTERVAL '2 minutes'`,
+      [webhookInboxId]
+    );
+    if (!dueRows[0]) return false;
+    const key = `${inbox.provider}:${inbox.provider_event_id}`;
+    await queue.enqueue(queue.QUEUES.PAYMENT_WEBHOOKS, { webhookInboxId }, {
+      idempotencyKey: key,
+      orderingKey: webhookInboxId,
+      transaction: client,
+    });
+    return true;
+  });
+}
+
+async function reconcilePendingPayment(paymentContext, gateway) {
+  const result = await gateway.fetchPayment({
+    providerPaymentRef: paymentContext.provider_payment_id,
+  });
+  if (!result || !['succeeded', 'failed', 'pending'].includes(result.status)) {
+    throw new PaymentGatewayUnavailableError();
+  }
+  if (result.status === 'pending') return false;
+
+  const outcome = result.status;
+  const event = {
+    type: `payment.${outcome}`,
+    eventId: `reconcile:${paymentContext.id}:${outcome}`,
+    providerPaymentRef: paymentContext.provider_payment_id,
+    amount: String(paymentContext.amount),
+    currency: paymentContext.currency,
+  };
+  const rawBody = Buffer.from(JSON.stringify(event));
+  return receivePaymentWebhook({
+    provider: paymentContext.provider,
+    event: {
+      eventId: event.eventId,
+      type: event.type,
+      providerPaymentRef: event.providerPaymentRef,
+    },
+    rawBody,
+    signatureMetadata: { reconciled: true, source: 'gateway_lookup' },
+    timestampMetadata: { reconciled: true },
+    verifiedAt: new Date(),
+  });
+}
+
+/** FR-70: requeue orphan money work and recover missed gateway outcomes via the normal inbox path. */
+async function reconcileMoneyState({ limit = 100, timeBudgetMs = 20000, logger = console, gateway } = {}) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+    throw new ValidationError('Money reconciliation batch limit must be from 1 to 100.');
+  }
+  if (!Number.isFinite(timeBudgetMs) || timeBudgetMs <= 0) {
+    throw new ValidationError('Money reconciliation time budget must be positive.');
+  }
+
+  const startedAt = performance.now();
+  const counts = { processed: 0, skipped: 0, failed: 0 };
+  const processBatch = async (rows, handler) => {
+    for (let index = 0; index < rows.length; index += 1) {
+      if (performance.now() - startedAt >= timeBudgetMs) {
+        counts.skipped += rows.length - index;
+        return false;
+      }
+      try {
+        if (await handler(rows[index])) counts.processed += 1;
+        else counts.skipped += 1;
+      } catch {
+        counts.failed += 1;
+      }
+    }
+    return true;
+  };
+
+  const { rows: refundRows } = await db.read(
+    `SELECT id, order_id, payment_id
+     FROM refunds
+     WHERE (status = 'requested' AND requested_at <= now() - INTERVAL '2 minutes')
+        OR (status IN ('pending', 'failed') AND updated_at <= now() - INTERVAL '10 minutes')
+     ORDER BY requested_at, id
+     LIMIT $1`,
+    [limit]
+  );
+  let withinBudget = await processBatch(refundRows, reenqueueOrphanRefund);
+
+  if (withinBudget) {
+    const { rows: inboxRows } = await db.read(
+      `SELECT id
+       FROM webhook_inbox
+       WHERE status = 'received' AND received_at <= now() - INTERVAL '2 minutes'
+       ORDER BY received_at, id
+       LIMIT $1`,
+      [limit]
+    );
+    withinBudget = await processBatch(inboxRows, ({ id }) => reenqueueOrphanWebhook(id));
+  }
+
+  if (withinBudget) {
+    const { rows: paymentRows } = await db.read(
+      `SELECT id, provider, provider_payment_id, amount, currency
+       FROM payments
+       WHERE status = 'pending'
+         AND provider_payment_id IS NOT NULL
+         AND provider_created_at <= now() - INTERVAL '15 minutes'
+       ORDER BY provider_created_at, id
+       LIMIT $1`,
+      [limit]
+    );
+    await processBatch(paymentRows, (payment) =>
+      reconcilePendingPayment(payment, gateway || paymentGateway.getPaymentGateway()));
+  }
+
+  logger.info('Money reconciliation completed', counts);
+  return counts;
+}
+
 /** FR-77b: store verified payment events and enqueue processing atomically in PostgreSQL. */
 async function receiveVerifiedPaymentWebhook(receipt) {
   return receivePaymentWebhook(receipt);
@@ -1064,6 +1245,8 @@ module.exports = {
   enqueueRefundJob,
   cancelReservationOrder,
   refundUnhandedOverOrder,
+  sweepUnhandedOverOrders,
+  reconcileMoneyState,
   processRefundJob,
   receiveVerifiedPaymentWebhook,
   processPaymentWebhookJob,

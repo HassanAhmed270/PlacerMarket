@@ -8,10 +8,45 @@ const { decryptEmailPayload } = require('./src/lib/emailQueuePayload');
 const { createDevEmailOutboxSender } = require('./src/lib/adapters/devEmailOutbox');
 const { keyProviderFromEnv } = require('./src/lib/keyProvider');
 const media = require('./src/modules/media.service');
+const listings = require('./src/modules/listings.service');
 const listingSearch = require('./src/modules/listingSearch.service');
 const pageSnapshots = require('./src/modules/pageSnapshots.service');
 const escrowPayments = require('./src/modules/escrowPayments.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
+
+async function registerMoneyMaintenanceSchedules(boss) {
+  await boss.schedule(
+    QUEUES.MONEY_MAINTENANCE,
+    '* * * * *',
+    { task: 'reservation-expiry' },
+    { key: 'reservation-expiry', singletonKey: 'money-maintenance:reservation-expiry' }
+  );
+  await boss.schedule(
+    QUEUES.MONEY_MAINTENANCE,
+    '*/5 * * * *',
+    { task: 'handover-timeout' },
+    { key: 'handover-timeout', singletonKey: 'money-maintenance:handover-timeout' }
+  );
+  await boss.schedule(
+    QUEUES.MONEY_MAINTENANCE,
+    '*/10 * * * *',
+    { task: 'reconciliation' },
+    { key: 'reconciliation', singletonKey: 'money-maintenance:reconciliation' }
+  );
+}
+
+async function processMoneyMaintenanceJob(job) {
+  if (job.data?.task === 'reservation-expiry') {
+    return listings.expireDueReservations();
+  }
+  if (job.data?.task === 'handover-timeout') {
+    return escrowPayments.sweepUnhandedOverOrders();
+  }
+  if (job.data?.task === 'reconciliation') {
+    return escrowPayments.reconcileMoneyState();
+  }
+  throw new Error('Unsupported money maintenance task.');
+}
 
 async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
   if (process.env.NODE_ENV === 'production') keyProviderFromEnv(process.env);
@@ -84,6 +119,12 @@ async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.REFUNDS], transactional: false },
       async ([job]) => escrowPayments.processRefundJob({ refundId: job.data?.refundId })
     );
+    await queue.boss.work(
+      QUEUES.MONEY_MAINTENANCE,
+      { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.MONEY_MAINTENANCE], transactional: false },
+      async ([job]) => processMoneyMaintenanceJob(job)
+    );
+    await registerMoneyMaintenanceSchedules(queue.boss);
     // eslint-disable-next-line no-console
     console.log('Poshaak worker started');
 
@@ -125,4 +166,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { startWorker };
+module.exports = { startWorker, registerMoneyMaintenanceSchedules, processMoneyMaintenanceJob };
