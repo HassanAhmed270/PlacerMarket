@@ -6,6 +6,8 @@
 const { Pool } = require('pg');
 const { ServiceUnavailableError } = require('./lib/errors');
 
+const RETRYABLE_TRANSACTION_CODES = new Set(['55P03', '40P01', '40001']);
+
 function positiveInteger(name, fallback) {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -113,4 +115,25 @@ async function withTransaction(callback) {
   }
 }
 
-module.exports = { read, write, query, many, one, withTransaction, pool, searchPool, searchQuery, searchRead, searchWrite };
+/** Retry whole transactions only; callbacks must be safe to repeat and contain no external calls. */
+async function withTransactionRetry(callback, { retries = 2 } = {}) {
+  if (typeof callback !== 'function') throw new TypeError('Transaction callback must be a function');
+  if (!Number.isInteger(retries) || retries < 0) {
+    throw new RangeError('Transaction retries must be a non-negative integer');
+  }
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await withTransaction(callback);
+    } catch (error) {
+      if (!RETRYABLE_TRANSACTION_CODES.has(error?.code) || attempt >= retries) throw error;
+      const delayMs = 50 + Math.floor(Math.random() * 101);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
+module.exports = {
+  read, write, query, many, one, withTransaction, withTransactionRetry,
+  pool, searchPool, searchQuery, searchRead, searchWrite,
+};

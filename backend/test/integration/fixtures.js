@@ -1,5 +1,52 @@
 const db = require('../../src/db.service');
+const queue = require('../../src/lib/queue');
 require('../../src/modules/notifications.service');
+
+async function cleanupListingProjections(listingId) {
+  const projectionQueues = [queue.QUEUES.LISTING_SEARCH, queue.QUEUES.PAGE_SNAPSHOTS];
+  const deadline = Date.now() + 10000;
+  while (Date.now() < deadline) {
+    await db.query(
+      `DELETE FROM pgboss.job
+       WHERE name = ANY($1::text[]) AND data->>'listingId' = $2 AND state <> 'active'`,
+      [projectionQueues, listingId]
+    );
+    const { rows } = await db.query(
+      `SELECT count(*)::int AS active
+       FROM pgboss.job
+       WHERE name = ANY($1::text[]) AND data->>'listingId' = $2 AND state = 'active'`,
+      [projectionQueues, listingId]
+    );
+    if (rows[0].active === 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const { rows: activeRows } = await db.query(
+    `SELECT count(*)::int AS active
+     FROM pgboss.job
+     WHERE name = ANY($1::text[]) AND data->>'listingId' = $2 AND state = 'active'`,
+    [projectionQueues, listingId]
+  );
+  if (activeRows[0].active) {
+    throw new Error(`Timed out waiting for projection jobs for listing ${listingId}.`);
+  }
+
+  const { rows: listingRows } = await db.query(
+    'SELECT slug, short_id FROM listings WHERE id = $1',
+    [listingId]
+  );
+  if (listingRows[0]) {
+    await db.query(
+      'DELETE FROM page_snapshots WHERE path = $1',
+      [`/listing/${listingRows[0].slug}-${listingRows[0].short_id}`]
+    );
+  }
+  await db.query('DELETE FROM listing_search WHERE listing_id = $1', [listingId]);
+  await db.query(
+    `DELETE FROM pgboss.job
+     WHERE name = ANY($1::text[]) AND data->>'listingId' = $2`,
+    [projectionQueues, listingId]
+  );
+}
 
 async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {}) {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -66,6 +113,7 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
       await db.query('DELETE FROM listing_evidence WHERE listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
       await db.query('DELETE FROM listing_measurements WHERE listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
       await db.query('DELETE FROM favorites WHERE user_id = $1 OR listing_id IN (SELECT id FROM listings WHERE seller_id = $1)', [userId]);
+      await cleanupListingProjections(listingRows[0].id);
       await db.query('DELETE FROM listings WHERE seller_id = $1', [userId]);
       await db.query('DELETE FROM managed_catalog_values WHERE created_by IN ($1, $2) OR reviewed_by IN ($1, $2)', [userId, otherUserId]);
       await db.query('DELETE FROM measurement_field_defs WHERE sub_category_id = $1', [subCategoryRows[0].id]);
@@ -81,4 +129,4 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
   };
 }
 
-module.exports = { createFixture };
+module.exports = { createFixture, cleanupListingProjections };

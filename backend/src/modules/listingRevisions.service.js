@@ -303,7 +303,7 @@ async function getListingRevision(revisionId) {
 /** FR-73, FR-73e: approve a revision atomically using listing-then-revision lock order. */
 async function approveListingRevision(revisionId, reviewerId) {
   assertEnabled();
-  const result = await db.withTransaction(async (client) => {
+  const result = await db.withTransactionRetry(async (client) => {
     const { rows: ref } = await client.query('SELECT listing_id FROM listing_revisions WHERE id = $1', [revisionId]);
     if (!ref[0]) throw new NotFoundError('listing revision', revisionId);
     const { rows: listings } = await client.query('SELECT * FROM listings WHERE id = $1 FOR UPDATE', [ref[0].listing_id]);

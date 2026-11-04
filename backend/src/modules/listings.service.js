@@ -128,6 +128,15 @@ async function syncAvailabilityProjection(client, listingId) {
   return rows[0].search_version;
 }
 
+/** FR-63a, FR-69, FR-72: lock the listing before buyer, order, and escrow rows. */
+async function lockListingForMoneyAction(client, listingId) {
+  const { rows } = await client.query(
+    'SELECT id FROM listings WHERE id = $1 FOR UPDATE',
+    [listingId]
+  );
+  return rows[0] || null;
+}
+
 /** FR-63a: inject the escrow-owned reservation handler without a circular service require. */
 function setSystemTakedownHandler(handler) {
   if (typeof handler !== 'function') {
@@ -610,7 +619,13 @@ async function updateOwnListing(listingId, sellerId, patch) {
 /** FR-21: admin can unpublish/reject a live listing post-publication, with a reason. */
 async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const result = await db.withTransaction(async (client) => {
+    const result = await db.withTransactionRetry(async (client) => {
+      const { rows: listingRows } = await client.query(
+        'SELECT id, status FROM listings WHERE id = $1 FOR UPDATE',
+        [listingId]
+      );
+      if (!listingRows[0]) throw new NotFoundError('listing', listingId);
+
       const liveReservation = await reservations.getLiveReservationForListing(client, listingId);
       let handledReservation = false;
       if (liveReservation) {
@@ -619,12 +634,6 @@ async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
         }
         handledReservation = await systemTakedownHandler(client, listingId);
       }
-
-      const { rows: listingRows } = await client.query(
-        'SELECT id, status FROM listings WHERE id = $1 FOR UPDATE',
-        [listingId]
-      );
-      if (!listingRows[0]) throw new NotFoundError('listing', listingId);
 
       if (!handledReservation &&
           await reservations.getLiveReservationForListing(client, listingId)) {
@@ -721,6 +730,7 @@ async function resubmitListing(listingId, sellerId) {
 
 module.exports = {
   syncAvailabilityProjection,
+  lockListingForMoneyAction,
   setSystemTakedownHandler,
   createListing,
   getSeoRecommendation,

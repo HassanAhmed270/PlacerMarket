@@ -18,7 +18,7 @@ const { createFakeGatewayRouter } = require('../../src/routes/fakeGateway.routes
 const reservationsRoutes = require('../../src/routes/reservations.routes');
 const { signAccessToken } = require('../../src/lib/jwt');
 const errorHandler = require('../../src/middleware/errorHandler');
-const { createFixture } = require('./fixtures');
+const { createFixture, cleanupListingProjections } = require('./fixtures');
 
 const JWT_SECRET = 'payment-webhook-integration-access-secret';
 const ADDRESS = {
@@ -161,6 +161,7 @@ afterEach(async () => {
       ...(additionalFixtures || []),
     ]) {
       if (!record.fixture) continue;
+      await cleanupListingProjections(record.fixture.listingId);
       const { rows: auditRows } = record.orderId ? await db.query(
         'SELECT EXISTS (SELECT 1 FROM money_audit_events WHERE order_id = $1) AS retained',
         [record.orderId]

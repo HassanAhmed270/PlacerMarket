@@ -5,7 +5,7 @@ const revisions = require('../../src/modules/listingRevisions.service');
 const orders = require('../../src/modules/orders.service');
 const discovery = require('../../src/modules/discovery.service');
 const listingSearch = require('../../src/modules/listingSearch.service');
-const { createFixture } = require('./fixtures');
+const { createFixture, cleanupListingProjections } = require('./fixtures');
 
 jest.setTimeout(65000);
 
@@ -32,6 +32,7 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
   afterEach(async () => {
     for (const fixture of fixtures) {
       await waitForListingSearchJobs(fixture.listingId);
+      await cleanupListingProjections(fixture.listingId);
       await db.query('DELETE FROM orders WHERE listing_id = $1', [fixture.listingId]);
       await db.query('DELETE FROM reservations WHERE listing_id = $1', [fixture.listingId]);
       await db.query('DELETE FROM offers WHERE listing_id = $1', [fixture.listingId]);
@@ -322,8 +323,12 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
        WHERE id = $1`,
       [published.listingId]
     );
-    const resultRebuild = await listingSearch.rebuildListingSearch();
-    expect(resultRebuild.indexed).toBe(1);
+    await listingSearch.rebuildListingSearch();
+    const { rows: fixtureIndexRows } = await db.query(
+      'SELECT listing_id FROM listing_search WHERE listing_id = $1',
+      [published.listingId]
+    );
+    expect(fixtureIndexRows).toEqual([{ listing_id: published.listingId }]);
     const indexed = await indexedListing(published.listingId);
     expect(indexed.title).toBe('Rebuilt search title');
     expect(indexed.search_text).toContain('Rebuilt search title');

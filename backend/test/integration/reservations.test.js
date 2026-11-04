@@ -8,7 +8,7 @@ const payments = require('../../src/modules/payments.service');
 const payout = require('../../src/modules/payout.service');
 const queue = require('../../src/lib/queue');
 const { signAccessToken } = require('../../src/lib/jwt');
-const { createFixture } = require('./fixtures');
+const { createFixture, cleanupListingProjections } = require('./fixtures');
 
 const JWT_SECRET = 'integration-reservation-access-secret-with-32-bytes';
 const ADDRESS = {
@@ -176,6 +176,7 @@ beforeEach(async () => {
 afterEach(async () => {
   try {
     if (listingIds?.length) {
+      for (const listingId of listingIds) await cleanupListingProjections(listingId);
       await db.query(
         'DELETE FROM payout_holds WHERE order_id IN (SELECT id FROM orders WHERE listing_id = ANY($1::uuid[]))',
         [listingIds]

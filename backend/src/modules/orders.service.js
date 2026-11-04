@@ -183,10 +183,41 @@ async function cancelUnpaidReservationOrder(client, orderId) {
   return rows[0] || null;
 }
 
+/** FR-63a, FR-69, FR-72: read immutable order context before acquiring canonical money locks. */
+async function getMoneyLockContext(client, orderId) {
+  const { rows } = await client.query(
+    'SELECT id, listing_id, buyer_id, reservation_id FROM orders WHERE id = $1',
+    [orderId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-63a: lock and cancel orders before their expired reservation rows are changed. */
+async function cancelExpiredReservationOrders(client, reservationIds) {
+  if (!reservationIds.length) return [];
+  const { rows: locked } = await client.query(
+    `SELECT id
+     FROM orders
+     WHERE reservation_id = ANY($1::uuid[]) AND status IN ('reserved', 'payment_pending')
+     ORDER BY id
+     FOR UPDATE`,
+    [reservationIds]
+  );
+  if (!locked.length) return [];
+  const { rows } = await client.query(
+    `UPDATE orders
+     SET status = 'cancelled', cancelled_at = now()
+     WHERE id = ANY($1::uuid[]) AND status IN ('reserved', 'payment_pending')
+     RETURNING id`,
+    [locked.map((order) => order.id)]
+  );
+  return rows;
+}
+
 /** FR-69: lock the owning order before an escrow refund locks payment and refund rows. */
 async function lockOrderForRefund(client, orderId) {
   const { rows } = await client.query(
-    'SELECT id FROM orders WHERE id = $1 FOR UPDATE',
+    'SELECT id, listing_id, buyer_id FROM orders WHERE id = $1 FOR UPDATE',
     [orderId]
   );
   return rows[0] || null;
@@ -329,6 +360,8 @@ module.exports = {
   setOrderStatus,
   fundReservationOrder,
   cancelUnpaidReservationOrder,
+  getMoneyLockContext,
+  cancelExpiredReservationOrders,
   lockOrderForRefund,
   lockReservationOrderForSystemAction,
   cancelReservationOrder,

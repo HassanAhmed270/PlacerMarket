@@ -9,6 +9,7 @@ const paymentGateway = require('../lib/adapters/paymentGateway');
 const orders = require('./orders.service');
 const reservations = require('./reservations.service');
 const listings = require('./listings.service');
+const users = require('./users.service');
 const {
   ConflictError,
   NotFoundError,
@@ -187,8 +188,15 @@ const receivePaymentWebhook = queue.createPaymentWebhookInboxReceiver({
 });
 
 async function lockRefundPaymentOrder(client, orderId, paymentId, refundId) {
+  const context = await orders.getMoneyLockContext(client, orderId);
+  if (!context) return null;
+  const listing = await listings.lockListingForMoneyAction(client, context.listing_id);
+  if (!listing) return null;
+  const buyer = await users.lockBuyerForMoneyAction(client, context.buyer_id);
+  if (!buyer) return null;
+
   const order = await orders.lockOrderForRefund(client, orderId);
-  if (!order) return null;
+  if (!order || order.listing_id !== context.listing_id || order.buyer_id !== context.buyer_id) return null;
 
   const { rows: paymentRows } = await client.query(
     `SELECT id, order_id, provider_payment_id, amount
@@ -401,9 +409,20 @@ async function cancelReservationOrder({ orderId, buyerId }) {
     throw new ValidationError('buyerId must be a UUID.');
   }
 
-  return db.withTransaction(async (client) => {
+  return db.withTransactionRetry(async (client) => {
+    const context = await orders.getMoneyLockContext(client, orderId);
+    if (!context) throw new NotFoundError('order', orderId);
+    if (context.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
+    if (!(await listings.lockListingForMoneyAction(client, context.listing_id))) {
+      throw new NotFoundError('listing', context.listing_id);
+    }
+    if (!(await users.lockBuyerForMoneyAction(client, buyerId))) {
+      throw new NotFoundError('buyer', buyerId);
+    }
     const order = await orders.lockReservationOrderForSystemAction(client, orderId);
-    if (!order) throw new NotFoundError('order', orderId);
+    if (!order || order.listing_id !== context.listing_id || order.buyer_id !== context.buyer_id) {
+      throw new NotFoundError('order', orderId);
+    }
     if (order.reservation_id === null) return { legacy: true };
     if (order.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
 
@@ -480,8 +499,12 @@ async function handleListingTakedown(client, listingId) {
   const orderId = await orders.getOrderIdForReservation(client, candidate.id);
   if (!orderId) throw new ConflictError('The live reservation has no owning order.');
 
+  const context = await orders.getMoneyLockContext(client, orderId);
+  if (!context || context.listing_id !== listingId) return false;
+  if (!(await users.lockBuyerForMoneyAction(client, context.buyer_id))) return false;
   const order = await orders.lockReservationOrderForSystemAction(client, orderId);
-  if (!order || order.reservation_id !== candidate.id || order.listing_id !== listingId) {
+  if (!order || order.reservation_id !== candidate.id || order.listing_id !== listingId ||
+      order.buyer_id !== context.buyer_id) {
     return false;
   }
   const reservation = await reservations.lockReservationForSystemAction(client, candidate.id);
@@ -548,9 +571,16 @@ async function handleListingTakedown(client, listingId) {
 /** FR-72: cancel and fully refund a paid order after its database handover deadline. */
 async function refundUnhandedOverOrder({ orderId }) {
   validateOrderId(orderId);
-  return db.withTransaction(async (client) => {
+  return db.withTransactionRetry(async (client) => {
+    const context = await orders.getMoneyLockContext(client, orderId);
+    if (!context || context.reservation_id === null) return { outcome: 'skipped' };
+    if (!(await listings.lockListingForMoneyAction(client, context.listing_id)) ||
+        !(await users.lockBuyerForMoneyAction(client, context.buyer_id))) {
+      return { outcome: 'skipped' };
+    }
     const order = await orders.lockReservationOrderForSystemAction(client, orderId);
-    if (!order || order.reservation_id === null) return { outcome: 'skipped' };
+    if (!order || order.reservation_id === null || order.listing_id !== context.listing_id ||
+        order.buyer_id !== context.buyer_id) return { outcome: 'skipped' };
     const reservation = await reservations.lockReservationForSystemAction(client, order.reservation_id);
     if (!reservation) return { outcome: 'skipped' };
     const payments = await lockPaymentsForOrder(client, order.id);
@@ -625,15 +655,23 @@ async function createOrReusePayment({ orderId, buyerId }) {
   const gateway = paymentGateway.getPaymentGateway();
   const returnUrl = buildPaymentReturnUrl(orderId);
   const intent = await db.withTransaction(async (client) => {
+    const context = await orders.getMoneyLockContext(client, orderId);
+    if (!context || context.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
+    if (!(await listings.lockListingForMoneyAction(client, context.listing_id))) {
+      throw new NotFoundError('listing', context.listing_id);
+    }
+    if (!(await users.lockBuyerForMoneyAction(client, buyerId))) {
+      throw new NotFoundError('buyer', buyerId);
+    }
     const { rows: orderRows } = await client.query(
-      `SELECT id, buyer_id, reservation_id, status
+      `SELECT id, listing_id, buyer_id, reservation_id, status
        FROM orders
        WHERE id = $1 AND buyer_id = $2
        FOR UPDATE`,
       [orderId, buyerId]
     );
     const order = orderRows[0];
-    if (!order) throw new NotFoundError('order', orderId);
+    if (!order || order.listing_id !== context.listing_id) throw new NotFoundError('order', orderId);
     if (!order.reservation_id ||
         !['reserved', 'payment_pending'].includes(order.status)) {
       throw new ConflictError('Order is not available for payment.');
@@ -829,24 +867,33 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
       let reservation = null;
       let payment = null;
       if (paymentLookup) {
-        const { rows: orderRows } = await client.query(
-          `SELECT id, listing_id, reservation_id, status
-           FROM orders
-           WHERE id = $1
-           FOR UPDATE`,
-          [paymentLookup.order_id]
-        );
-        order = orderRows[0] || null;
+        const context = await orders.getMoneyLockContext(client, paymentLookup.order_id);
+        if (context) {
+          const listing = await listings.lockListingForMoneyAction(client, context.listing_id);
+          const buyer = listing && await users.lockBuyerForMoneyAction(client, context.buyer_id);
+          if (listing && buyer) {
+            const { rows: orderRows } = await client.query(
+              `SELECT id, listing_id, buyer_id, reservation_id, status
+               FROM orders
+               WHERE id = $1
+               FOR UPDATE`,
+              [paymentLookup.order_id]
+            );
+            order = orderRows[0] || null;
+            if (!order || order.listing_id !== context.listing_id ||
+                order.buyer_id !== context.buyer_id) order = null;
 
-        if (order?.reservation_id) {
-          const { rows: reservationRows } = await client.query(
-            `SELECT id, status, expires_at, expires_at > now() AS is_unexpired
-             FROM reservations
-             WHERE id = $1
-             FOR UPDATE`,
-            [order.reservation_id]
-          );
-          reservation = reservationRows[0] || null;
+            if (order?.reservation_id) {
+              const { rows: reservationRows } = await client.query(
+                `SELECT id, status, expires_at, expires_at > now() AS is_unexpired
+                 FROM reservations
+                 WHERE id = $1
+                 FOR UPDATE`,
+                [order.reservation_id]
+              );
+              reservation = reservationRows[0] || null;
+            }
+          }
         }
 
         const { rows: paymentRows } = await client.query(

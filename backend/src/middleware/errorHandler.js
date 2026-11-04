@@ -8,6 +8,16 @@
 
 // eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, next) {
+  if (['55P03', '40P01', '40001'].includes(err.code)) {
+    const route = typeof req.route?.path === 'string'
+      ? `${req.baseUrl || ''}${req.route.path}`
+      : 'unknown';
+    // eslint-disable-next-line no-console
+    console.warn({ code: err.code, route });
+    res.setHeader('Retry-After', '1');
+    return res.status(503).json({ code: 'busy_try_again' });
+  }
+
   const parserStatus = err.type === 'entity.too.large'
     ? 413
     : err instanceof SyntaxError && 'body' in err ? 400 : null;

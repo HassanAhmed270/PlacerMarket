@@ -685,6 +685,12 @@ async function getCityById(cityId, client = db) {
   return rows[0] || null;
 }
 
+/** FR-63a, FR-69, FR-72: lock a buyer row after the listing and before its order. */
+async function lockBuyerForMoneyAction(client, buyerId) {
+  const { rows } = await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [buyerId]);
+  return rows[0] || null;
+}
+
 /** FR-04: admin adds a supported city. */
 async function createCity({ name }, adminId) {
   const { rows } = await db.query('INSERT INTO cities (name) VALUES ($1) RETURNING *', [name]);
@@ -1086,6 +1092,7 @@ module.exports = {
   assertCityVerified,
   listCities,
   getCityById,
+  lockBuyerForMoneyAction,
   createCity,
   getUserRole,
   submitSellerApplication,

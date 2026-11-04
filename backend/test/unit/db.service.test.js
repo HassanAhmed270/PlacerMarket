@@ -1,15 +1,20 @@
 const mockQuery = jest.fn();
 const mockClientQuery = jest.fn();
 const mockRelease = jest.fn();
+const mockConnect = jest.fn(async () => ({
+  query: (...a) => mockClientQuery(...a),
+  release: (...a) => mockRelease(...a),
+}));
 jest.mock('pg', () => ({
   Pool: jest.fn(() => ({
     query: (...a) => mockQuery(...a),
-    connect: async () => ({ query: (...a) => mockClientQuery(...a), release: (...a) => mockRelease(...a) }),
+    connect: (...a) => mockConnect(...a),
     on: jest.fn(),
   })),
 }));
 const db = require('../../src/db.service');
 const { Pool } = require('pg');
+const { ValidationError } = require('../../src/lib/errors');
 const constructedPoolConfig = Pool.mock.calls[0]?.[0];
 
 beforeEach(() => jest.clearAllMocks());
@@ -70,5 +75,64 @@ describe('db.withTransaction', () => {
     await expect(db.withTransaction(async () => { throw new Error('boom'); })).rejects.toThrow('boom');
     expect(mockClientQuery.mock.calls.map((c) => c[0])).toEqual(['BEGIN', 'ROLLBACK']);
     expect(mockRelease).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('db.withTransactionRetry', () => {
+  function makeClient(callbackError) {
+    const query = jest.fn(async (sql) => {
+      if (sql === 'WORK' && callbackError) throw callbackError;
+      return { rows: [] };
+    });
+    return { query, release: jest.fn() };
+  }
+
+  test.each(['55P03', '40P01', '40001'])('retries twice on PostgreSQL error %s in new transactions', async (code) => {
+    const delays = [];
+    const timeout = jest.spyOn(global, 'setTimeout').mockImplementation((callback, delay) => {
+      delays.push(delay);
+      callback();
+      return 0;
+    });
+    const error = Object.assign(new Error('transaction failed'), { code });
+    const clients = [makeClient(error), makeClient(error), makeClient(null)];
+    clients.forEach((client) => mockConnect.mockResolvedValueOnce(client));
+    const callbackClients = [];
+
+    try {
+      const result = await db.withTransactionRetry(async (client) => {
+        callbackClients.push(client);
+        await client.query('WORK');
+        return 'committed';
+      }, { retries: 2 });
+      expect(result).toBe('committed');
+      expect(callbackClients).toEqual(clients);
+      expect(mockConnect).toHaveBeenCalledTimes(3);
+      expect(clients.map((client) => client.release.mock.calls.length)).toEqual([1, 1, 1]);
+      expect(delays).toHaveLength(2);
+      expect(delays.every((delay) => delay >= 50 && delay <= 150)).toBe(true);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  test.each([
+    ['unique violation', Object.assign(new Error('unique violation'), { code: '23505' })],
+    ['validation error', new ValidationError('invalid input')],
+  ])('does not retry a %s', async (_label, error) => {
+    const client = makeClient(error);
+    mockConnect.mockResolvedValueOnce(client);
+    await expect(db.withTransactionRetry((transaction) => transaction.query('WORK')))
+      .rejects.toBe(error);
+    expect(mockConnect).toHaveBeenCalledTimes(1);
+  });
+
+  test('gives up after two retries and preserves the original error', async () => {
+    const error = Object.assign(new Error('deadlock'), { code: '40P01' });
+    [makeClient(error), makeClient(error), makeClient(error)]
+      .forEach((client) => mockConnect.mockResolvedValueOnce(client));
+    await expect(db.withTransactionRetry((client) => client.query('WORK'), { retries: 2 }))
+      .rejects.toBe(error);
+    expect(mockConnect).toHaveBeenCalledTimes(3);
   });
 });

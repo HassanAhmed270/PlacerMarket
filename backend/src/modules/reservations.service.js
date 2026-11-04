@@ -4,6 +4,7 @@
  */
 
 const db = require('../db.service');
+const orders = require('./orders.service');
 const settlement = require('./settlement.service');
 const users = require('./users.service');
 const listingSearch = require('./listingSearch.service');
@@ -207,7 +208,7 @@ async function buyListing(listingId, buyerId, input) {
   const settings = await readReservationSettings();
 
   try {
-    return await db.withTransaction(async (client) => {
+    return await db.withTransactionRetry(async (client) => {
       const { rows: listingRows } = await client.query(
         `SELECT id, seller_id, status, asking_price, asking_price > 0 AS positive_price
          FROM listings WHERE id = $1 FOR UPDATE`,
@@ -242,26 +243,28 @@ async function buyListing(listingId, buyerId, input) {
         }
       }
 
-      const { rows: buyerRows } = await client.query(
-        'SELECT id FROM users WHERE id = $1 FOR UPDATE',
-        [buyerId]
-      );
-      if (!buyerRows[0]) throw new NotFoundError('buyer', buyerId);
+      if (!(await users.lockBuyerForMoneyAction(client, buyerId))) {
+        throw new NotFoundError('buyer', buyerId);
+      }
 
-      const { rows: expiredRows } = await client.query(
-        `UPDATE reservations
-         SET status = 'expired', ended_at = now(), end_reason = 'expired'
+      const { rows: expiredCandidates } = await client.query(
+        `SELECT id
+         FROM reservations
          WHERE listing_id = $1 AND status = 'active' AND expires_at <= now()
-         RETURNING id`,
+         ORDER BY id`,
         [listingId]
       );
-      if (expiredRows.length) {
-        await client.query(
-          `UPDATE orders SET status = 'cancelled', cancelled_at = now()
-           WHERE reservation_id = ANY($1::uuid[]) AND status IN ('reserved', 'payment_pending')`,
-          [expiredRows.map((row) => row.id)]
+      if (expiredCandidates.length) {
+        const expiredIds = expiredCandidates.map((row) => row.id);
+        await orders.cancelExpiredReservationOrders(client, expiredIds);
+        const { rows: expiredRows } = await client.query(
+          `UPDATE reservations
+           SET status = 'expired', ended_at = now(), end_reason = 'expired'
+           WHERE id = ANY($1::uuid[]) AND status = 'active' AND expires_at <= now()
+           RETURNING id`,
+          [expiredIds]
         );
-        await bumpListingSearchVersion(client, listingId);
+        if (expiredRows.length) await bumpListingSearchVersion(client, listingId);
       }
 
       const { rows: liveRows } = await client.query(

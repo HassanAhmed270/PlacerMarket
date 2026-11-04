@@ -40,3 +40,28 @@ describe('SEC-28: unexpected server errors are generic and traceable', () => {
     log.mockRestore();
   });
 });
+
+describe('database contention errors', () => {
+  test.each(['55P03', '40P01', '40001'])(
+    'maps PostgreSQL code %s to a clean retry response',
+    (code) => {
+      const log = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const res = mockResponse();
+      const error = Object.assign(
+        new Error('SELECT secret FROM private_table WHERE id = 42'),
+        { code, detail: 'parameter: sensitive-value' }
+      );
+      errorHandler(error, {
+        baseUrl: '/api/orders',
+        route: { path: '/:id/cancel' },
+      }, res, jest.fn());
+      expect(res.statusCode).toBe(503);
+      expect(res.headers['Retry-After']).toBe('1');
+      expect(res.body).toEqual({ code: 'busy_try_again' });
+      expect(JSON.stringify(res.body)).not.toMatch(/SELECT|private_table|sensitive-value|42/);
+      expect(log).toHaveBeenCalledWith({ code, route: '/api/orders/:id/cancel' });
+      expect(JSON.stringify(log.mock.calls)).not.toMatch(/SELECT|private_table|sensitive-value|42/);
+      log.mockRestore();
+    }
+  );
+});

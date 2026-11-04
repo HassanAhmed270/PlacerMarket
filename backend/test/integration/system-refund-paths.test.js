@@ -11,14 +11,16 @@ const { requireAuth } = require('../../src/middleware/auth');
 const discovery = require('../../src/modules/discovery.service');
 const escrowPayments = require('../../src/modules/escrowPayments.service');
 const listings = require('../../src/modules/listings.service');
+const revisions = require('../../src/modules/listingRevisions.service');
 const pageSnapshots = require('../../src/modules/pageSnapshots.service');
 const reservations = require('../../src/modules/reservations.service');
 const { createEscrowPaymentsRouter } = require('../../src/routes/escrowPayments.routes');
 const legacyOrdersRouter = require('../../src/routes/orders.routes');
 const { buildSignedFakeEvent } = require('../../src/lib/adapters/fakePaymentGateway');
 const { signAccessToken } = require('../../src/lib/jwt');
-const { createFixture } = require('./fixtures');
+const { createFixture, cleanupListingProjections } = require('./fixtures');
 
+const PARALLEL_RACE_REPETITIONS = 20;
 const JWT_SECRET = 'system-refund-integration-access-secret';
 const ADDRESS = {
   recipientName: 'Refund Test Recipient',
@@ -164,6 +166,28 @@ async function refundJobCount(scenario) {
     [queue.QUEUES.REFUNDS, scenario.orderId]
   );
   return rows[0].total;
+}
+
+async function createParallelRaceScenarios() {
+  const scenarios = [trackedFixtures[0]];
+  while (scenarios.length < PARALLEL_RACE_REPETITIONS) {
+    scenarios.push(await createScenario());
+  }
+  return scenarios;
+}
+
+async function runParallelRace(scenarios, left, right) {
+  const rounds = [];
+  for (const scenario of scenarios) {
+    rounds.push(await Promise.allSettled([left(scenario), right(scenario)]));
+  }
+  const results = rounds.flat();
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      expect(['55P03', '40P01']).not.toContain(result.reason?.code);
+    }
+  }
+  return results;
 }
 
 async function receiveSignedSuccess(scenario) {
@@ -318,6 +342,7 @@ afterEach(async () => {
     }
     if (retainedListingIds.size) {
       const listingIds = [...retainedListingIds];
+      for (const listingId of listingIds) await cleanupListingProjections(listingId);
       await db.query(
         `UPDATE listings SET status = 'unpublished'
          WHERE id = ANY($1::uuid[]) AND status = 'published'`,
@@ -720,6 +745,232 @@ describe('FR-72 handover timeout', () => {
       expect(rows[0].order_status).toBe('cancelled');
       expect(['buyer_cancelled', 'handover_timeout']).toContain(rows[0].end_reason);
       expect(rows[0].reservation_status).toBe('released');
+    }
+  });
+});
+
+describe('P4-S7a parallel money-lock races', () => {
+  test('Buy against buyer cancel has one consistent live reservation outcome', async () => {
+    const scenarios = await createParallelRaceScenarios();
+    const results = await runParallelRace(scenarios,
+      (scenario) => reservations.buyListing(scenario.fixture.listingId, scenario.buyerId, {
+        address: { ...ADDRESS, cityId: scenario.fixture.cityId },
+      }),
+      (scenario) => cancelThroughApi(scenario)
+    );
+    const buys = results.filter((_, index) => index % 2 === 0);
+    const cancellations = results.filter((_, index) => index % 2 === 1);
+    for (const result of buys) {
+      if (result.status === 'fulfilled') continue;
+      expect(result.reason.statusCode).toBe(409);
+    }
+    expect(cancellations.filter((result) => result.status === 'fulfilled')
+      .every((result) => result.value.status === 200)).toBe(true);
+    expect(cancellations.filter((result) => result.status === 'rejected')).toHaveLength(0);
+
+    for (const scenario of scenarios) {
+      const { rows } = await db.query(
+        `SELECT count(*)::int AS live
+         FROM reservations
+         WHERE listing_id = $1 AND (status = 'paid' OR (status = 'active' AND expires_at > now()))`,
+        [scenario.fixture.listingId]
+      );
+      expect(rows[0].live).toBeLessThanOrEqual(1);
+      expect(await refundRows(scenario)).toHaveLength(0);
+    }
+  });
+
+  test('Buy against a stale expired reservation and late webhook preserves one capture refund', async () => {
+    const scenarios = await createParallelRaceScenarios();
+    for (const scenario of scenarios) {
+      await db.query(
+        'UPDATE reservations SET expires_at = now() - INTERVAL \'1 second\' WHERE id = $1',
+        [scenario.reservationId]
+      );
+      scenario.webhookInboxId = await receiveSignedSuccess(scenario);
+    }
+    const results = await runParallelRace(scenarios,
+      (scenario) => reservations.buyListing(scenario.fixture.listingId, scenario.buyerId, {
+        address: { ...ADDRESS, cityId: scenario.fixture.cityId },
+      }),
+      (scenario) => escrowPayments.processPaymentWebhookJob({ webhookInboxId: scenario.webhookInboxId })
+    );
+    const buys = results.filter((_, index) => index % 2 === 0);
+    expect(buys.map((result) => result.status)).toEqual(Array(20).fill('fulfilled'));
+    for (const scenario of scenarios) {
+      const refunds = await refundRows(scenario);
+      expect(refunds).toHaveLength(1);
+      expect(refunds[0]).toMatchObject({ trigger: 'system_expiry', amount: '1550.50' });
+      const { rows } = await db.query(
+        `SELECT orders.status AS order_status, reservations.status AS reservation_status,
+                payments.status AS payment_status
+         FROM orders
+         JOIN reservations ON reservations.id = orders.reservation_id
+         JOIN payments ON payments.order_id = orders.id
+         WHERE orders.id = $1`,
+        [scenario.orderId]
+      );
+      expect(rows[0]).toEqual({
+        order_status: 'cancelled',
+        reservation_status: 'expired',
+        payment_status: 'late',
+      });
+      const { rows: liveRows } = await db.query(
+        `SELECT count(*)::int AS live
+         FROM reservations
+         WHERE listing_id = $1 AND (status = 'paid' OR (status = 'active' AND expires_at > now()))`,
+        [scenario.fixture.listingId]
+      );
+      expect(liveRows[0].live).toBe(1);
+    }
+  });
+
+  test('funding webhook against admin take-down ends unpublished with at most one refund', async () => {
+    const scenarios = await createParallelRaceScenarios();
+    for (const scenario of scenarios) scenario.webhookInboxId = await receiveSignedSuccess(scenario);
+    const results = await runParallelRace(scenarios,
+      (scenario) => escrowPayments.processPaymentWebhookJob({ webhookInboxId: scenario.webhookInboxId }),
+      (scenario) => listings.rejectOrUnpublishListing(scenario.fixture.listingId, {
+        reviewerId: scenario.fixture.userId, reason: 'Concurrent lock-order test',
+      })
+    );
+    expect(results.filter((_, index) => index % 2 === 0)
+      .filter((result) => result.status === 'rejected')).toHaveLength(0);
+    for (const result of results.filter((result, index) => index % 2 === 1 && result.status === 'rejected')) {
+      expect([400, 409]).toContain(result.reason.statusCode);
+    }
+    for (const scenario of scenarios) {
+      const { rows } = await db.query(
+        `SELECT listings.status AS listing_status, orders.status AS order_status,
+                reservations.status AS reservation_status, payments.status AS payment_status
+         FROM listings
+         JOIN orders ON orders.listing_id = listings.id
+         JOIN reservations ON reservations.id = orders.reservation_id
+         JOIN payments ON payments.order_id = orders.id
+         WHERE listings.id = $1`,
+        [scenario.fixture.listingId]
+      );
+      expect(rows[0]).toMatchObject({
+        listing_status: 'unpublished',
+        order_status: 'cancelled',
+        reservation_status: 'released',
+      });
+      expect(['succeeded', 'late']).toContain(rows[0].payment_status);
+      expect(await refundRows(scenario)).toHaveLength(1);
+    }
+  });
+
+  test('buyer cancel against take-down leaves a single canceled order outcome', async () => {
+    const scenarios = await createParallelRaceScenarios();
+    const results = await runParallelRace(scenarios,
+      (scenario) => cancelThroughApi(scenario),
+      (scenario) => listings.rejectOrUnpublishListing(scenario.fixture.listingId, {
+        reviewerId: scenario.fixture.userId, reason: 'Concurrent lock-order test',
+      })
+    );
+    const cancellations = results.filter((_, index) => index % 2 === 0);
+    expect(cancellations.filter((result) => result.status === 'fulfilled')
+      .every((result) => [200, 409].includes(result.value.status))).toBe(true);
+    expect(cancellations.filter((result) => result.status === 'rejected')).toHaveLength(0);
+    for (const result of results.filter((result, index) => index % 2 === 1 && result.status === 'rejected')) {
+      expect([400, 409]).toContain(result.reason.statusCode);
+    }
+    for (const scenario of scenarios) {
+      const { rows } = await db.query(
+        `SELECT listings.status AS listing_status, orders.status AS order_status,
+                reservations.status AS reservation_status, reservations.end_reason
+         FROM listings
+         JOIN orders ON orders.listing_id = listings.id
+         JOIN reservations ON reservations.id = orders.reservation_id
+         WHERE listings.id = $1`,
+        [scenario.fixture.listingId]
+      );
+      expect(rows[0].listing_status).toBe('unpublished');
+      expect(rows[0].order_status).toBe('cancelled');
+      expect(['cancelled', 'released']).toContain(rows[0].reservation_status);
+      expect(['buyer_cancelled', 'listing_taken_down']).toContain(rows[0].end_reason);
+      expect(await refundRows(scenario)).toHaveLength(0);
+    }
+  });
+
+  test('buyer cancel against timeout function completes 20 parallel pairs with one refund', async () => {
+    const scenarios = await createParallelRaceScenarios();
+    await Promise.all(scenarios.map(async (scenario) => {
+      await fundOrder(scenario);
+      await db.query(
+        `UPDATE orders
+         SET funded_at = now() - INTERVAL '73 hours',
+             handover_deadline_at = (now() - INTERVAL '73 hours') + INTERVAL '72 hours'
+         WHERE id = $1`,
+        [scenario.orderId]
+      );
+    }));
+    const results = await runParallelRace(scenarios,
+      (scenario) => cancelThroughApi(scenario),
+      (scenario) => escrowPayments.refundUnhandedOverOrder({ orderId: scenario.orderId })
+    );
+    for (const result of results.filter((_, index) => index % 2 === 0)) {
+      if (result.status === 'fulfilled') expect([200, 409]).toContain(result.value.status);
+      else expect([400, 409]).toContain(result.reason.statusCode);
+    }
+    for (const result of results.filter((_, index) => index % 2 === 1)) {
+      if (result.status === 'fulfilled') expect(['refunded', 'not_due', 'skipped']).toContain(result.value.outcome);
+    }
+    for (const scenario of scenarios) {
+      expect(await refundRows(scenario)).toHaveLength(1);
+      const { rows } = await db.query(
+        `SELECT orders.status AS order_status, reservations.status AS reservation_status,
+                reservations.end_reason
+         FROM orders JOIN reservations ON reservations.id = orders.reservation_id
+         WHERE orders.id = $1`,
+        [scenario.orderId]
+      );
+      expect(rows[0].order_status).toBe('cancelled');
+      expect(rows[0].reservation_status).toBe('released');
+      expect(['buyer_cancelled', 'handover_timeout']).toContain(rows[0].end_reason);
+    }
+  });
+
+  test('revision approval against Buy has one consistent reservation and content state', async () => {
+    const scenarios = await createParallelRaceScenarios();
+    for (const scenario of scenarios) {
+      await escrowPayments.cancelReservationOrder({ orderId: scenario.orderId, buyerId: scenario.buyerId });
+      await db.query(
+        'UPDATE listings SET published_at = COALESCE(published_at, now()) WHERE id = $1',
+        [scenario.fixture.listingId]
+      );
+      const revision = await revisions.submitListingRevision(
+        scenario.fixture.listingId, scenario.fixture.userId, { askingPrice: 250 }
+      );
+      expect(revision.status).toBe('pending_review');
+      scenario.revisionId = revision.id;
+    }
+
+    const results = await runParallelRace(scenarios,
+      (scenario) => revisions.approveListingRevision(scenario.revisionId, scenario.fixture.otherUserId),
+      (scenario) => reservations.buyListing(scenario.fixture.listingId, scenario.buyerId, {
+        address: { ...ADDRESS, cityId: scenario.fixture.cityId },
+      })
+    );
+    for (const result of results.filter((result, index) => index % 2 === 0 && result.status === 'rejected')) {
+      expect(result.reason.statusCode).toBe(409);
+    }
+    for (const result of results.filter((result, index) => index % 2 === 1 && result.status === 'rejected')) {
+      expect(result.reason.statusCode).toBe(409);
+    }
+    for (const scenario of scenarios) {
+      const { rows: reservationRows } = await db.query(
+        `SELECT count(*)::int AS live
+         FROM reservations
+         WHERE listing_id = $1 AND (status = 'paid' OR (status = 'active' AND expires_at > now()))`,
+        [scenario.fixture.listingId]
+      );
+      expect(reservationRows[0].live).toBe(1);
+      const { rows: revisionRows } = await db.query(
+        'SELECT status FROM listing_revisions WHERE id = $1',
+        [scenario.revisionId]
+      );
+      expect(['approved', 'pending_review']).toContain(revisionRows[0].status);
     }
   });
 });

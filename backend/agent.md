@@ -151,14 +151,25 @@ page-snapshot updates in the Buy transaction. `orders.service.js` keeps those
 projections synchronized for legacy order transitions. Listing revision
 approval and seller pause/removal call the shared predicates synchronously;
 blocked revision notices use the existing notification event/queue path.
+Reservation Buy uses `users.service.js` to lock the buyer and
+`orders.service.js` to cancel expired owning orders before closing reservations.
 
 For FR-63a moderator take-downs, `listings.service.js` reads live reservation
 state through `reservations.service.js`; `escrowPayments.service.js` injects
 the system-refund handler through `listings.setSystemTakedownHandler()` so the
 listing and escrow services do not introduce a circular require.
 
+**Canonical money-row lock order (FR-63a, FR-63c):** lock the listing first,
+then the buyer's `users` row, then the order, reservation, payment, and finally
+refund or webhook-inbox rows. When a listing id is reachable only through an
+order, first read its immutable order context without a lock, lock the listing,
+then lock and re-read the remaining rows in this order and verify that the
+context still matches. Buy expiry closes its order before changing its
+reservation. Queue consumers rely on queue retries; only the explicitly opted-in
+request transactions use bounded transaction retries.
+
 Root-level, not tied to one module:
-- `db.service.js` — the only file that imports `pg` directly; exports `read`, `write`, compatibility `query`, `many`, `one`, `withTransaction` (one planned, named exception: `lib/queue.js`, `rules.md` Section 11).
+- `db.service.js` — the only file that imports `pg` directly; exports `read`, `write`, compatibility `query`, `many`, `one`, `withTransaction`, and opt-in `withTransactionRetry` (one planned, named exception: `lib/queue.js`, `rules.md` Section 11).
 - `lib/errors.js` — shared error classes (`NotYetSpecifiedError`, `NotImplementedError`, `NotFoundError`, `ValidationError`, `ForbiddenError`) — which to use when is in `rules.md` Section 4.
 - `lib/events.js` — the only place event-name strings are defined.
 - `lib/eventBus.js` — shared in-process `EventEmitter` (notification decoupling — user's chosen pattern over direct calls).
@@ -216,7 +227,8 @@ purpose so the schema works whichever way this eventually gets decided.
   `lib/queue.js`. Its Stage 5b consumer owns webhook, capture-ledger,
   system-expiry-refund-request and money-audit writes; it calls exported
   transaction-aware operations in `orders.service.js`,
-  `reservations.service.js` and `listings.service.js` for those owners' tables.
+  `reservations.service.js`, `listings.service.js` and `users.service.js` for
+  those owners' tables and canonical money-row locking.
 - **Notifications**: every other service just does
   `eventBus.emit(events.SOMETHING, payload)` and knows nothing about
   `notifications.service.js`. That file is the only listener; it resolves

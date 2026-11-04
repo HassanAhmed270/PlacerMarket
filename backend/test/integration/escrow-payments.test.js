@@ -11,7 +11,7 @@ const paymentGateway = require('../../src/lib/adapters/paymentGateway');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { createEscrowPaymentsRouter } = require('../../src/routes/escrowPayments.routes');
 const { createFakeGatewayRouter } = require('../../src/routes/fakeGateway.routes');
-const { createFixture } = require('./fixtures');
+const { createFixture, cleanupListingProjections } = require('./fixtures');
 
 const JWT_SECRET = 'integration-escrow-payments-access-secret';
 const ADDRESS = {
@@ -117,6 +117,7 @@ beforeEach(async () => {
 afterEach(async () => {
   try {
     if (listingIds?.length) {
+      for (const listingId of listingIds) await cleanupListingProjections(listingId);
       await db.query(
         'DELETE FROM payments WHERE order_id IN (SELECT id FROM orders WHERE listing_id = ANY($1::uuid[]))',
         [listingIds]
