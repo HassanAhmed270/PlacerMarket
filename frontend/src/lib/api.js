@@ -94,6 +94,7 @@ export function createApiClient({
     approveManagedAttribute: (id) => post(`catalog/attributes/${encodeURIComponent(id)}/approve`, {}, { authenticated: true }),
     rejectManagedAttribute: (id, reason) => post(`catalog/attributes/${encodeURIComponent(id)}/reject`, { reason }, { authenticated: true }),
     getCities: () => get('users/cities'),
+    getDeliveryCities: () => get('delivery-cities'),
     getSearchVocabulary: () => get('discovery/vocabulary'),
     getFilteredListings: (filters = {}) => get(`discovery/filter${queryString(filters)}`),
     getShareUrl: (id) => get(`discovery/listings/${encodeURIComponent(id)}/share-url`),
@@ -127,6 +128,11 @@ export function createApiClient({
     rejectListingRevision: (id, reason) => post(`listings/revisions/${encodeURIComponent(id)}/reject`, { reason }, { authenticated: true }),
     getPublicListing: (id) => get(`discovery/listings/${encodeURIComponent(id)}`),
     getListingStatus: (id) => get(`discovery/listings/${encodeURIComponent(id)}/status`),
+    buyListing: (id, input) => post(`listings/${encodeURIComponent(id)}/buy`, input, { authenticated: true }),
+    getOrderSummary: (id) => get(`orders/${encodeURIComponent(id)}/summary`, { authenticated: true }),
+    getMyOrders: (options = {}) => get(`orders/mine${queryString(options)}`, { authenticated: true }),
+    createOrderPayment: (id) => post(`orders/${encodeURIComponent(id)}/payment`, {}, { authenticated: true }),
+    cancelReservationOrder: (id) => post(`orders/${encodeURIComponent(id)}/cancel`, {}, { authenticated: true }),
     searchListings: (input = {}) => {
       const values = typeof input === 'string' ? { q: input } : input
       return get(`discovery/search${queryString(values)}`)

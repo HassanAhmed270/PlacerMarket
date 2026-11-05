@@ -137,12 +137,12 @@ function PublicListingDetail({ id }) {
     setActionMessage('')
     try {
       if (api.isAuthenticated()) {
-        navigate(`/checkout/soon?listing=${encodeURIComponent(listingPath())}`)
+        navigate(`/checkout/${encodeURIComponent(listing.id)}`)
         return
       }
       const result = await api.refresh()
       api.setAccessToken(result.accessToken)
-      navigate(`/checkout/soon?listing=${encodeURIComponent(listingPath())}`)
+      navigate(`/checkout/${encodeURIComponent(listing.id)}`)
     } catch (cause) {
       if (cause.status === 401 || cause.status === 403) {
         const destination = getBuyDestination({ authenticated: false, listingPath: listingPath() })

@@ -14,6 +14,7 @@ function SiteHeader() {
         <a href="/#categories">Explore</a>
         <a href="/about">About</a>
         <a href="/favorites">Favorites</a>
+        <a href="/orders">My orders</a>
         <a href="/inbox">Inbox</a>
         <a href="/notifications">Notifications</a>
         <a className="nav-sell" href="/seller/listings">Sell with us</a>

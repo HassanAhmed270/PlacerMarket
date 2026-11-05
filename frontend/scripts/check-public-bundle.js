@@ -15,13 +15,29 @@ const publicRoutes = {
   '/login': 'src/AuthScreen.jsx',
   '/listing/:id': 'src/PublicListingDetail.jsx',
 }
+const nonPublicRoutes = new Set([
+  '/checkout/:listingId',
+  '/orders',
+  '/orders/:orderId',
+  '/orders/:orderId/payment-return',
+])
 const privateModules = new Set([
+  'src/CheckoutPage.jsx',
+  'src/OrderPage.jsx',
+  'src/MyOrdersPage.jsx',
+  'src/PaymentReturnPage.jsx',
   'src/AccountWorkspace.jsx',
   'src/ListingWorkspace.jsx',
   'src/ModerationWorkspace.jsx',
   'src/WorkspaceFrame.jsx',
 ])
 const maxBytes = 200 * 1024
+
+for (const route of nonPublicRoutes) {
+  if (Object.hasOwn(publicRoutes, route)) {
+    throw new Error(`${route} is registered as both public and non-public.`)
+  }
+}
 
 function findEntry(source) {
   const entry = Object.entries(manifest).find(([key, value]) => key === source || value.src === source)

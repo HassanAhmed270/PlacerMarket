@@ -137,6 +137,46 @@ approval is a local demonstration; payout guard checks do not send money.
 Checkout and system refunds use the local fake gateway only. There is no live
 payment provider, real payout, external email sender, or identity provider.
 
+## Run the buyer demo in the browser
+
+Use only a disposable local demo database with a published, available listing
+and a buyer account. Configure the ignored `.demo.env` as described below,
+including the fake gateway, webhook, and `PUBLIC_BASE_URL` settings. Start the
+API and worker in separate PowerShell terminals:
+
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+node --env-file-if-exists=.demo.env src/server.js
+```
+
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+node --env-file-if-exists=.demo.env worker.js
+```
+
+Start Vite in another terminal:
+
+```powershell
+Set-Location D:\Havuor\marketplace\frontend
+$env:VITE_API_BASE_URL = 'http://127.0.0.1:3000/api'
+npm.cmd run dev -- --host 127.0.0.1
+```
+
+Open `http://127.0.0.1:5173/listing/<listing-id>`, sign in as the buyer, and
+select **Buy**. Complete the delivery address and reservation form; the order
+screen shows the server-returned amounts. Select **Pay now**, then choose
+**Pay (success)** on the local fake checkout. The browser returns to the
+payment confirmation screen, which shows funded only after the worker accepts
+the verified event. **My orders** is available in the header.
+
+For failure, select **Fail** on the fake checkout. The return screen reports
+the server's failed payment state; **Retry payment** opens the order screen,
+where **Pay now** creates a retry. For the late-payment/refund variant, create
+the payment intent and set that reservation's expiry into the past in the
+disposable database before selecting **Pay (success)**. The browser reports
+the server's late-payment refund state; use the SQL in the next section.
+Returning from fake checkout never counts as proof of payment.
+
 ## Buy and reservation demo
 
 Use only a disposable local demo database for payment demonstrations. Set

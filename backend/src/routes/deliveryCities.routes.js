@@ -3,7 +3,7 @@ const reservations = require('../modules/reservations.service');
 
 const router = Router();
 
-router.get('/delivery-cities', async (_req, res) => {
+router.get('/', async (_req, res) => {
   res.json(await reservations.listActiveSupportedDeliveryCities());
 });
 

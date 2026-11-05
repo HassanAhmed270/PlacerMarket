@@ -12,6 +12,10 @@ const CategoryPage = lazy(() => import('./CategoryPage.jsx'))
 const ProtectedWorkspace = lazy(() => import('./ListingWorkspace.jsx'))
 const ProtectedCustomerWorkspace = lazy(() => import('./CustomerWorkspace.jsx'))
 const StaticPage = lazy(() => import('./StaticPage.jsx'))
+const CheckoutPage = lazy(() => import('./CheckoutPage.jsx'))
+const OrderPage = lazy(() => import('./OrderPage.jsx'))
+const MyOrdersPage = lazy(() => import('./MyOrdersPage.jsx'))
+const PaymentReturnPage = lazy(() => import('./PaymentReturnPage.jsx'))
 
 const authRoutes = new Set(['/login', '/register', '/forgot-password', '/reset-password', '/account'])
 const staticPageRoutes = new Set(['/about', '/how-it-works', '/terms', '/privacy', '/help', '/contact'])
@@ -41,7 +45,7 @@ function CheckoutSoonPage() {
   }, [allowed, listingPath])
 
   if (!allowed) return <main className="route-loading" role="status">{error || 'Checking your account…'}</main>
-  return <main className="checkout-soon"><p className="eyebrow">Poshaak marketplace</p><h1>Checkout opens soon</h1><p>Buying is coming soon. No payment or reservation has been made.</p><a className="button button-secondary" href={listingPath.startsWith('/listing/') && !listingPath.startsWith('//') ? listingPath : '/'}>Return to listing</a></main>
+  return <main className="checkout-soon"><p className="eyebrow">Poshaak marketplace</p><h1>Payments are off</h1><p>No reservation or payment has been made. Please return to the listing and try again later.</p><a className="button button-secondary" href={listingPath.startsWith('/listing/') && !listingPath.startsWith('//') ? listingPath : '/'}>Return to listing</a></main>
 }
 
 function App() {
@@ -56,6 +60,9 @@ function App() {
   let page
   if (authRoutes.has(path)) {
     page = <AuthScreen />
+  } else if (path === '/') {
+    const paymentReturn = new URLSearchParams(window.location.search).get('paymentReturn')
+    page = paymentReturn ? <PaymentReturnPage orderId={paymentReturn} /> : <HomePage />
   } else if (path === '/favorites' || path === '/inbox' || path === '/notifications') {
     page = <ProtectedCustomerWorkspace path={path} />
   } else if (/^\/inbox\/[^/]+$/.test(path)) {
@@ -68,6 +75,14 @@ function App() {
     page = <CategoryPage />
   } else if (path === '/checkout/soon') {
     page = <CheckoutSoonPage />
+  } else if (/^\/checkout\/[^/]+$/.test(path)) {
+    page = <CheckoutPage listingId={decodeURIComponent(path.slice('/checkout/'.length))} />
+  } else if (path === '/orders') {
+    page = <MyOrdersPage />
+  } else if (/^\/orders\/[^/]+\/payment-return$/.test(path)) {
+    page = <PaymentReturnPage orderId={decodeURIComponent(path.split('/')[2])} />
+  } else if (/^\/orders\/[^/]+$/.test(path)) {
+    page = <OrderPage orderId={decodeURIComponent(path.slice('/orders/'.length))} />
   } else if (path === '/seller/listings' || path === '/moderation') {
     page = (
       <ProtectedWorkspace
@@ -93,7 +108,7 @@ function App() {
     else if (categoryCity) page = <CategoryPage mainCategoryId={decodeURIComponent(categoryCity[1])} cityId={decodeURIComponent(categoryCity[2])} />
     else if (categorySub) page = <CategoryPage mainCategoryId={decodeURIComponent(categorySub[1])} subCategoryId={decodeURIComponent(categorySub[2])} />
     else if (categoryMain) page = <CategoryPage mainCategoryId={decodeURIComponent(categoryMain[1])} />
-    else page = path === '/' ? <HomePage /> : <main className="unavailable-page"><p className="eyebrow">Poshaak marketplace</p><h1>Page unavailable</h1><p>This page could not be found.</p><a href="/">Return home</a></main>
+    else page = <main className="unavailable-page"><p className="eyebrow">Poshaak marketplace</p><h1>Page unavailable</h1><p>This page could not be found.</p><a href="/">Return home</a></main>
   }
 
   return (
