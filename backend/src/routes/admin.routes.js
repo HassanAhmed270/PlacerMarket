@@ -5,6 +5,7 @@ const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ValidationError } = require('../lib/errors');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
+const deliveryRoutes = require('./delivery.routes');
 
 const router = Router();
 const limiters = createConfiguredRateLimiters();
@@ -126,5 +127,7 @@ router.patch('/fees/commission', requirePermission('fee.configure'), async (req,
 router.get('/advertising-overview', requirePermission('advertising.manage'), async (req, res) => {
   res.json(await admin.getAdvertisingOverview()); // FR-59, deferred stub
 });
+
+router.use(deliveryRoutes.adminRouter);
 
 module.exports = router;

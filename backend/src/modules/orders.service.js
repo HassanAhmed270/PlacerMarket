@@ -193,6 +193,15 @@ async function getMoneyLockContext(client, orderId) {
   return rows[0] || null;
 }
 
+/** FR-42, FR-72: return the order parties for delivery tracking access checks. */
+async function getDeliveryOrderParties(orderId) {
+  const { rows } = await db.query(
+    'SELECT buyer_id, seller_id FROM orders WHERE id = $1',
+    [orderId]
+  );
+  return rows[0] || null;
+}
+
 /** FR-63a: lock and cancel orders before their expired reservation rows are changed. */
 async function cancelExpiredReservationOrders(client, reservationIds) {
   if (!reservationIds.length) return [];
@@ -234,6 +243,34 @@ async function lockReservationOrderForSystemAction(client, orderId) {
      WHERE id = $1
      FOR UPDATE`,
     [orderId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-72: lock an order for Admin handover validation after its listing and buyer. */
+async function lockReservationOrderForHandover(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT id, listing_id, reservation_id, buyer_id, status, funded_at,
+            handed_over_at, handover_deadline_at
+     FROM orders
+     WHERE id = $1
+     FOR UPDATE`,
+    [orderId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-72: record courier handover timestamps on the owning order in the caller's transaction. */
+async function recordCourierHandover(client, orderId, courierPickupAt) {
+  const { rows } = await client.query(
+    `UPDATE orders
+     SET status = 'handed_to_delivery',
+         courier_pickup_at = $2::timestamptz,
+         handover_recorded_at = now(),
+         handed_over_at = $2::timestamptz
+     WHERE id = $1 AND status = 'funded' AND handed_over_at IS NULL
+     RETURNING id, status, courier_pickup_at, handover_recorded_at`,
+    [orderId, courierPickupAt]
   );
   return rows[0] || null;
 }
@@ -434,10 +471,13 @@ module.exports = {
   fundReservationOrder,
   cancelUnpaidReservationOrder,
   getMoneyLockContext,
+  getDeliveryOrderParties,
   cancelExpiredReservationOrders,
   getDueHandoverOrderIds,
   lockOrderForRefund,
   lockReservationOrderForSystemAction,
+  lockReservationOrderForHandover,
+  recordCourierHandover,
   cancelReservationOrder,
   getOrderIdForReservation,
   cancelOrder,

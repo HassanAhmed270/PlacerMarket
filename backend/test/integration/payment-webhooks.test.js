@@ -197,7 +197,24 @@ afterEach(async () => {
         'SELECT EXISTS (SELECT 1 FROM money_audit_events WHERE order_id = $1) AS retained',
         [record.orderId]
       ) : { rows: [{ retained: false }] };
-      if (!auditRows[0].retained) {
+      if (record.orderId) {
+        await db.query(
+          `DELETE FROM webhook_inbox
+           WHERE payment_id IN (SELECT id FROM payments WHERE order_id = $1)`,
+          [record.orderId]
+        );
+      }
+      if (auditRows[0].retained) {
+        if (record.orderId) {
+          await db.query(
+            `UPDATE refunds
+             SET requested_at = now() + INTERVAL '1 day',
+                 updated_at = now() + INTERVAL '1 day'
+             WHERE order_id = $1 AND status IN ('requested', 'pending', 'failed')`,
+            [record.orderId]
+          );
+        }
+      } else {
         if (record.orderId) {
           await db.query(
             'DELETE FROM refunds WHERE payment_id IN (SELECT id FROM payments WHERE order_id = $1)',

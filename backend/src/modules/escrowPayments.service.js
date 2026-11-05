@@ -386,6 +386,29 @@ async function lockPaymentsForOrder(client, orderId) {
   return rows;
 }
 
+/** FR-72: lock payment and refund rows after the order reservation is locked. */
+async function lockPaymentAndRefundRowsForHandover(client, orderId) {
+  await lockPaymentsForOrder(client, orderId);
+  const { rows } = await client.query(
+    `SELECT id, trigger
+     FROM refunds
+     WHERE order_id = $1
+     ORDER BY created_at, id
+     FOR UPDATE`,
+    [orderId]
+  );
+  return rows;
+}
+
+/** FR-72: write the financial audit record for an Admin-recorded courier handover. */
+async function recordCourierHandoverAuditEvent(client, { orderId, adminId, courierPickupAt, hasTrackingNumber }) {
+  await client.query(
+    `INSERT INTO money_audit_events (actor_id, action, order_id, reason, metadata)
+     VALUES ($1, 'courier_handover_recorded', $2, 'Admin recorded courier handover', $3::jsonb)`,
+    [adminId, orderId, JSON.stringify({ courierPickupAt, hasTrackingNumber })]
+  );
+}
+
 function getCapturedPayment(payments) {
   return payments.find((payment) => ['succeeded', 'refunded', 'partially_refunded'].includes(payment.status));
 }
@@ -1245,6 +1268,8 @@ module.exports = {
   enqueueRefundJob,
   cancelReservationOrder,
   refundUnhandedOverOrder,
+  lockPaymentAndRefundRowsForHandover,
+  recordCourierHandoverAuditEvent,
   sweepUnhandedOverOrders,
   reconcileMoneyState,
   processRefundJob,

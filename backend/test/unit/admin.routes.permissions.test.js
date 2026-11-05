@@ -47,6 +47,10 @@ const ADMIN_ONLY_PATHS = [
   '/api/admin/listing-search/synonyms',
   '/api/admin/listing-search/synonyms/x',
 ];
+const DELIVERY_ADMIN_ONLY_PATHS = [
+  { method: 'patch', path: '/api/admin/orders/x/delivery' },
+  { method: 'get', path: '/api/admin/order-exceptions' },
+];
 
 beforeAll(() => jest.spyOn(console, 'error').mockImplementation(() => {})); // errorHandler logs 5xx
 afterAll(() => console.error.mockRestore());
@@ -66,6 +70,13 @@ describe('admin routes: permission gates at the route layer', () => {
     expect(route).toBeDefined();
     const res = await request(appAs('moderator'))[route.method](path).send({});
     expect(res.status).toBe(403);
+  });
+
+  test.each(DELIVERY_ADMIN_ONLY_PATHS)('buyer, seller, and moderator are blocked on delivery admin $method $path', async ({ method, path }) => {
+    for (const role of ['buyer', 'seller', 'moderator']) {
+      const res = await request(appAs(role))[method](path).send({});
+      expect(res.status).toBe(403);
+    }
   });
 
   test('moderator is NOT blocked by the gate on a moderator-allowed route', async () => {

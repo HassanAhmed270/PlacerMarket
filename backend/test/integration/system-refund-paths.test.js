@@ -250,7 +250,21 @@ async function cleanupScenario(scenario) {
       [scenario.orderId]
     )
     : { rows: [{ retained: false }] };
-  if (retainedRows[0].retained) return true;
+  if (retainedRows[0].retained) {
+    await db.query(
+      `UPDATE refunds
+       SET requested_at = now() + INTERVAL '1 day',
+           updated_at = now() + INTERVAL '1 day'
+       WHERE order_id = $1 AND status IN ('requested', 'pending', 'failed')`,
+      [scenario.orderId]
+    );
+    await db.query(
+      `DELETE FROM webhook_inbox
+       WHERE payment_id IN (SELECT id FROM payments WHERE order_id = $1)`,
+      [scenario.orderId]
+    );
+    return true;
+  }
 
   if (scenario.fixture) {
     await db.query(
