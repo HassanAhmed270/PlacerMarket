@@ -1,5 +1,6 @@
 *.docx
 ~$*
 backend/.demo.env
+backend/BROWSER_DEMO_GUIDE.txt
 private-media/
 dump.rdb

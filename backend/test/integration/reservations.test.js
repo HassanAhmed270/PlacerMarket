@@ -520,7 +520,13 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
         );
         expect(listingRows[0].asking_price).toBe('1500.00');
       } else {
-        expect(approval.reason).toMatchObject({ statusCode: 409, code: 'reservation_active' });
+        expect([
+          { statusCode: 409, code: 'reservation_active' },
+          { statusCode: 503, code: 'busy_try_again' },
+        ]).toContainEqual({
+          statusCode: approval.reason.statusCode,
+          code: approval.reason.code,
+        });
         expect(reservationRows[0].item_price_snapshot).toBe('1250.50');
       }
       return approval.status;

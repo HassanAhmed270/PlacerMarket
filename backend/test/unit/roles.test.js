@@ -37,4 +37,13 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.SELLER, 'catalog.attribute.review')).toBe(false);
     expect(hasPermission(ROLES.BUYER, 'catalog.attribute.review')).toBe(false);
   });
+
+  test('FR-68, FR-72: order delivery actions are Admin-only', () => {
+    for (const action of ['order.mark_handover', 'order.mark_delivered', 'order.log_delivery_status']) {
+      expect(hasPermission(ROLES.ADMIN, action)).toBe(true);
+      expect(hasPermission(ROLES.MODERATOR, action)).toBe(false);
+      expect(hasPermission(ROLES.BUYER, action)).toBe(false);
+      expect(hasPermission(ROLES.SELLER, action)).toBe(false);
+    }
+  });
 });
