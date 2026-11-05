@@ -1,9 +1,57 @@
 const { Router } = require('express');
 const orders = require('../modules/orders.service');
+const reservations = require('../modules/reservations.service');
+const listings = require('../modules/listings.service');
+const escrowPayments = require('../modules/escrowPayments.service');
 const { requireAuth } = require('../middleware/auth');
+const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
 const router = Router();
+const limiters = createConfiguredRateLimiters();
 router.use(requireAuth); // every order action requires login
+
+function noStore(_req, res, next) {
+  res.set('Cache-Control', 'private, no-store');
+  return next();
+}
+
+router.get('/mine', noStore, limiters.payments, async (req, res) => {
+  const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+  res.json(await orders.getBuyerReservationOrders(req.user.id, limit));
+});
+
+router.get('/:orderId/summary', noStore, limiters.payments, async (req, res) => {
+  const order = await orders.getBuyerReservationOrder(req.params.orderId, req.user.id);
+  const [reservation, listing, paymentStatus] = await Promise.all([
+    reservations.getBuyerReservationSnapshot(order.reservationId, req.user.id),
+    listings.getBuyerOrderListingSummary(order.listingId),
+    escrowPayments.getPaymentStatus({ orderId: order.orderId, buyerId: req.user.id }),
+  ]);
+  res.json({
+    orderId: order.orderId,
+    listing,
+    status: order.status,
+    itemPrice: reservation.itemPrice,
+    deliveryFee: reservation.deliveryFee,
+    total: reservation.total,
+    currency: reservation.currency,
+    reservation: {
+      status: reservation.status,
+      expiresAt: reservation.expiresAt,
+    },
+    payment: paymentStatus.status === null ? null : {
+      status: paymentStatus.status,
+      checkoutUrl: paymentStatus.checkoutUrl || null,
+    },
+    handoverDeadlineAt: order.handoverDeadlineAt,
+    createdAt: order.createdAt,
+    address: {
+      recipientName: reservation.recipientName,
+      city: reservation.city,
+      addressLine1: reservation.addressLine1,
+    },
+  });
+});
 
 router.post('/:id/checkout', async (req, res) => {
   res.json(await orders.checkoutFromBag(req.params.id, req.user.id, req.body)); // FR-32a

@@ -218,6 +218,50 @@ async function getDueReservationIds(limit = 100) {
   });
 }
 
+/** FR-60a: list only active delivery cities supported for checkout. */
+async function listActiveSupportedDeliveryCities() {
+  // cross-module read: cities (owned by users.service.js)
+  const { rows } = await db.read(
+    `SELECT city.id, city.name
+     FROM supported_delivery_cities supported
+     JOIN cities city ON city.id = supported.city_id
+     WHERE supported.active = true
+     ORDER BY city.name, city.id`
+  );
+  return rows;
+}
+
+/** FR-61, FR-62: return a buyer's reservation snapshot without seller or provider data. */
+async function getBuyerReservationSnapshot(reservationId, buyerId) {
+  if (typeof reservationId !== 'string' || !UUID.test(reservationId)
+      || typeof buyerId !== 'string' || !UUID.test(buyerId)) {
+    throw new ValidationError('Reservation and buyer ids must be UUIDs.');
+  }
+  // cross-module read: cities (owned by users.service.js)
+  const { rows } = await db.read(
+    `SELECT r.status, r.expires_at, r.item_price_snapshot, r.delivery_fee_snapshot,
+            r.total_amount_snapshot, r.currency, r.recipient_name, c.name AS city,
+            r.address_line1
+     FROM reservations r
+     JOIN cities c ON c.id = r.city_id
+     WHERE r.id = $1 AND r.buyer_id = $2`,
+    [reservationId, buyerId]
+  );
+  const row = rows[0];
+  if (!row) throw new NotFoundError('reservation', reservationId);
+  return {
+    status: row.status,
+    expiresAt: row.expires_at,
+    itemPrice: String(row.item_price_snapshot),
+    deliveryFee: String(row.delivery_fee_snapshot),
+    total: String(row.total_amount_snapshot),
+    currency: row.currency,
+    recipientName: row.recipient_name,
+    city: row.city,
+    addressLine1: row.address_line1,
+  };
+}
+
 /** FR-32a, FR-63, FR-63a: atomically reserve a published listing for one buyer. */
 async function buyListing(listingId, buyerId, input) {
   if (typeof listingId !== 'string' || !UUID.test(listingId)) {
@@ -379,5 +423,7 @@ module.exports = {
   getLiveReservationForListing,
   lockReservationForSystemAction,
   endReservationForSystemAction,
+  listActiveSupportedDeliveryCities,
+  getBuyerReservationSnapshot,
   buyListing,
 };

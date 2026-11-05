@@ -31,6 +31,7 @@ const {
 } = require('../lib/errors');
 
 const PRE_DISPATCH_STATUSES = new Set(['bag', 'order_placed', 'seller_preparing']); // FR-33a cutoff
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function lockListingForOrder(client, listingId) {
   const { rows } = await client.query(
@@ -332,6 +333,60 @@ async function getOrderHistory(userId) {
   return rows;
 }
 
+/** FR-61, FR-62: load a reservation-backed order only for its buyer. */
+async function getBuyerReservationOrder(orderId, buyerId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)
+      || typeof buyerId !== 'string' || !UUID.test(buyerId)) {
+    throw new ValidationError('Order and buyer ids must be UUIDs.');
+  }
+  const { rows } = await db.read(
+    `SELECT id, listing_id, reservation_id, status, handover_deadline_at, created_at
+     FROM orders
+     WHERE id = $1 AND buyer_id = $2 AND reservation_id IS NOT NULL`,
+    [orderId, buyerId]
+  );
+  if (!rows[0]) throw new NotFoundError('order', orderId);
+  return {
+    orderId: rows[0].id,
+    listingId: rows[0].listing_id,
+    reservationId: rows[0].reservation_id,
+    status: rows[0].status,
+    handoverDeadlineAt: rows[0].handover_deadline_at,
+    createdAt: rows[0].created_at,
+  };
+}
+
+/** FR-61, FR-62: list at most 20 of the caller's reservation-backed orders. */
+async function getBuyerReservationOrders(userId, limit = 20) {
+  if (typeof userId !== 'string' || !UUID.test(userId)
+      || !Number.isInteger(limit) || limit < 1 || limit > 20) {
+    throw new ValidationError('A buyer UUID and limit from 1 to 20 are required.');
+  }
+  // cross-module read: listings (owned by listings.service.js)
+  // cross-module read: reservations (owned by reservations.service.js)
+  const { rows } = await db.read(
+    `SELECT o.id AS order_id, o.listing_id, l.title, o.status,
+            r.total_amount_snapshot, r.currency, r.expires_at, o.created_at
+     FROM orders o
+     JOIN listings l ON l.id = o.listing_id
+     JOIN reservations r ON r.id = o.reservation_id
+     WHERE o.buyer_id = $1 AND o.reservation_id IS NOT NULL
+     ORDER BY o.created_at DESC, o.id DESC
+     LIMIT $2`,
+    [userId, limit]
+  );
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    listingId: row.listing_id,
+    title: row.title,
+    status: row.status,
+    total: String(row.total_amount_snapshot),
+    currency: row.currency,
+    reservationExpiresAt: row.expires_at ?? null,
+    createdAt: row.created_at,
+  }));
+}
+
 // ---- FR-27b: two-way reviews, entry point is the completed Orders page only ----
 
 /** FR-27b: only after order completion; entry point enforced by caller (Orders page), not here. */
@@ -389,6 +444,8 @@ module.exports = {
   assertLegacyOrder,
   handleRefusalAtDoor,
   getOrderHistory,
+  getBuyerReservationOrder,
+  getBuyerReservationOrders,
   getCodAmountDue,
   submitReview,
   getSellerRatingSummary,

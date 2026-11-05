@@ -3,6 +3,7 @@ const { Router } = require('express');
 const router = Router();
 
 const routeMounts = [
+  ['/', require('./deliveryCities.routes')],
   ['/users', require('./users.routes')],
   ['/catalog', require('./catalog.routes')],
   ['/listings', require('./listings.routes')],

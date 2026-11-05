@@ -393,6 +393,27 @@ async function getListingImages(listingId) {
   return rows;
 }
 
+/** FR-61, FR-62: return only the listing fields needed on a buyer order screen. */
+async function getBuyerOrderListingSummary(listingId) {
+  const { rows } = await db.read(
+    `SELECT l.id, l.title,
+            (SELECT image.image_url
+             FROM listing_images image
+             WHERE image.listing_id = l.id AND image.processing_state = 'ready'
+             ORDER BY image.display_order, image.id
+             LIMIT 1) AS image_url
+     FROM listings l
+     WHERE l.id = $1`,
+    [listingId]
+  );
+  if (!rows[0]) throw new NotFoundError('listing', listingId);
+  return {
+    id: rows[0].id,
+    title: rows[0].title,
+    imageUrl: rows[0].image_url || null,
+  };
+}
+
 /** FR-20: seller workspace list with status and safe image processing metadata. */
 async function getOwnListings(sellerId) {
   // cross-module read: sub_categories (owned by catalog.service.js)
@@ -799,6 +820,7 @@ module.exports = {
   getReferencedMeasurementDefinitionIds,
   addListingImages,
   getListingImages,
+  getBuyerOrderListingSummary,
   getOwnListings,
   getListingUrlData,
   submitListingForReview,

@@ -1,4 +1,5 @@
 const CACHE_POLICY_ALLOWLIST = Object.freeze([
+  { method: 'GET', path: '/api/delivery-cities', maxAge: 60 },
   { method: 'GET', path: '/api/discovery/search', maxAge: 60 },
   { method: 'GET', path: '/api/discovery/filter', maxAge: 60 },
   { method: 'GET', path: '/api/discovery/suggestions', maxAge: 60 },
