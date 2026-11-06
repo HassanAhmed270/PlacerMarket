@@ -22,6 +22,7 @@
 
 const db = require('../db.service');
 const settlement = require('./settlement.service');
+const orders = require('./orders.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const { NotFoundError, ValidationError, NotYetSpecifiedError } = require('../lib/errors');
@@ -44,6 +45,7 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }) {
   const { rows: orderRows } = await db.query('SELECT * FROM orders WHERE id = $1', [orderId]);
   const order = orderRows[0];
   if (!order) throw new NotFoundError('order', orderId);
+  if (order.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
   if (!order.delivered_at) {
     throw new ValidationError('Dispute can only be filed after delivery (FR-43)');
   }
@@ -80,6 +82,18 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }) {
  * else if that changes.
  */
 async function submitCounterEvidence(disputeId, sellerId, { responseText, evidenceUrls = [] }) {
+  const { rows: disputeRows } = await db.query(
+    "SELECT order_id FROM disputes WHERE id = $1 AND status = 'open'",
+    [disputeId]
+  );
+  const dispute = disputeRows[0];
+  if (!dispute) throw new NotFoundError('open dispute', disputeId);
+
+  const orderParties = await orders.getDeliveryOrderParties(dispute.order_id);
+  if (!orderParties || orderParties.seller_id !== sellerId) {
+    throw new NotFoundError('open dispute', disputeId);
+  }
+
   const { rows } = await db.query(
     `UPDATE disputes SET seller_response_text = $1, seller_responded_at = now(), status = 'seller_responded'
      WHERE id = $2 AND status = 'open' RETURNING *`,

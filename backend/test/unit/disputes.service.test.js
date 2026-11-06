@@ -64,6 +64,7 @@ describe('FR-43 delivered reservation-order compatibility', () => {
     db.query.mockResolvedValueOnce({
       rows: [{
         reservation_id: 'reservation-1',
+        buyer_id: 'buyer-1',
         status: 'held',
         delivered_at: new Date(),
       }],

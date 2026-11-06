@@ -81,12 +81,28 @@ async function fileBuyerDispute() {
   return response;
 }
 
+async function resetDisputeScenario() {
+  await db.query(
+    `DELETE FROM dispute_evidence
+     WHERE dispute_id IN (SELECT id FROM disputes WHERE order_id = $1)`,
+    [scenario.orderId]
+  );
+  await db.query(
+    `UPDATE payout_holds
+     SET state = 'held', dispute_id = NULL
+     WHERE order_id = $1`,
+    [scenario.orderId]
+  );
+  await db.query('DELETE FROM disputes WHERE order_id = $1', [scenario.orderId]);
+}
+
 beforeAll(async () => {
   harness = await createHarness();
 });
 
 beforeEach(async () => {
   scenario = await createScenario(harness);
+  await resetDisputeScenario();
   await db.query(
     `UPDATE orders
      SET status = 'handed_to_delivery', handed_over_at = now()
@@ -103,7 +119,10 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await global.drainIntegrationListeners(5000);
-  if (scenario) await cleanupScenario(harness, scenario);
+  if (scenario) {
+    await resetDisputeScenario();
+    await cleanupScenario(harness, scenario);
+  }
 });
 
 afterAll(async () => {
@@ -160,6 +179,20 @@ describe('FR-43, FR-45g delivered reservation disputes', () => {
       scenario.orderId,
     ]);
     expect(rows[0].disputes).toBe(0);
+  });
+
+  test('FR-43c: another seller cannot submit counter-evidence for this dispute', async () => {
+    const dispute = await fileBuyerDispute();
+    await db.query("UPDATE users SET role = 'seller' WHERE id = $1", [harness.unrelatedBuyerId]);
+    try {
+      const response = await request(getApp())
+        .post(`/api/disputes/${dispute.body.id}/counter-evidence`)
+        .set('Authorization', authHeader(harness.unrelatedBuyerId))
+        .send({ responseText: 'This is not my order.', evidenceUrls: [] });
+      expect(response.status).toBe(404);
+    } finally {
+      await db.query("UPDATE users SET role = 'buyer' WHERE id = $1", [harness.unrelatedBuyerId]);
+    }
   });
 
   test('FR-45g: a second dispute attempt keeps one paused payout hold', async () => {
