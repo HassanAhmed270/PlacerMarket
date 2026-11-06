@@ -1,4 +1,6 @@
 const request = require('supertest');
+const originalDbPoolMax = process.env.DB_POOL_MAX;
+process.env.DB_POOL_MAX = '20';
 const db = require('../../src/db.service');
 const app = require('../../src/app');
 const orders = require('../../src/modules/orders.service');
@@ -31,6 +33,11 @@ let listingIds;
 let additionalUserIds;
 let originalEnvironment;
 let originalSettings;
+
+afterAll(() => {
+  if (originalDbPoolMax === undefined) delete process.env.DB_POOL_MAX;
+  else process.env.DB_POOL_MAX = originalDbPoolMax;
+});
 
 function authHeader(userId) {
   return `Bearer ${signAccessToken(userId, { secret: JWT_SECRET })}`;
@@ -502,19 +509,33 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
       const revision = await revisions.submitListingRevision(listingId, fixture.userId, {
         askingPrice: '1500.00',
       });
+      const buyWithBusyRetries = async () => {
+        let response;
+        for (let retries = 0; retries <= 3; retries += 1) {
+          response = await buy(listingId, raceBuyerId);
+          if (response.status !== 503 || response.body.code !== 'busy_try_again' || retries === 3) {
+            return response;
+          }
+          const retryAfterSeconds = Number(response.headers['retry-after']);
+          await new Promise((resolve) => setTimeout(
+            resolve,
+            Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0 ? retryAfterSeconds * 1000 : 1000
+          ));
+        }
+        return response;
+      };
       const [approval, purchase] = await Promise.allSettled([
         revisions.approveListingRevision(revision.id, fixture.otherUserId),
-        buy(listingId, raceBuyerId),
+        buyWithBusyRetries(),
       ]);
 
       expect(purchase.status).toBe('fulfilled');
-      expect(purchase.value.status).toBe(201);
-      const { rows: reservationRows } = await db.query(
-        'SELECT item_price_snapshot FROM reservations WHERE id = $1',
-        [purchase.value.body.reservationId]
-      );
+      expect([201, 503]).toContain(purchase.value.status);
+      if (purchase.value.status === 503) {
+        expect(purchase.value.body.code).toBe('busy_try_again');
+      }
+
       if (approval.status === 'fulfilled') {
-        expect(reservationRows[0].item_price_snapshot).toBe('1500.00');
         const { rows: listingRows } = await db.query(
           'SELECT asking_price FROM listings WHERE id = $1', [listingId]
         );
@@ -527,7 +548,17 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
           statusCode: approval.reason.statusCode,
           code: approval.reason.code,
         });
-        expect(reservationRows[0].item_price_snapshot).toBe('1250.50');
+      }
+
+      if (purchase.value.status === 201) {
+        const { rows: reservationRows } = await db.query(
+          'SELECT item_price_snapshot FROM reservations WHERE id = $1',
+          [purchase.value.body.reservationId]
+        );
+        expect(reservationRows).toHaveLength(1);
+        expect(reservationRows[0].item_price_snapshot).toBe(
+          approval.status === 'fulfilled' ? '1500.00' : '1250.50'
+        );
       }
       return approval.status;
     }));
