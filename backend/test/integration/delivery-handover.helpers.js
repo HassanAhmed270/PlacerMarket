@@ -15,6 +15,8 @@ const ENV_KEYS = [
   'PUBLIC_BASE_URL',
   'RATE_LIMIT_SECURITY_IP_MAX',
   'RATE_LIMIT_SECURITY_ACCOUNT_MAX',
+  'RATE_LIMIT_ADMIN_OPS_IP_MAX',
+  'RATE_LIMIT_ADMIN_OPS_ACCOUNT_MAX',
   'RATE_LIMIT_PAYMENTS_IP_MAX',
   'RATE_LIMIT_PAYMENTS_ACCOUNT_MAX',
 ];
@@ -30,6 +32,8 @@ process.env.PAYMENT_WEBHOOK_URL = 'http://127.0.0.1:39991/api/webhooks/payments/
 process.env.PUBLIC_BASE_URL = 'http://localhost:5173';
 process.env.RATE_LIMIT_SECURITY_IP_MAX = '1000';
 process.env.RATE_LIMIT_SECURITY_ACCOUNT_MAX = '1000';
+process.env.RATE_LIMIT_ADMIN_OPS_IP_MAX = '1000';
+process.env.RATE_LIMIT_ADMIN_OPS_ACCOUNT_MAX = '1000';
 process.env.RATE_LIMIT_PAYMENTS_IP_MAX = '1000';
 process.env.RATE_LIMIT_PAYMENTS_ACCOUNT_MAX = '1000';
 setSharedRedisClient({ isOpen: true, eval: async () => [1, 1] });
@@ -179,6 +183,13 @@ function adminHandoverRequest(harness, scenario, body) {
     .send(body);
 }
 
+function adminDeliveredRequest(harness, scenario, body) {
+  return request(app)
+    .post(`/api/admin/orders/${scenario.orderId}/delivered`)
+    .set('Authorization', authHeader(harness.adminId))
+    .send(body);
+}
+
 function buyerCancelRequest(scenario) {
   return request(app)
     .post(`/api/orders/${scenario.orderId}/cancel`)
@@ -229,6 +240,7 @@ async function cleanupScenario(harness, scenario) {
     return;
   }
   await db.query('DELETE FROM order_exceptions WHERE order_id = $1', [scenario.orderId]);
+  await db.query('DELETE FROM payout_holds WHERE order_id = $1', [scenario.orderId]);
   await db.query(
     'DELETE FROM delivery_status_log WHERE order_id IN (SELECT id FROM orders WHERE listing_id = $1)',
     [scenario.listingId]
@@ -279,6 +291,7 @@ function restoreHandoverTestEnvironment() {
 }
 
 module.exports = {
+  adminDeliveredRequest,
   adminHandoverRequest,
   authHeader,
   buyerCancelRequest,

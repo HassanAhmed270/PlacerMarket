@@ -27,6 +27,19 @@ async function getSetting(key) {
   return rows[0].value;
 }
 
+/** FR-50: read platform settings using the caller's existing transaction. */
+async function getSettingsForTransaction(client, keys) {
+  const { rows } = await client.query(
+    'SELECT key, value FROM platform_settings WHERE key = ANY($1::text[])',
+    [keys]
+  );
+  const settings = Object.fromEntries(rows.map(({ key, value }) => [key, value]));
+  for (const key of keys) {
+    if (!Object.hasOwn(settings, key)) throw new NotFoundError('platform_setting', key);
+  }
+  return settings;
+}
+
 /** FR-50: generic platform_settings upsert. */
 async function setSetting(key, value, adminId) {
   const { rows } = await db.query(
@@ -124,6 +137,7 @@ async function adjustCommissionPercent(newPercent, adminId) {
 
 module.exports = {
   getSetting,
+  getSettingsForTransaction,
   setSetting,
   calculateCommission,
   calculateSettlement,

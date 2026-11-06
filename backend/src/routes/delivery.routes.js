@@ -36,11 +36,15 @@ router.get('/orders/:id/tracking', requireAuth, noStore, async (req, res) => {
   res.json(await delivery.getDeliveryTracking(req.params.id, req.user.id, canViewAll)); // FR-42
 });
 
-adminRouter.patch('/orders/:orderId/delivery', noStore, requirePermission('order.mark_handover'), limiters.security, async (req, res) => {
+adminRouter.patch('/orders/:orderId/delivery', noStore, requirePermission('order.mark_handover'), limiters.adminOps, async (req, res) => {
   res.json(await delivery.recordAdminHandover(req.params.orderId, req.body, req.user.id)); // FR-72
 });
 
-adminRouter.get('/order-exceptions', noStore, requirePermission('order.mark_handover'), limiters.security, async (req, res) => {
+adminRouter.post('/orders/:orderId/delivered', noStore, requirePermission('order.mark_delivered'), limiters.adminOps, async (req, res) => {
+  res.json(await delivery.markOrderDelivered(req.params.orderId, req.body, req.user.id)); // FR-68
+});
+
+adminRouter.get('/order-exceptions', noStore, requirePermission('order.mark_handover'), limiters.adminOps, async (req, res) => {
   if (req.query.resolved !== undefined && req.query.resolved !== 'false') {
     throw new ValidationError('resolved must be false.');
   }

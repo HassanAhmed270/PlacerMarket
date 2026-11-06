@@ -66,6 +66,40 @@ async function startHold(orderId) {
   return rows[0] || null;
 }
 
+/** FR-45b, FR-45c, FR-68: start a reservation-order hold inside its delivery transaction. */
+async function startHoldForReservationOrder(client, orderId) {
+  const settings = await settlement.getSettingsForTransaction(client, [
+    'payout_hold_days',
+    'complaint_window_days',
+  ]);
+  const holdWindowDays = Number(settings.payout_hold_days);
+  const complaintWindowDays = Number(settings.complaint_window_days);
+  if (!Number.isSafeInteger(holdWindowDays) || holdWindowDays <= 0 ||
+      !Number.isSafeInteger(complaintWindowDays) || complaintWindowDays <= 0) {
+    throw new ValidationError('Payout hold and complaint windows must be positive whole days.');
+  }
+  const { rows } = await client.query(
+    `INSERT INTO payout_holds (order_id, hold_started_at, hold_window_days, complaint_window_days, state)
+     VALUES ($1, now(), $2, $3, 'held')
+     ON CONFLICT (order_id) DO NOTHING
+     RETURNING order_id`,
+    [orderId, holdWindowDays, complaintWindowDays]
+  );
+  return rows.length > 0;
+}
+
+/** FR-45b, FR-45c, FR-68: read a reservation-order hold inside its delivery transaction. */
+async function getReservationOrderHold(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT state, hold_started_at, hold_window_days, complaint_window_days
+     FROM payout_holds
+     WHERE order_id = $1`,
+    [orderId]
+  );
+  if (!rows[0]) throw new NotFoundError('payout_hold', orderId);
+  return rows[0];
+}
+
 // ---- FR-45d: default release at end of full window ----
 
 async function releasePayout(orderId, { releasedVia = 'scheduled' } = {}) {
@@ -141,6 +175,8 @@ async function getHeldOrdersWithDisputeStatus() {
 
 module.exports = {
   startHold,
+  startHoldForReservationOrder,
+  getReservationOrderHold,
   checkAndReleaseDuePayouts,
   forceReleasePayoutEarly,
   getHeldOrdersWithDisputeStatus,

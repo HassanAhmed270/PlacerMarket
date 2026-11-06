@@ -5,6 +5,8 @@ const {
   createConfiguredRateLimiters,
 } = require('../../src/middleware/rateLimit');
 const { getSecurityLimits } = require('../../src/config');
+const express = require('express');
+const request = require('supertest');
 
 function counterRedis() {
   const counters = new Map();
@@ -133,6 +135,31 @@ describe('account messaging rate limits', () => {
     await unavailable({ user: { id: 'account-1' } }, response(), (error) => { redisError = error; });
     expect(redisError.statusCode).toBe(503);
     expect(redisError.message).not.toContain('private redis failure');
+  });
+});
+
+describe('admin operation rate limits', () => {
+  test('defaults allow 120 requests per account and 300 per IP per hour', () => {
+    expect(getSecurityLimits({})).toMatchObject({
+      RATE_LIMIT_ADMIN_OPS_ACCOUNT_MAX: 120,
+      RATE_LIMIT_ADMIN_OPS_IP_MAX: 300,
+      RATE_LIMIT_WINDOW_SECONDS: 3600,
+    });
+  });
+
+  test('a configured small admin limit returns 429 on the delivered route', async () => {
+    const redis = counterRedis();
+    const limiters = createConfiguredRateLimiters({
+      RATE_LIMIT_ADMIN_OPS_IP_MAX: '10',
+      RATE_LIMIT_ADMIN_OPS_ACCOUNT_MAX: '1',
+    }, () => redis);
+    const app = express();
+    app.post('/api/admin/orders/:orderId/delivered', limiters.adminOps, (_req, res) => {
+      res.sendStatus(200);
+    });
+
+    await request(app).post('/api/admin/orders/order-1/delivered').expect(200);
+    await request(app).post('/api/admin/orders/order-1/delivered').expect(429);
   });
 });
 

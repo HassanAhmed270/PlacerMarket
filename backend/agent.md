@@ -215,6 +215,11 @@ purpose so the schema works whichever way this eventually gets decided.
   cross-module behavior, use this same test: gating a decision in the same
   request → direct call; reacting to something that already happened →
   event.
+- **FR-68 (Admin-delivered reservation orders)**: `delivery.service.js`
+  uses `orders.service.js` for the order-state transition, `payout.service.js`
+  for the transaction-aware payout-hold insert, and
+  `escrowPayments.service.js` for the money-audit row. It emits
+  `events.PAYOUT_HELD` only after the transaction commits.
 - **FR-50a guard**: `settlement.service.js` deliberately does NOT require
   `disputes.service.js` (would create a circular require with
   `disputes.service.js` → `settlement.service.js` for the complaint-window

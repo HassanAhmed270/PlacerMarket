@@ -247,17 +247,42 @@ async function lockReservationOrderForSystemAction(client, orderId) {
   return rows[0] || null;
 }
 
-/** FR-72: lock an order for Admin handover validation after its listing and buyer. */
+/** FR-68, FR-72: lock an order for delivery validation after its listing and buyer. */
 async function lockReservationOrderForHandover(client, orderId) {
   const { rows } = await client.query(
     `SELECT id, listing_id, reservation_id, buyer_id, status, funded_at,
-            handed_over_at, handover_deadline_at
+            handed_over_at, handover_deadline_at, delivered_at
      FROM orders
      WHERE id = $1
      FOR UPDATE`,
     [orderId]
   );
   return rows[0] || null;
+}
+
+/** FR-68: persist delivery and payout-hold order states on a reservation-backed order. */
+async function markReservationOrderDelivered(client, orderId) {
+  const { rows: deliveredRows } = await client.query(
+    `UPDATE orders
+     SET status = 'delivered', delivered_at = now()
+     WHERE id = $1
+       AND reservation_id IS NOT NULL
+       AND status IN ('handed_to_delivery', 'out_for_delivery')
+       AND delivered_at IS NULL
+       AND handed_over_at IS NOT NULL
+     RETURNING id, delivered_at`,
+    [orderId]
+  );
+  if (!deliveredRows[0]) return null;
+
+  const { rows: heldRows } = await client.query(
+    `UPDATE orders
+     SET status = 'held'
+     WHERE id = $1 AND status = 'delivered' AND delivered_at IS NOT NULL
+     RETURNING id, status, delivered_at`,
+    [orderId]
+  );
+  return heldRows[0] || null;
 }
 
 /** FR-72: record courier handover timestamps on the owning order in the caller's transaction. */
@@ -477,6 +502,7 @@ module.exports = {
   lockOrderForRefund,
   lockReservationOrderForSystemAction,
   lockReservationOrderForHandover,
+  markReservationOrderDelivered,
   recordCourierHandover,
   cancelReservationOrder,
   getOrderIdForReservation,

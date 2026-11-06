@@ -32,3 +32,28 @@ describe('FR-61, FR-62 order funding transitions', () => {
     );
   });
 });
+
+describe('FR-68 reservation-backed delivery transition', () => {
+  test('FR-68: delivery records delivered_at and persists the hold-start order status', async () => {
+    const deliveredAt = new Date('2026-11-06T12:00:00.000Z');
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ id: 'order-1', delivered_at: deliveredAt }] })
+        .mockResolvedValueOnce({ rows: [{ id: 'order-1', status: 'held', delivered_at: deliveredAt }] }),
+    };
+
+    await expect(orders.markReservationOrderDelivered(client, 'order-1'))
+      .resolves.toEqual({ id: 'order-1', status: 'held', delivered_at: deliveredAt });
+    expect(client.query.mock.calls[0][0]).toContain("SET status = 'delivered', delivered_at = now()");
+    expect(client.query.mock.calls[0][0]).toContain("status IN ('handed_to_delivery', 'out_for_delivery')");
+    expect(client.query.mock.calls[0][0]).toContain('delivered_at IS NULL');
+    expect(client.query.mock.calls[0][0]).toContain('handed_over_at IS NOT NULL');
+    expect(client.query.mock.calls[1][0]).toContain("SET status = 'held'");
+  });
+
+  test('FR-68: a stale delivery update leaves the order unchanged', async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    await expect(orders.markReservationOrderDelivered(client, 'order-1')).resolves.toBeNull();
+    expect(client.query).toHaveBeenCalledTimes(1);
+  });
+});

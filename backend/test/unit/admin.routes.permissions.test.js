@@ -49,6 +49,7 @@ const ADMIN_ONLY_PATHS = [
 ];
 const DELIVERY_ADMIN_ONLY_PATHS = [
   { method: 'patch', path: '/api/admin/orders/x/delivery' },
+  { method: 'post', path: '/api/admin/orders/x/delivered' },
   { method: 'get', path: '/api/admin/order-exceptions' },
 ];
 

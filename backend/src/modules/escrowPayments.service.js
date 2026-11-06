@@ -409,6 +409,15 @@ async function recordCourierHandoverAuditEvent(client, { orderId, adminId, couri
   );
 }
 
+/** FR-68: write the financial audit record for an Admin-recorded delivery. */
+async function recordOrderDeliveredAuditEvent(client, { orderId, adminId }) {
+  await client.query(
+    `INSERT INTO money_audit_events (actor_id, action, order_id, reason)
+     VALUES ($1, 'order_delivered', $2, 'Admin marked reservation-backed order delivered')`,
+    [adminId, orderId]
+  );
+}
+
 function getCapturedPayment(payments) {
   return payments.find((payment) => ['succeeded', 'refunded', 'partially_refunded'].includes(payment.status));
 }
@@ -1270,6 +1279,7 @@ module.exports = {
   refundUnhandedOverOrder,
   lockPaymentAndRefundRowsForHandover,
   recordCourierHandoverAuditEvent,
+  recordOrderDeliveredAuditEvent,
   sweepUnhandedOverOrders,
   reconcileMoneyState,
   processRefundJob,

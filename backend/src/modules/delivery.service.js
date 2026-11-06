@@ -24,6 +24,7 @@ const reservations = require('./reservations.service');
 const listings = require('./listings.service');
 const users = require('./users.service');
 const escrowPayments = require('./escrowPayments.service');
+const payout = require('./payout.service');
 const {
   ConflictError, NotFoundError, ValidationError,
 } = require('../lib/errors');
@@ -221,16 +222,18 @@ async function validatePickupAgainstDatabaseTime(client, courierPickupAt, order)
   };
 }
 
-async function writeHandoverLog(client, { orderId, adminId, note, trackingNumber }) {
+async function writeHandoverLog(client, {
+  orderId, adminId, note, trackingNumber, status = 'picked_up',
+}) {
   const logNote = trackingNumber
     ? `${note}\nTracking number: ${trackingNumber}`
     : note;
   const { rows } = await client.query(
     `INSERT INTO delivery_status_log
        (order_id, status, entered_by, note)
-     VALUES ($1, 'picked_up', $2, $3)
+     VALUES ($1, $2, $3, $4)
      RETURNING id`,
-    [orderId, adminId, logNote]
+    [orderId, status, adminId, logNote]
   );
   return rows[0];
 }
@@ -307,6 +310,69 @@ async function recordAdminHandover(orderId, body, adminId) {
   return result;
 }
 
+function validateDeliveredRequest(orderId, body, adminId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)) {
+    throw new ValidationError('orderId must be a UUID.');
+  }
+  if (typeof adminId !== 'string' || !UUID.test(adminId)) {
+    throw new ValidationError('adminId must be a UUID.');
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body) ||
+      Object.keys(body).some((key) => key !== 'note') ||
+      typeof body.note !== 'string') {
+    throw new ValidationError('A delivery note of 1 to 500 characters is required.');
+  }
+  const note = body.note.trim();
+  if (note.length < 1 || note.length > 500) {
+    throw new ValidationError('A delivery note of 1 to 500 characters is required.');
+  }
+  return note;
+}
+
+/** FR-68: mark a reservation-backed order delivered and start its payout hold atomically. */
+async function markOrderDelivered(orderId, body, adminId) {
+  const note = validateDeliveredRequest(orderId, body, adminId);
+  const result = await db.withTransactionRetry(async (client) => {
+    const { order, reservation } = await lockHandoverOrder(client, orderId);
+    if (!['handed_to_delivery', 'out_for_delivery'].includes(order.status) ||
+        reservation.status !== 'paid' ||
+        !order.handed_over_at ||
+        order.delivered_at !== null) {
+      throw new ConflictError('The order is not eligible to be marked delivered.');
+    }
+
+    const updatedOrder = await orders.markReservationOrderDelivered(client, orderId);
+    if (!updatedOrder) {
+      throw new ConflictError('The order state changed before delivery was recorded.');
+    }
+    const holdCreated = await payout.startHoldForReservationOrder(client, orderId);
+    const hold = await payout.getReservationOrderHold(client, orderId);
+    await writeHandoverLog(client, {
+      orderId,
+      adminId,
+      note,
+      status: 'delivered',
+    });
+    await escrowPayments.recordOrderDeliveredAuditEvent(client, { orderId, adminId });
+    return {
+      orderId,
+      status: updatedOrder.status,
+      deliveredAt: updatedOrder.delivered_at,
+      holdCreated,
+      payoutHold: {
+        state: hold.state,
+        holdStartedAt: hold.hold_started_at,
+        holdWindowDays: hold.hold_window_days,
+        complaintWindowDays: hold.complaint_window_days,
+      },
+    };
+  });
+
+  if (result.holdCreated) eventBus.emit(events.PAYOUT_HELD, { orderId });
+  const { holdCreated: _holdCreated, ...response } = result;
+  return response;
+}
+
 /** FR-72e: list unresolved delivery exceptions newest-first, bounded to 50. */
 async function listOrderExceptions() {
   const { rows } = await db.query(
@@ -328,5 +394,6 @@ module.exports = {
   logDeliveryStatus,
   getDeliveryTracking,
   recordAdminHandover,
+  markOrderDelivered,
   listOrderExceptions,
 };

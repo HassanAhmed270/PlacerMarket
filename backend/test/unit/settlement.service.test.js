@@ -29,6 +29,26 @@ describe('settlement.service', () => {
     expect(record.seller_net_payout).toBe(4500);
   });
 
+  test('FR-50: transaction setting reads use the caller client and fail for a missing key', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValueOnce({
+        rows: [
+          { key: 'payout_hold_days', value: '5' },
+          { key: 'complaint_window_days', value: '3' },
+        ],
+      }).mockResolvedValueOnce({ rows: [{ key: 'payout_hold_days', value: '5' }] }),
+    };
+    await expect(settlement.getSettingsForTransaction(client, [
+      'payout_hold_days',
+      'complaint_window_days',
+    ])).resolves.toEqual({ payout_hold_days: '5', complaint_window_days: '3' });
+    await expect(settlement.getSettingsForTransaction(client, [
+      'payout_hold_days',
+      'complaint_window_days',
+    ])).rejects.toMatchObject({ statusCode: 404 });
+    expect(db.query).not.toHaveBeenCalled();
+  });
+
   test('FR-48/FR-66: payout initiation must resolve the seller and pass the eligibility guard first', async () => {
     const guard = jest.fn().mockResolvedValue(true);
     db.query.mockResolvedValueOnce({ rows: [{ seller_id: 'seller-1' }] });
