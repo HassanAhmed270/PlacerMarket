@@ -81,6 +81,14 @@ test('order statuses map to plain-language final, failed, and late-refund messag
   }).title, 'Reservation expired')
 })
 
+test('held order status tells the buyer it was marked delivered during the complaint window', () => {
+  assert.deepEqual(getOrderStatusMessage({ status: 'held' }), {
+    title: 'Delivered',
+    message: 'Your order was marked delivered. If something is wrong, you can contact support during the complaint window.',
+    final: true,
+  })
+})
+
 test('payment polling stops on final server state or at 60 seconds', () => {
   const startedAt = 1000
   assert.equal(PAYMENT_POLL_INTERVAL_MS, 2000)

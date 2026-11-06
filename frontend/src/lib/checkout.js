@@ -79,6 +79,13 @@ export function getOrderStatusMessage(summary = {}) {
       final: true,
     }
   }
+  if (orderStatus === 'held') {
+    return {
+      title: 'Delivered',
+      message: 'Your order was marked delivered. If something is wrong, you can contact support during the complaint window.',
+      final: true,
+    }
+  }
   if (orderStatus === 'funded') {
     return {
       title: 'Payment received, waiting for the seller to hand over',
