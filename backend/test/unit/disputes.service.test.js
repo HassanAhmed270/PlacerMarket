@@ -84,3 +84,71 @@ describe('FR-43 delivered reservation-order compatibility', () => {
     }
   });
 });
+
+describe('FR-43, FR-45g dispute filing event transaction order', () => {
+  const dispute = { id: 'dispute-1', order_id: 'order-1', status: 'open' };
+
+  function mockFileDisputeInputs() {
+    db.query.mockResolvedValueOnce({
+      rows: [{ buyer_id: 'buyer-1', delivered_at: new Date() }],
+    }).mockResolvedValueOnce({ rows: [{ value: '3' }] });
+  }
+
+  test('FR-45g: DISPUTE_FILED is emitted only after the transaction callback commits', async () => {
+    const callOrder = [];
+    mockFileDisputeInputs();
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [dispute] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    db.withTransaction.mockImplementationOnce(async (callback) => {
+      callOrder.push('transaction-start');
+      const result = await callback(client);
+      callOrder.push('callback-complete');
+      callOrder.push('transaction-commit');
+      return result;
+    });
+    const emit = jest.spyOn(eventBus, 'emit').mockImplementation(() => {
+      callOrder.push('event-emitted');
+      return true;
+    });
+
+    try {
+      await expect(disputes.fileDispute('order-1', 'buyer-1', {
+        reasonText: 'The delivered item differs from the listing',
+        evidenceUrls: ['https://example.test/evidence.jpg'],
+      })).resolves.toEqual(dispute);
+      expect(callOrder).toEqual([
+        'transaction-start',
+        'callback-complete',
+        'transaction-commit',
+        'event-emitted',
+      ]);
+    } finally {
+      emit.mockRestore();
+    }
+  });
+
+  test('FR-45g: DISPUTE_FILED is not emitted when the transaction callback throws', async () => {
+    mockFileDisputeInputs();
+    const transactionError = new Error('evidence insert failed');
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [dispute] })
+        .mockRejectedValueOnce(transactionError),
+    };
+    db.withTransaction.mockImplementationOnce(async (callback) => callback(client));
+    const emit = jest.spyOn(eventBus, 'emit').mockImplementation(() => true);
+
+    try {
+      await expect(disputes.fileDispute('order-1', 'buyer-1', {
+        reasonText: 'The delivered item differs from the listing',
+        evidenceUrls: ['https://example.test/evidence.jpg'],
+      })).rejects.toBe(transactionError);
+      expect(emit).not.toHaveBeenCalled();
+    } finally {
+      emit.mockRestore();
+    }
+  });
+});

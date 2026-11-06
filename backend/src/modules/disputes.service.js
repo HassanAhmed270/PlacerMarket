@@ -57,7 +57,7 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }) {
     throw new ValidationError(`Complaint window (${complaintWindowDays} days post-delivery) has closed (FR-43)`);
   }
 
-  return db.withTransaction(async (client) => {
+  const dispute = await db.withTransaction(async (client) => {
     const { rows } = await client.query(
       `INSERT INTO disputes (order_id, raised_by, reason_text, status)
        VALUES ($1, $2, $3, 'open') RETURNING *`,
@@ -70,9 +70,10 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }) {
         [dispute.id, buyerId, url]
       );
     }
-    eventBus.emit(events.DISPUTE_FILED, { disputeId: dispute.id, orderId });
     return dispute;
   });
+  eventBus.emit(events.DISPUTE_FILED, { disputeId: dispute.id, orderId });
+  return dispute;
 }
 
 /**

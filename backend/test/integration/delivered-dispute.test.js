@@ -163,6 +163,58 @@ describe('FR-43, FR-45g delivered reservation disputes', () => {
     expect(after).toEqual(before);
   });
 
+  test('FR-45g: disputes pause holds across 10 fresh delivered scenarios', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      for (let index = 0; index < 10; index += 1) {
+        const freshScenario = await createScenario(harness);
+        try {
+          await db.query(
+            `UPDATE orders
+             SET status = 'handed_to_delivery', handed_over_at = now()
+             WHERE id = $1`,
+            [freshScenario.orderId]
+          );
+          await adminDeliveredRequest(harness, freshScenario, {
+            note: `Delivered for dispute loop ${index + 1}`,
+          }).expect(200);
+          const response = await fileDispute(freshScenario.buyerId, freshScenario.orderId)
+            .expect(201);
+          await global.drainIntegrationListeners(5000);
+
+          const { rows } = await db.query(
+            'SELECT state, dispute_id FROM payout_holds WHERE order_id = $1',
+            [freshScenario.orderId]
+          );
+          expect(rows).toEqual([{
+            state: 'paused_for_dispute',
+            dispute_id: response.body.id,
+          }]);
+        } finally {
+          await db.query(
+            `DELETE FROM dispute_evidence
+             WHERE dispute_id IN (SELECT id FROM disputes WHERE order_id = $1)`,
+            [freshScenario.orderId]
+          );
+          await db.query(
+            `UPDATE payout_holds
+             SET state = 'held', dispute_id = NULL
+             WHERE order_id = $1`,
+            [freshScenario.orderId]
+          );
+          await db.query('DELETE FROM disputes WHERE order_id = $1', [freshScenario.orderId]);
+          await cleanupScenario(harness, freshScenario);
+        }
+      }
+
+      expect(consoleError.mock.calls
+        .filter(([message]) => String(message).includes('Failed to pause payout hold')))
+        .toHaveLength(0);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   test('FR-43: seller cannot file a dispute on a delivered reservation order', async () => {
     const response = await fileDispute(harness.fixture.userId, scenario.orderId);
     expect([403, 404]).toContain(response.status);
