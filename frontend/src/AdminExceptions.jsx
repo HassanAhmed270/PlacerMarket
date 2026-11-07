@@ -2,7 +2,11 @@ import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
 import { adminErrorMessage, adminStatusLabel, formatAdminDate, validateExceptionResolutionNote } from './lib/admin.js'
 
-const EXCEPTION_KINDS = ['late_handover_after_auto_cancel', 'handover_after_cancel']
+const EXCEPTION_KINDS = [
+  'late_handover_after_auto_cancel',
+  'handover_after_cancel',
+  'dispute_refund_required',
+]
 
 export default function AdminExceptions() {
   const [status, setStatus] = useState('unresolved')

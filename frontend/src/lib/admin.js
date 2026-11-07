@@ -15,6 +15,7 @@ const STATUS_LABELS = Object.freeze({
   return_requested: 'Return requested',
   returned: 'Returned',
   refunded: 'Refunded',
+  dispute_refund_required: 'Dispute refund required (manual)',
 })
 
 const ERROR_MESSAGES = Object.freeze({

@@ -74,6 +74,7 @@ test('Admin helpers format server decimal strings and dates without money arithm
   assert.match(formatAdminDate('2026-11-07T10:00:00.000Z', { timeZone: 'UTC' }), /2026/)
   assert.equal(formatAdminDate('invalid'), '—')
   assert.equal(adminStatusLabel('handed_to_delivery'), 'Handed to delivery')
+  assert.equal(adminStatusLabel('dispute_refund_required'), 'Dispute refund required (manual)')
 })
 
 test('Admin order eligibility hints follow the order state and available permissions', () => {

@@ -126,7 +126,7 @@ function DisputeRow({ dispute, onError, onResolved }) {
     <article className="admin-card admin-row">
       <h2>{adminStatusLabel(dispute.status)}</h2>
       <p><a href={`/admin/orders/${encodeURIComponent(orderId || '')}`}>Open order</a> · Filed {formatAdminDate(dispute.created_at || dispute.createdAt)}</p>
-      {dispute.reason && <p><strong>Reason:</strong> {dispute.reason}</p>}
+      {dispute.reason_text && <p><strong>Reason:</strong> {dispute.reason_text}</p>}
       <button className="admin-button" type="button" onClick={toggleEvidence} disabled={evidenceLoading}>
         {evidenceLoading ? 'Loading evidence…' : evidence ? 'Hide evidence' : 'View evidence'}
       </button>
@@ -141,7 +141,7 @@ function DisputeRow({ dispute, onError, onResolved }) {
         : <p role="status">No evidence attached.</p>)}
       {unresolved ? (
         <form className="admin-form admin-inline-confirm" onSubmit={submit}>
-          <p>Enter 0 for full release to the seller, or the full item price for a full refund. Open the order to view its server-recorded amounts.</p>
+          <p>This records the decision only and moves no money. Resolving for the seller lets an Admin release the manual payout from the order page. Resolving for the buyer creates a &quot;refund required&quot; exception that must be handled manually under Exceptions.</p>
           <label>Resolution amount to buyer
             <input name="resolutionAmountToBuyer" inputMode="decimal" required placeholder="0 or full item price" />
           </label>
