@@ -462,6 +462,17 @@ async function recordOrderDeliveredAuditEvent(client, { orderId, adminId }) {
   );
 }
 
+/** FR-72e: write the financial audit record for an Admin-resolved order exception. */
+async function recordOrderExceptionResolvedAuditEvent(client, {
+  orderId, adminId, exceptionId, kind, resolutionNote,
+}) {
+  await client.query(
+    `INSERT INTO money_audit_events (actor_id, action, order_id, reason, metadata)
+     VALUES ($1, 'order_exception_resolved', $2, $3, $4::jsonb)`,
+    [adminId, orderId, resolutionNote, JSON.stringify({ exceptionId, kind })]
+  );
+}
+
 function getCapturedPayment(payments) {
   return payments.find((payment) => ['succeeded', 'refunded', 'partially_refunded'].includes(payment.status));
 }
@@ -1326,6 +1337,7 @@ module.exports = {
   recordManualSellerPayout,
   recordCourierHandoverAuditEvent,
   recordOrderDeliveredAuditEvent,
+  recordOrderExceptionResolvedAuditEvent,
   sweepUnhandedOverOrders,
   reconcileMoneyState,
   processRefundJob,

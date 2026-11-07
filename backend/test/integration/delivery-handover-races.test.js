@@ -57,6 +57,19 @@ describe('FR-72 handover race serialization', () => {
         [scenario.orderId]
       );
       expect(refundRows[0].count).toBe(cancellationWon ? 1 : 0);
+      const { rows: exceptionRows } = await db.query(
+        `SELECT kind, resolved_at
+         FROM order_exceptions WHERE order_id = $1`,
+        [scenario.orderId]
+      );
+      if (cancellationWon) {
+        expect(exceptionRows).toEqual([{
+          kind: 'handover_after_cancel',
+          resolved_at: null,
+        }]);
+      } else {
+        expect(exceptionRows).toEqual([]);
+      }
       if (cancellationWon) {
         const { rows: stateRows } = await db.query(
           `SELECT order_row.status, reservation.status AS reservation_status

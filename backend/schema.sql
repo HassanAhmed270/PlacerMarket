@@ -1838,3 +1838,11 @@ CREATE TABLE order_exceptions (
 CREATE UNIQUE INDEX order_exceptions_one_unresolved_kind_idx
   ON order_exceptions (order_id, kind)
   WHERE resolved_at IS NULL;
+
+-- Migration: 023_order_exception_resolution.sql
+ALTER TABLE order_exceptions
+  DROP CONSTRAINT order_exceptions_kind_check,
+  ADD CONSTRAINT order_exceptions_kind_check
+    CHECK (kind IN ('late_handover_after_auto_cancel', 'handover_after_cancel')),
+  ADD CONSTRAINT order_exceptions_resolved_by_fkey
+    FOREIGN KEY (resolved_by) REFERENCES users(id);

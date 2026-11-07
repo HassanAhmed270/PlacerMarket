@@ -197,6 +197,7 @@ async function lockHandoverOrder(client, orderId) {
   return {
     order,
     reservation,
+    refundRows,
     hasHandoverTimeoutRefund: refundRows.some((refund) => refund.trigger === 'system_handover_timeout'),
   };
 }
@@ -254,15 +255,67 @@ async function recordLateHandoverException(orderId, adminId, handover) {
   });
 }
 
+function cancelledOrderCause(reservation, refundRows) {
+  const hasSystemCancelRefund = refundRows.some((refund) => refund.trigger === 'system_cancel');
+  if (reservation.end_reason === 'buyer_cancelled' && hasSystemCancelRefund) {
+    return 'Order was cancelled by the buyer';
+  }
+  if (reservation.end_reason === 'listing_taken_down' && hasSystemCancelRefund) {
+    return 'Order was cancelled because the listing was taken down';
+  }
+  return 'Order was cancelled';
+}
+
+async function recordHandoverAfterCancelException(orderId, adminId, handover) {
+  return db.withTransactionRetry(async (client) => {
+    const {
+      order, reservation, hasHandoverTimeoutRefund, refundRows,
+    } = await lockHandoverOrder(client, orderId);
+    await validatePickupAgainstDatabaseTime(client, handover.courierPickupAt, order);
+    if (order.status !== 'cancelled' || !order.funded_at || hasHandoverTimeoutRefund) {
+      return { created: false, existingExceptionId: null };
+    }
+
+    const cause = cancelledOrderCause(reservation, refundRows);
+    const { rows } = await client.query(
+      `INSERT INTO order_exceptions
+         (order_id, kind, courier_pickup_at, note, recorded_by)
+       VALUES ($1, 'handover_after_cancel', $2::timestamptz, $3, $4)
+       ON CONFLICT (order_id, kind) WHERE resolved_at IS NULL DO NOTHING
+       RETURNING id`,
+      [
+        orderId,
+        handover.courierPickupAt,
+        `${handover.handoverConfirmationNote}\n${cause}`,
+        adminId,
+      ]
+    );
+    if (rows[0]) return { created: true, existingExceptionId: null };
+
+    const existing = await client.query(
+      `SELECT id
+       FROM order_exceptions
+       WHERE order_id = $1 AND kind = 'handover_after_cancel' AND resolved_at IS NULL`,
+      [orderId]
+    );
+    return { created: false, existingExceptionId: existing.rows[0]?.id || null };
+  });
+}
+
 /** FR-72: record an Admin-confirmed courier handover under canonical money locks. */
 async function recordAdminHandover(orderId, body, adminId) {
   const handover = validateHandoverRequest(orderId, body, adminId);
   const result = await db.withTransactionRetry(async (client) => {
-    const { order, reservation, hasHandoverTimeoutRefund } = await lockHandoverOrder(client, orderId);
+    const {
+      order, reservation, hasHandoverTimeoutRefund,
+    } = await lockHandoverOrder(client, orderId);
     const pickupChecks = await validatePickupAgainstDatabaseTime(client, handover.courierPickupAt, order);
 
     if (order.status === 'cancelled' && hasHandoverTimeoutRefund) {
       return { kind: 'auto_cancelled' };
+    }
+    if (order.status === 'cancelled' && order.funded_at !== null) {
+      return { kind: 'cancelled_after_funding' };
     }
     if (order.status !== 'funded' || reservation.status !== 'paid' ||
         order.handed_over_at !== null || !order.handover_deadline_at) {
@@ -306,6 +359,18 @@ async function recordAdminHandover(orderId, body, adminId) {
       throw new ConflictError('The order was already cancelled and cannot be reopened.');
     }
     throw new ConflictError('The order was auto-cancelled and refunded; it will not be reopened and requires manual resolution.');
+  }
+  if (result.kind === 'cancelled_after_funding') {
+    const exception = await recordHandoverAfterCancelException(orderId, adminId, handover);
+    if (!exception.created) {
+      if (exception.existingExceptionId) {
+        throw new ConflictError(
+          `The order is already cancelled and cannot be reopened; an existing exception (${exception.existingExceptionId}) is unresolved for handover-after-cancel.`
+        );
+      }
+      throw new ConflictError('The order is no longer eligible for a handover-after-cancel exception.');
+    }
+    throw new ConflictError('The order was cancelled and refunded; it will not be reopened. A handover-after-cancel exception was recorded for manual resolution.');
   }
   return result;
 }
@@ -373,18 +438,97 @@ async function markOrderDelivered(orderId, body, adminId) {
   return response;
 }
 
-/** FR-72e: list unresolved delivery exceptions newest-first, bounded to 50. */
-async function listOrderExceptions() {
+/** FR-72e: list Admin delivery exceptions using status, kind, and bounded limit filters. */
+async function listOrderExceptions(filters = {}) {
+  if (!filters || typeof filters !== 'object' || Array.isArray(filters)) {
+    throw new ValidationError('Order exception filters must be an object.');
+  }
+  const status = filters.status === undefined ? 'unresolved' : filters.status;
+  if (!['unresolved', 'resolved', 'all'].includes(status)) {
+    throw new ValidationError('status must be unresolved, resolved, or all.');
+  }
+  const allowedKinds = new Set(['late_handover_after_auto_cancel', 'handover_after_cancel']);
+  const kind = filters.kind;
+  if (kind !== undefined && (typeof kind !== 'string' || !allowedKinds.has(kind))) {
+    throw new ValidationError('kind is not a supported order exception kind.');
+  }
+  const rawLimit = filters.limit === undefined ? '50' : filters.limit;
+  if (typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit) || Number(rawLimit) < 1) {
+    throw new ValidationError('limit must be a positive integer.');
+  }
+  const limit = Math.min(Number(rawLimit), 100);
+  const conditions = [];
+  const params = [];
+  if (status !== 'all') conditions.push(status === 'resolved' ? 'resolved_at IS NOT NULL' : 'resolved_at IS NULL');
+  if (kind !== undefined) {
+    params.push(kind);
+    conditions.push(`kind = $${params.length}`);
+  }
+  params.push(limit);
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await db.query(
     `SELECT id, order_id AS "orderId", kind,
             courier_pickup_at AS "courierPickupAt", note,
-            recorded_at AS "recordedAt", resolved_at AS "resolvedAt"
+            recorded_at AS "recordedAt", resolved_at AS "resolvedAt",
+            resolved_by AS "resolvedBy", resolution_note AS "resolutionNote"
      FROM order_exceptions
-     WHERE resolved_at IS NULL
+     ${where}
      ORDER BY recorded_at DESC, id DESC
-     LIMIT 50`
+     LIMIT $${params.length}`,
+    params
   );
   return rows;
+}
+
+/** FR-72e: resolve one Admin delivery exception and audit the resolution atomically. */
+async function resolveOrderException(exceptionId, { resolvedBy, resolutionNote } = {}) {
+  if (typeof exceptionId !== 'string' || !UUID.test(exceptionId)) {
+    throw new ValidationError('exceptionId must be a UUID.');
+  }
+  if (typeof resolvedBy !== 'string' || !UUID.test(resolvedBy)) {
+    throw new ValidationError('resolvedBy must be a UUID.');
+  }
+  if (typeof resolutionNote !== 'string') {
+    throw new ValidationError('resolutionNote must be 3 to 500 characters.');
+  }
+  const note = resolutionNote.trim();
+  if (note.length < 3 || note.length > 500) {
+    throw new ValidationError('resolutionNote must be 3 to 500 characters.');
+  }
+
+  return db.withTransaction(async (client) => {
+    const { rows: exceptionRows } = await client.query(
+      `SELECT id, order_id, kind, resolved_at
+       FROM order_exceptions
+       WHERE id = $1
+       FOR UPDATE`,
+      [exceptionId]
+    );
+    const exception = exceptionRows[0];
+    if (!exception) throw new NotFoundError('order exception', exceptionId);
+    if (exception.resolved_at !== null) {
+      throw new ConflictError('This order exception has already been resolved.');
+    }
+
+    const { rows } = await client.query(
+      `UPDATE order_exceptions
+       SET resolved_at = now(), resolved_by = $2, resolution_note = $3
+       WHERE id = $1
+       RETURNING id, order_id AS "orderId", kind,
+                 courier_pickup_at AS "courierPickupAt", note,
+                 recorded_at AS "recordedAt", resolved_at AS "resolvedAt",
+                 resolved_by AS "resolvedBy", resolution_note AS "resolutionNote"`,
+      [exceptionId, resolvedBy, note]
+    );
+    await escrowPayments.recordOrderExceptionResolvedAuditEvent(client, {
+      orderId: exception.order_id,
+      adminId: resolvedBy,
+      exceptionId,
+      kind: exception.kind,
+      resolutionNote: note,
+    });
+    return rows[0];
+  });
 }
 
 module.exports = {
@@ -396,4 +540,5 @@ module.exports = {
   recordAdminHandover,
   markOrderDelivered,
   listOrderExceptions,
+  resolveOrderException,
 };

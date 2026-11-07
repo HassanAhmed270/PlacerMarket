@@ -351,7 +351,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     const schema = newSchemaName();
     await resetPgBossSchema();
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(21);
+    expect(applied).toHaveLength(22);
 
     const relations = await db.query(
       `SELECT table_name FROM information_schema.tables
@@ -365,6 +365,18 @@ describe('FR-79b PostgreSQL migration runner', () => {
       'ledger_entries', 'money_audit_events', 'order_exceptions', 'payments', 'refunds',
       'reservations', 'supported_delivery_cities', 'webhook_inbox',
     ]);
+    const exceptionConstraints = await db.query(
+      `SELECT conname, pg_get_constraintdef(oid) AS definition
+       FROM pg_constraint
+       WHERE conrelid = to_regclass($1)
+         AND conname IN ('order_exceptions_kind_check', 'order_exceptions_resolved_by_fkey')`,
+      [`${schema}.order_exceptions`]
+    );
+    expect(exceptionConstraints.rows).toHaveLength(2);
+    expect(exceptionConstraints.rows.find((row) => row.conname === 'order_exceptions_kind_check').definition)
+      .toContain('handover_after_cancel');
+    expect(exceptionConstraints.rows.find((row) => row.conname === 'order_exceptions_resolved_by_fkey').definition)
+      .toContain('users(id)');
 
     const columns = await db.query(
       `SELECT column_name FROM information_schema.columns
@@ -418,7 +430,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     await expect(runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir }))
-      .resolves.toHaveLength(2);
+      .resolves.toHaveLength(3);
     await withSchemaClient(schema, async (client) => {
       const { rows } = await client.query(
         'SELECT title, search_text, is_reserved, reserved_until, is_sold FROM listing_search WHERE listing_id = $1',
@@ -470,7 +482,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(3);
+    expect(applied).toHaveLength(4);
 
     await withSchemaClient(schema, async (client) => {
       const preservedOrders = await client.query(

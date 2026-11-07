@@ -45,11 +45,25 @@ adminRouter.post('/orders/:orderId/delivered', noStore, requirePermission('order
 });
 
 adminRouter.get('/order-exceptions', noStore, requirePermission('order.mark_handover'), limiters.adminOps, async (req, res) => {
-  if (req.query.resolved !== undefined && req.query.resolved !== 'false') {
-    throw new ValidationError('resolved must be false.');
-  }
-  res.json(await delivery.listOrderExceptions()); // FR-72e
+  res.json(await delivery.listOrderExceptions(req.query)); // FR-72e
 });
+
+adminRouter.post(
+  '/order-exceptions/:exceptionId/resolve',
+  noStore,
+  requirePermission('order.resolve_exception'),
+  limiters.adminOps,
+  async (req, res) => {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) ||
+        Object.keys(req.body).some((key) => key !== 'resolutionNote')) {
+      throw new ValidationError('Only resolutionNote is accepted.');
+    }
+    res.json(await delivery.resolveOrderException(req.params.exceptionId, {
+      resolvedBy: req.user.id,
+      resolutionNote: req.body.resolutionNote,
+    })); // FR-72e
+  }
+);
 
 module.exports = router;
 module.exports.adminRouter = adminRouter;
