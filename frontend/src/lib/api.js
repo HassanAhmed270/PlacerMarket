@@ -131,6 +131,8 @@ export function createApiClient({
     buyListing: (id, input) => post(`listings/${encodeURIComponent(id)}/buy`, input, { authenticated: true }),
     getOrderSummary: (id) => get(`orders/${encodeURIComponent(id)}/summary`, { authenticated: true }),
     getMyOrders: (options = {}) => get(`orders/mine${queryString(options)}`, { authenticated: true }),
+    getSellingOrders: (options = {}) => get(`orders/selling${queryString(options)}`, { authenticated: true }),
+    getSellingOrder: (id) => get(`orders/selling/${encodeURIComponent(id)}`, { authenticated: true }),
     createOrderPayment: (id) => post(`orders/${encodeURIComponent(id)}/payment`, {}, { authenticated: true }),
     cancelReservationOrder: (id) => post(`orders/${encodeURIComponent(id)}/cancel`, {}, { authenticated: true }),
     searchListings: (input = {}) => {

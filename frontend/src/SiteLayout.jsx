@@ -15,6 +15,7 @@ function SiteHeader() {
         <a href="/about">About</a>
         <a href="/favorites">Favorites</a>
         <a href="/orders">My orders</a>
+        <a href="/seller/orders">My sales</a>
         <a href="/inbox">Inbox</a>
         <a href="/notifications">Notifications</a>
         <a className="nav-sell" href="/seller/listings">Sell with us</a>
@@ -36,6 +37,8 @@ function SiteFooter() {
         <a href="/privacy">Privacy</a>
         <a href="/help">Help</a>
         <a href="/contact">Contact</a>
+        <a href="/orders">My orders</a>
+        <a href="/seller/orders">My sales</a>
         <a href="/seller/listings">Sell with us</a>
         <a href="/login">Sign in</a>
       </nav>

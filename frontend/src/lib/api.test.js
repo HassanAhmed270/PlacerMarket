@@ -192,3 +192,23 @@ test('Admin APIs call the existing protected routes with their exact methods and
   assert.deepEqual(JSON.parse(calls[4].options.body), { payoutReference: 'ref-123', note: 'Manual transfer recorded' })
   assert.ok(calls.every(({ options }) => options.headers.Authorization?.startsWith('Bearer ')))
 })
+
+test('FR-34: seller order APIs use authenticated reads and cursor query parameters', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({ orders: [], nextBefore: null }) }
+    },
+  })
+  client.setAccessToken('short-lived-memory-token')
+  await client.getSellingOrders({ limit: 20, before: 'cursor-id' })
+  await client.getSellingOrder('order-1')
+
+  assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
+    ['https://api.example.test/api/orders/selling?limit=20&before=cursor-id', 'GET'],
+    ['https://api.example.test/api/orders/selling/order-1', 'GET'],
+  ])
+  assert.ok(calls.every(({ options }) => options.headers.Authorization?.startsWith('Bearer ')))
+})

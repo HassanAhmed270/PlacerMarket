@@ -15,6 +15,8 @@ const StaticPage = lazy(() => import('./StaticPage.jsx'))
 const CheckoutPage = lazy(() => import('./CheckoutPage.jsx'))
 const OrderPage = lazy(() => import('./OrderPage.jsx'))
 const MyOrdersPage = lazy(() => import('./MyOrdersPage.jsx'))
+const SellerOrdersPage = lazy(() => import('./SellerOrdersPage.jsx'))
+const SellerOrderPage = lazy(() => import('./SellerOrderPage.jsx'))
 const PaymentReturnPage = lazy(() => import('./PaymentReturnPage.jsx'))
 const AdminApp = lazy(() => import('./AdminApp.jsx'))
 
@@ -88,6 +90,10 @@ function App() {
     page = <CheckoutPage listingId={decodeURIComponent(path.slice('/checkout/'.length))} />
   } else if (path === '/orders') {
     page = <MyOrdersPage />
+  } else if (path === '/seller/orders') {
+    page = <SellerOrdersPage />
+  } else if (/^\/seller\/orders\/[^/]+$/.test(path)) {
+    page = <SellerOrderPage orderId={decodeURIComponent(path.slice('/seller/orders/'.length))} />
   } else if (/^\/orders\/[^/]+\/payment-return$/.test(path)) {
     page = <PaymentReturnPage orderId={decodeURIComponent(path.split('/')[2])} />
   } else if (/^\/orders\/[^/]+$/.test(path)) {

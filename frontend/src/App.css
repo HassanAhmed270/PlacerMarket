@@ -637,12 +637,17 @@ a:focus-visible {
 .checkout-page,
 .order-page,
 .payment-return-page,
-.my-orders-page { width: min(820px, calc(100% - 32px)); margin: 30px auto 64px; }
+.my-orders-page,
+.seller-orders-page,
+.seller-order-page { width: min(820px, calc(100% - 32px)); margin: 30px auto 64px; }
 .checkout-panel,
-.order-panel { padding: clamp(20px, 5vw, 42px); border: 1px solid var(--cream-200); background: var(--color-cream-card); box-shadow: 0 10px 32px rgb(32 40 32 / 4%); }
+.order-panel,
+.seller-order-panel { padding: clamp(20px, 5vw, 42px); border: 1px solid var(--cream-200); background: var(--color-cream-card); box-shadow: 0 10px 32px rgb(32 40 32 / 4%); }
 .checkout-panel h1,
 .order-panel h1,
-.my-orders-page h1 { margin: 0 0 18px; color: var(--green-950); font: 400 clamp(32px, 5vw, 46px)/1.1 var(--font-display); }
+.my-orders-page h1,
+.seller-orders-page h1,
+.seller-order-panel h1 { margin: 0 0 18px; color: var(--green-950); font: 400 clamp(32px, 5vw, 46px)/1.1 var(--font-display); }
 .checkout-intro,
 .order-status-copy { color: var(--color-muted-strong); font-size: 14px; line-height: 1.7; }
 .checkout-panel form { display: grid; gap: 8px; margin-top: 23px; }
@@ -684,6 +689,32 @@ a:focus-visible {
 .my-orders-list a:focus-visible { border-color: var(--gold-500); }
 .my-order-title { font-family: var(--font-display); font-size: 20px; }
 .my-order-date { color: var(--muted); font-size: 12px; text-align: right; }
+.seller-orders-page > .eyebrow { margin-bottom: 8px; }
+.seller-orders-list { display: grid; margin: 0; padding: 0; gap: 12px; list-style: none; }
+.seller-orders-list a { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 16px; padding: 16px; border: 1px solid var(--cream-200); background: var(--color-cream-card); color: var(--green-950); text-decoration: none; }
+.seller-orders-list a:hover,
+.seller-orders-list a:focus-visible { border-color: var(--gold-500); }
+.seller-orders-list img,
+.seller-order-image-placeholder { width: 88px; height: 100px; object-fit: cover; background: var(--cream-100); }
+.seller-order-image-placeholder { display: grid; place-items: center; color: var(--green-900); font-family: var(--font-display); }
+.seller-order-summary { display: grid; align-content: center; gap: 5px; }
+.seller-order-title { font-family: var(--font-display); font-size: 20px; }
+.seller-order-summary time { color: var(--muted); font-size: 12px; }
+.seller-orders-pagination { margin-top: 20px; text-align: center; }
+.seller-orders-pagination button { padding: 11px 20px; border: 1px solid var(--green-800); background: var(--green-800); color: var(--color-white); font: inherit; cursor: pointer; }
+.seller-orders-pagination button:disabled { opacity: .6; cursor: wait; }
+.seller-order-listing { display: flex; align-items: center; gap: 18px; margin: 22px 0; padding: 14px; border: 1px solid var(--cream-200); }
+.seller-order-listing img,
+.seller-order-listing .seller-order-image-placeholder { width: 88px; height: 100px; flex: 0 0 auto; object-fit: cover; }
+.seller-order-listing h2 { margin: 0; color: var(--green-950); font: 400 22px/1.2 var(--font-display); }
+.seller-order-status-copy,
+.seller-order-pickup-note { color: var(--color-muted-strong); font-size: 14px; line-height: 1.7; }
+.seller-order-details { display: grid; gap: 12px; margin: 22px 0; padding: 18px 0; border-top: 1px solid var(--cream-200); border-bottom: 1px solid var(--cream-200); }
+.seller-order-details div { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr); gap: 16px; }
+.seller-order-details dt { color: var(--muted); font-size: 13px; }
+.seller-order-details dd { margin: 0; color: var(--green-950); font-size: 14px; overflow-wrap: anywhere; }
+.seller-order-overdue { color: var(--color-error-ink); }
+.seller-order-panel .checkout-back-link { margin-top: 16px; }
 .payment-return-page .order-panel > p { line-height: 1.7; }
 .payment-return-page .button { margin-top: 16px; }
 .newest-section { margin-top: 74px; }
@@ -803,6 +834,10 @@ a:focus-visible {
   .backup-codes ul { grid-template-columns: 1fr; }
   .my-orders-list a { grid-template-columns: 1fr; }
   .my-order-date { text-align: left; }
+  .seller-orders-list a { grid-template-columns: 64px minmax(0, 1fr); gap: 12px; padding: 12px; }
+  .seller-orders-list img,
+  .seller-order-image-placeholder { width: 64px; height: 76px; }
+  .seller-order-details div { grid-template-columns: 1fr; gap: 4px; }
   .order-actions { align-items: stretch; flex-direction: column; }
   .order-actions .button { width: 100%; }
 }
