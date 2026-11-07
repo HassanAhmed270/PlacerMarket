@@ -323,14 +323,22 @@ function NotificationsWorkspace() {
           : <ul className="notification-list">
             {notifications.map((item) => {
               const payload = item.payload || {}
+              const orderLink = typeof payload.href === 'string' &&
+                (payload.href.startsWith('/orders/') || payload.href.startsWith('/seller/orders/'))
+                ? payload.href
+                : ''
+              const notificationLabel = typeof payload.message === 'string'
+                ? payload.message
+                : item.event_type.replaceAll('_', ' ')
               const conversationLink = item.event_type === 'new_message' && payload.conversationId
                 ? `/inbox/${encodeURIComponent(payload.conversationId)}`
                 : ''
               return <li key={item.id} className={item.is_read ? '' : 'notification-unread'}>
                 <div>
-                  <strong>{item.event_type.replaceAll('_', ' ')}</strong>
+                  <strong>{notificationLabel}</strong>
                   <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time>
                   {conversationLink && <a href={conversationLink}>Open conversation</a>}
+                  {orderLink && <a href={orderLink}>Open order</a>}
                 </div>
                 {!item.is_read && <button className="text-button" type="button" onClick={() => markRead(item.id)}>Mark as read</button>}
               </li>
