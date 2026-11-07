@@ -9,10 +9,14 @@ jest.mock('../../src/middleware/auth', () => ({
   requireAuth: (_req, _res, next) => next(),
   requirePermission: jest.requireActual('../../src/middleware/auth').requirePermission,
 }));
+jest.mock('../../src/modules/disputes.service', () => ({
+  resolveDispute: jest.fn().mockResolvedValue({ id: 'dispute-1', status: 'resolved_release' }),
+}));
 
 const express = require('express');
 const request = require('supertest');
 const adminRouter = require('../../src/routes/admin.routes');
+const disputesRouter = require('../../src/routes/disputes.routes');
 const errorHandler = require('../../src/middleware/errorHandler');
 
 function appAs(role) {
@@ -20,6 +24,7 @@ function appAs(role) {
   app.use(express.json());
   app.use((req, res, next) => { req.user = { id: 'u1', role }; next(); });
   app.use('/api/admin', adminRouter);
+  app.use('/api/disputes', disputesRouter);
   app.use(errorHandler);
   return app;
 }
@@ -85,6 +90,18 @@ describe('admin routes: permission gates at the route layer', () => {
   test('moderator is NOT blocked by the gate on a moderator-allowed route', async () => {
     const res = await request(appAs('moderator')).post('/api/admin/listings/x/approve').send({});
     expect(res.status).not.toBe(403); // gets past the gate (then fails on the mocked DB — irrelevant here)
+  });
+
+  test('FR-45: only Admin can resolve a dispute; Moderator keeps dispute review access', async () => {
+    const moderatorResolve = await request(appAs('moderator'))
+      .post('/api/disputes/dispute-1/resolve').send({ resolutionAmountToBuyer: 0 });
+    const moderatorList = await request(appAs('moderator')).get('/api/disputes');
+    const adminResolve = await request(appAs('admin'))
+      .post('/api/disputes/dispute-1/resolve').send({ resolutionAmountToBuyer: 0 });
+
+    expect(moderatorResolve.status).toBe(403);
+    expect(moderatorList.status).not.toBe(403);
+    expect(adminResolve.status).toBe(200);
   });
 
   test('seller-application review needs approve vs reject permission by body.decision', async () => {

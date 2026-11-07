@@ -12,10 +12,11 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.ADMIN, 'order.release_payout')).toBe(true);
   });
 
-  test('Moderator/Ops CAN review/approve listings and disputes, and seller applications', () => {
+  test('Moderator/Ops CAN review disputes and approve listings and seller applications', () => {
     expect(hasPermission(ROLES.MODERATOR, 'listing.review')).toBe(true);
     expect(hasPermission(ROLES.MODERATOR, 'listing.approve')).toBe(true);
-    expect(hasPermission(ROLES.MODERATOR, 'dispute.resolve')).toBe(true);
+    expect(hasPermission(ROLES.MODERATOR, 'dispute.review')).toBe(true);
+    expect(hasPermission(ROLES.MODERATOR, 'dispute.resolve')).toBe(false);
     expect(hasPermission(ROLES.MODERATOR, 'conversation.staff_read')).toBe(true);
     expect(hasPermission(ROLES.MODERATOR, 'seller_application.approve')).toBe(true);
   });

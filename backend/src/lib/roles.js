@@ -23,7 +23,6 @@ const MODERATOR_ALLOWED_ACTIONS = new Set([
   'listing.reject',
   'listing.grant_verified_badge',
   'dispute.review', // FR-56
-  'dispute.resolve',
   'conversation.staff_read',
   'seller_application.approve', // FR-07, FR-53
   'seller_application.reject',
@@ -47,6 +46,7 @@ const ADMIN_ONLY_ACTIONS = new Set([
   'order.mark_delivered', // FR-68
   'order.view_admin', // FR-68
   'order.resolve_exception', // FR-72e
+  'dispute.resolve', // FR-45: only an Admin may resolve disputes
   'order.log_delivery_status', // FR-41
   'advertising.manage', // FR-59
   'operations.view', // FR-55
