@@ -247,7 +247,7 @@ describe('FR-43, FR-45g delivered reservation disputes', () => {
     }
   });
 
-  test('FR-45g: a second dispute attempt keeps one paused payout hold', async () => {
+  test('FR-43, FR-45g: a second dispute attempt keeps one paused payout hold and returns 409', async () => {
     const first = await fileBuyerDispute();
     const { rows: firstHoldRows } = await db.query(
       'SELECT state, dispute_id FROM payout_holds WHERE order_id = $1',
@@ -258,13 +258,41 @@ describe('FR-43, FR-45g delivered reservation disputes', () => {
       dispute_id: first.body.id,
     }]);
 
-    await fileDispute(scenario.buyerId, scenario.orderId).expect(201);
+    await fileDispute(scenario.buyerId, scenario.orderId).expect(409);
     await global.drainIntegrationListeners(5000);
 
+    const { rows: disputeRows } = await db.query(
+      'SELECT id FROM disputes WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(disputeRows).toEqual([{ id: first.body.id }]);
     const { rows: finalHoldRows } = await db.query(
       'SELECT state, dispute_id FROM payout_holds WHERE order_id = $1',
       [scenario.orderId]
     );
     expect(finalHoldRows).toEqual(firstHoldRows);
+  });
+
+  test('FR-43: 10 parallel buyer filings create one dispute and return one 201 with nine 409 responses', async () => {
+    const responses = await Promise.all(
+      Array.from({ length: 10 }, () => fileDispute(scenario.buyerId, scenario.orderId))
+    );
+    expect(responses.filter((response) => response.status === 201)).toHaveLength(1);
+    expect(responses.filter((response) => response.status === 409)).toHaveLength(9);
+    await global.drainIntegrationListeners(5000);
+
+    const { rows: disputeRows } = await db.query(
+      'SELECT id FROM disputes WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(disputeRows).toHaveLength(1);
+    const { rows: holdRows } = await db.query(
+      'SELECT state, dispute_id FROM payout_holds WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(holdRows).toEqual([{
+      state: 'paused_for_dispute',
+      dispute_id: disputeRows[0].id,
+    }]);
   });
 });

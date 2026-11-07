@@ -120,8 +120,7 @@ own section below).
 
 Existing code that predates this wording and still does an unmarked
 single-row cross-module read (to be routed through the owner or marked
-later): `disputes.service.fileDispute()` (reads `orders`),
-`orders.service.createBagEntry()` (reads `conversations`),
+later): `orders.service.createBagEntry()` (reads `conversations`),
 `listings.service.getModerationQueue()` (subquery on `platform_settings`).
 
 ## Module → file → spec map
@@ -215,6 +214,10 @@ purpose so the schema works whichever way this eventually gets decided.
   cross-module behavior, use this same test: gating a decision in the same
   request → direct call; reacting to something that already happened →
   event.
+- **FR-43 dispute filing**: `disputes.service.fileDispute()` uses the owning
+  `listings`, `users`, `orders`, and `reservations` service functions for
+  canonical lock order, then checks for an existing dispute while the order
+  is locked.
 - **FR-68 (Admin-delivered reservation orders)**: `delivery.service.js`
   uses `orders.service.js` for the order-state transition, `payout.service.js`
   for the transaction-aware payout-hold insert, and

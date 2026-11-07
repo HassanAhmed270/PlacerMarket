@@ -4,12 +4,9 @@
  * Owns: FR-43 to FR-45a (specs.md section "9. Disputes, Returns & Refunds")
  * Tables owned: disputes, dispute_evidence
  *
- * Cross-module dependency OUT: reads settlement.service.getSetting()
- * ('complaint_window_days') — a one-directional dependency only
- * (disputes -> settlement). This file does NOT require payout.service.js,
- * even though payout.service.js requires THIS file for hasOpenDispute()
- * (FR-45f) — keeping the dependency one-directional avoids a circular
- * require between disputes.service.js and payout.service.js.
+ * Cross-module dependencies OUT: settlement settings and canonical money-row
+ * locks. The order's completed state serializes dispute filing against payout
+ * release without a dependency back to payout.service.js.
  *
  * FR-44's "combined view with HELD orders" is NOT implemented here —
  * see payout.service.js's getHeldOrdersWithDisputeStatus(), which is the
@@ -23,9 +20,14 @@
 const db = require('../db.service');
 const settlement = require('./settlement.service');
 const orders = require('./orders.service');
+const listings = require('./listings.service');
+const users = require('./users.service');
+const reservations = require('./reservations.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
-const { NotFoundError, ValidationError, NotYetSpecifiedError } = require('../lib/errors');
+const {
+  NotFoundError, ValidationError, NotYetSpecifiedError, ConflictError,
+} = require('../lib/errors');
 
 // ---- FR-43, FR-43a, FR-43b: filing ----
 
@@ -42,22 +44,49 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }) {
     throw new ValidationError('At least one evidence photo/file is required to file a dispute (FR-43a)');
   }
 
-  const { rows: orderRows } = await db.query('SELECT * FROM orders WHERE id = $1', [orderId]);
-  const order = orderRows[0];
-  if (!order) throw new NotFoundError('order', orderId);
-  if (order.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
-  if (!order.delivered_at) {
-    throw new ValidationError('Dispute can only be filed after delivery (FR-43)');
-  }
-
-  const complaintWindowDays = Number(await settlement.getSetting('complaint_window_days'));
-  const windowCloses = new Date(order.delivered_at);
-  windowCloses.setDate(windowCloses.getDate() + complaintWindowDays);
-  if (new Date() > windowCloses) {
-    throw new ValidationError(`Complaint window (${complaintWindowDays} days post-delivery) has closed (FR-43)`);
-  }
-
   const dispute = await db.withTransaction(async (client) => {
+    const context = await orders.getMoneyLockContext(client, orderId);
+    if (!context) throw new NotFoundError('order', orderId);
+    if (!(await listings.lockListingForMoneyAction(client, context.listing_id))) {
+      throw new ConflictError('The order listing is no longer available.');
+    }
+    if (!(await users.lockBuyerForMoneyAction(client, context.buyer_id))) {
+      throw new ConflictError('The order buyer is no longer available.');
+    }
+    const order = await orders.lockReservationOrderForHandover(client, orderId);
+    if (!order || order.listing_id !== context.listing_id || order.buyer_id !== context.buyer_id ||
+        order.reservation_id !== context.reservation_id) {
+      throw new ConflictError('The order changed before the dispute could be filed.');
+    }
+    if (order.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
+    if (!order.delivered_at) {
+      throw new ValidationError('Dispute can only be filed after delivery (FR-43)');
+    }
+    if (context.reservation_id) {
+      const reservation = await reservations.lockReservationForSystemAction(client, context.reservation_id);
+      if (!reservation || reservation.listing_id !== order.listing_id) {
+        throw new ConflictError('The order reservation is no longer available.');
+      }
+    }
+    const { rows: existingDisputes } = await client.query(
+      'SELECT id FROM disputes WHERE order_id = $1 LIMIT 1',
+      [orderId]
+    );
+    if (existingDisputes.length > 0) {
+      throw new ConflictError('A dispute has already been filed for this order.');
+    }
+    if (order.status === 'completed') {
+      throw new ConflictError('The payout has already been released; a dispute cannot be filed.');
+    }
+
+    const { complaint_window_days: complaintWindowSetting } =
+      await settlement.getSettingsForTransaction(client, ['complaint_window_days']);
+    const complaintWindowDays = Number(complaintWindowSetting);
+    const windowCloses = new Date(order.delivered_at);
+    windowCloses.setDate(windowCloses.getDate() + complaintWindowDays);
+    if (new Date() > windowCloses) {
+      throw new ValidationError(`Complaint window (${complaintWindowDays} days post-delivery) has closed (FR-43)`);
+    }
     const { rows } = await client.query(
       `INSERT INTO disputes (order_id, raised_by, reason_text, status)
        VALUES ($1, $2, $3, 'open') RETURNING *`,
@@ -178,6 +207,17 @@ async function hasOpenDispute(orderId) {
   return rows.length > 0;
 }
 
+/** FR-45f, FR-65: check an order's dispute state in the caller's transaction. */
+async function hasOpenDisputeInTransaction(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT 1 FROM disputes
+     WHERE order_id = $1 AND status IN ('open', 'seller_responded')
+     LIMIT 1`,
+    [orderId]
+  );
+  return rows.length > 0;
+}
+
 /** FR-45, FR-50a: Exposed for payout.service.js's settlement calc — the resolved amount (if any) for the most recent dispute on this order. */
 async function getResolvedResolutionAmount(orderId) {
   const { rows } = await db.query(
@@ -196,5 +236,6 @@ module.exports = {
   getDisputeEvidence,
   resolveDispute,
   hasOpenDispute,
+  hasOpenDisputeInTransaction,
   getResolvedResolutionAmount,
 };
