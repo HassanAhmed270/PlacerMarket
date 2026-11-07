@@ -5,6 +5,8 @@ instructions: `DEVELOPMENT_HANDOFF.md`. Full state and architecture:
 `MASTER_PROJECT_CONTEXT.md`. Poshaak is the single name of the project (it was
 first called "Marketplace").
 
+Current phase: 4 (Phase 3 gate remains open by owner decision; Phase 5 rows FR-45b-h, FR-65 and dispute ownership pulled forward and accepted by the owner on 2026-11-07)
+
 ## 0. Inspect before you propose anything
 
 1. Extract the ZIP. In `backend/` run `npm install`, then `npm test` — expect
