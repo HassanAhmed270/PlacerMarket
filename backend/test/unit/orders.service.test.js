@@ -1,8 +1,28 @@
 jest.mock('../../src/db.service', () => ({
   withTransaction: jest.fn(),
+  one: jest.fn(),
 }));
 
+const db = require('../../src/db.service');
 const orders = require('../../src/modules/orders.service');
+
+describe('FR-68 Admin reservation order context', () => {
+  test('FR-68: returns only reservation-backed Admin detail context through the orders owner', async () => {
+    const context = {
+      id: '123e4567-e89b-42d3-a456-426614174000',
+      reservation_id: '223e4567-e89b-42d3-a456-426614174000',
+    };
+    db.one.mockResolvedValue(context);
+
+    await expect(orders.getAdminReservationOrderContext(context.id)).resolves.toEqual(context);
+    expect(db.one).toHaveBeenCalledWith(
+      expect.stringContaining('WHERE id = $1 AND reservation_id IS NOT NULL'),
+      [context.id]
+    );
+    await expect(orders.getAdminReservationOrderContext('malformed'))
+      .rejects.toThrow('orderId must be a UUID.');
+  });
+});
 
 describe('FR-61, FR-62 order funding transitions', () => {
   test('FR-61, FR-62: funding is restricted to the payment-pending reservation and sets the 72-hour deadline', async () => {

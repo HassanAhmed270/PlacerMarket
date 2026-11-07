@@ -156,6 +156,26 @@ async function getDisputeEvidence(disputeId) {
   return rows;
 }
 
+/** FR-68: return non-sensitive dispute metadata for an Admin reservation-order read. */
+async function getAdminOrderDisputes(orderId) {
+  const { rows } = await db.read(
+    `SELECT id, status, created_at
+     FROM disputes
+     WHERE order_id = $1
+     ORDER BY created_at, id`,
+    [orderId]
+  );
+  const disputes = rows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    createdAt: row.created_at,
+  }));
+  return {
+    disputes,
+    hasOpenDispute: rows.some((row) => ['open', 'seller_responded'].includes(row.status)),
+  };
+}
+
 // ---- FR-45, FR-45a: resolution ----
 
 /**
@@ -234,6 +254,7 @@ module.exports = {
   submitCounterEvidence,
   getDisputeQueue,
   getDisputeEvidence,
+  getAdminOrderDisputes,
   resolveDispute,
   hasOpenDispute,
   hasOpenDisputeInTransaction,

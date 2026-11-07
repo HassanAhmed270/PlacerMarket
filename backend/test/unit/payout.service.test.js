@@ -1,9 +1,39 @@
+jest.mock('../../src/db.service', () => ({
+  read: jest.fn(),
+  query: jest.fn(),
+  withTransaction: jest.fn(),
+}));
 jest.mock('../../src/modules/settlement.service', () => ({
   getSettingsForTransaction: jest.fn(),
 }));
 
+const db = require('../../src/db.service');
 const settlement = require('../../src/modules/settlement.service');
 const payout = require('../../src/modules/payout.service');
+
+describe('FR-68 Admin order payout hold summary', () => {
+  test('FR-68: computes earliest release with database timestamp arithmetic and returns safe hold fields', async () => {
+    const hold = {
+      state: 'held',
+      hold_started_at: new Date('2026-11-01T12:00:00Z'),
+      hold_window_days: 5,
+      complaint_window_days: 3,
+      released_at: null,
+      earliest_release_at: new Date('2026-11-06T12:00:00Z'),
+    };
+    db.read.mockResolvedValue({ rows: [hold] });
+    await expect(payout.getAdminOrderHoldSnapshot('order-1', new Date('2026-11-02T12:00:00Z')))
+      .resolves.toEqual({
+        state: 'held',
+        holdStartedAt: hold.hold_started_at,
+        holdWindowDays: 5,
+        complaintWindowDays: 3,
+        earliestReleaseAt: hold.earliest_release_at,
+        releasedAt: null,
+      });
+    expect(db.read.mock.calls[0][0]).toContain('GREATEST(');
+  });
+});
 
 describe('reservation-backed payout holds', () => {
   beforeEach(() => jest.clearAllMocks());

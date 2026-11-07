@@ -2,6 +2,51 @@ const {
   validateAddress,
   parseReservationSettings,
 } = require('../../src/modules/reservations.service');
+const db = require('../../src/db.service');
+const users = require('../../src/modules/users.service');
+const reservations = require('../../src/modules/reservations.service');
+
+describe('FR-68 Admin order reservation snapshot', () => {
+  test('FR-68: returns the immutable address and decimal-string amount snapshots through their owners', async () => {
+    const read = jest.spyOn(db, 'read').mockResolvedValue({ rows: [{
+      id: 'reservation-1',
+      status: 'paid',
+      expires_at: new Date('2026-11-06T12:00:00Z'),
+      item_price_snapshot: '1200.50',
+      delivery_fee_snapshot: '300.00',
+      total_amount_snapshot: '1500.50',
+      recipient_name: 'Recipient',
+      recipient_phone: '+15551234567',
+      city_id: 'city-1',
+      address_line1: '12 Main Street',
+      address_line2: null,
+      postal_code: null,
+    }] });
+    const city = jest.spyOn(users, 'getCityById').mockResolvedValue({ id: 'city-1', name: 'Test City' });
+    try {
+      const reservationId = '123e4567-e89b-42d3-a456-426614174000';
+      await expect(reservations.getAdminOrderReservationSnapshot(reservationId)).resolves.toEqual({
+        id: 'reservation-1',
+        status: 'paid',
+        expiresAt: new Date('2026-11-06T12:00:00Z'),
+        amounts: { itemPrice: '1200.50', deliveryFee: '300.00', total: '1500.50' },
+        deliveryAddress: {
+          recipientName: 'Recipient',
+          phone: '+15551234567',
+          city: 'Test City',
+          addressLine1: '12 Main Street',
+          addressLine2: null,
+          postalCode: null,
+        },
+      });
+      expect(read).toHaveBeenCalledWith(expect.stringContaining('FROM reservations'), [reservationId]);
+      expect(city).toHaveBeenCalledWith('city-1');
+    } finally {
+      read.mockRestore();
+      city.mockRestore();
+    }
+  });
+});
 
 describe('FR-32a reservation input validation', () => {
   test('FR-32a: address values are trimmed and optional blank fields normalize to null', () => {

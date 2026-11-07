@@ -23,6 +23,36 @@ const {
 } = paymentGateway;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** FR-68: return safe payment and refund summaries for an Admin reservation-order read. */
+async function getAdminOrderPaymentAndRefunds(orderId) {
+  const { rows } = await db.read(
+    `SELECT
+       (SELECT jsonb_build_object('status', p.status, 'amount', p.amount::text)
+        FROM payments p
+        WHERE p.order_id = $1
+        ORDER BY p.created_at DESC, p.id DESC
+        LIMIT 1) AS payment,
+       COALESCE(
+         (SELECT jsonb_agg(
+                   jsonb_build_object(
+                     'id', r.id,
+                     'trigger', r.trigger,
+                     'status', r.status,
+                     'amount', r.amount::text
+                   )
+                   ORDER BY r.created_at, r.id)
+          FROM refunds r
+          WHERE r.order_id = $1),
+         '[]'::jsonb
+       ) AS refunds`,
+    [orderId]
+  );
+  return {
+    payment: rows[0].payment,
+    refunds: rows[0].refunds,
+  };
+}
 const WEBHOOK_AMOUNT = /^\d{1,10}(?:\.\d{1,2})?$/;
 const SUPPORTED_PAYMENT_EVENTS = new Set(['payment.succeeded', 'payment.failed']);
 
@@ -1327,6 +1357,7 @@ async function receiveVerifiedPaymentWebhook(receipt) {
 listings.setSystemTakedownHandler(handleListingTakedown);
 
 module.exports = {
+  getAdminOrderPaymentAndRefunds,
   createOrReusePayment,
   getPaymentStatus,
   enqueueRefundJob,

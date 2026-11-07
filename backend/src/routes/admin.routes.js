@@ -10,6 +10,13 @@ const deliveryRoutes = require('./delivery.routes');
 
 const router = Router();
 const limiters = createConfiguredRateLimiters();
+
+function noStoreOrderResponses(_req, res, next) {
+  res.set('Cache-Control', 'private, no-store');
+  return next();
+}
+
+router.use('/orders', noStoreOrderResponses);
 router.use(requireAuth);
 // Permission checks live HERE, per route (rules.md Section 5) — admin.service.js
 // does not check roles. Every route below must carry its own requirePermission();

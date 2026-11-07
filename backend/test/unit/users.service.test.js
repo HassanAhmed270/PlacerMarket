@@ -1,4 +1,4 @@
-jest.mock('../../src/db.service', () => ({ query: jest.fn(), withTransaction: jest.fn() }));
+jest.mock('../../src/db.service', () => ({ query: jest.fn(), read: jest.fn(), withTransaction: jest.fn() }));
 jest.mock('../../src/lib/passwordHashPool', () => ({ hashPassword: jest.fn(), verifyPassword: jest.fn() }));
 jest.mock('../../src/lib/emailCodeDelivery', () => ({
   makeCode: jest.fn(() => '123456'),
@@ -17,6 +17,32 @@ const { hashPassword } = require('../../src/lib/passwordHashPool');
 const { verifyPassword } = require('../../src/lib/passwordHashPool');
 const emailCode = require('../../src/lib/emailCodeDelivery');
 const users = require('../../src/modules/users.service');
+
+describe('FR-68 Admin order party summary', () => {
+  test('FR-68: returns buyer and seller display names without account credentials or contacts', async () => {
+    db.read.mockResolvedValue({ rows: [
+      { id: 'buyer-1', full_name: 'Buyer Name', display_alias: null },
+      { id: 'seller-1', full_name: 'Seller Name', display_alias: 'Store Name' },
+    ] });
+    await expect(users.getAdminOrderParties('buyer-1', 'seller-1')).resolves.toEqual({
+      buyer: { id: 'buyer-1', displayName: 'Buyer Name' },
+      seller: { id: 'seller-1', displayName: 'Store Name' },
+    });
+    expect(db.read.mock.calls[0][0]).not.toMatch(/email|password_hash|phone/i);
+  });
+
+  test('FR-04: city owner lookup includes the city name for address presentation', async () => {
+    db.query.mockResolvedValue({ rows: [{ id: 'city-1', name: 'Test City' }] });
+    await expect(users.getCityById('city-1')).resolves.toEqual({
+      id: 'city-1',
+      name: 'Test City',
+    });
+    expect(db.query).toHaveBeenCalledWith(
+      'SELECT id, name FROM cities WHERE id = $1',
+      ['city-1']
+    );
+  });
+});
 
 describe('FR-02: buyer authentication requires the email-code factor after a valid password', () => {
   beforeEach(() => {

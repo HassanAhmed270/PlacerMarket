@@ -44,6 +44,14 @@ adminRouter.post('/orders/:orderId/delivered', noStore, requirePermission('order
   res.json(await delivery.markOrderDelivered(req.params.orderId, req.body, req.user.id)); // FR-68
 });
 
+adminRouter.get('/orders', noStore, requirePermission('order.view_admin'), limiters.adminOps, async (req, res) => {
+  res.json(await delivery.listAdminOrders(req.query)); // FR-68
+});
+
+adminRouter.get('/orders/:orderId', noStore, requirePermission('order.view_admin'), limiters.adminOps, async (req, res) => {
+  res.json(await delivery.getAdminOrderDetail(req.params.orderId)); // FR-68
+});
+
 adminRouter.get('/order-exceptions', noStore, requirePermission('order.mark_handover'), limiters.adminOps, async (req, res) => {
   res.json(await delivery.listOrderExceptions(req.query)); // FR-72e
 });

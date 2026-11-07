@@ -108,6 +108,33 @@ async function getReservationOrderHold(client, orderId) {
   return rows[0];
 }
 
+/** FR-68: read a payout hold and compute release eligibility time using PostgreSQL timestamp arithmetic. */
+async function getAdminOrderHoldSnapshot(orderId, deliveredAt) {
+  const { rows } = await db.read(
+    `SELECT state, hold_started_at, hold_window_days, complaint_window_days,
+            released_at,
+            CASE WHEN $2::timestamptz IS NULL THEN NULL
+                 ELSE GREATEST(
+                   hold_started_at + (hold_window_days::text || ' days')::interval,
+                   $2::timestamptz + (complaint_window_days::text || ' days')::interval
+                 )
+            END AS earliest_release_at
+     FROM payout_holds
+     WHERE order_id = $1`,
+    [orderId, deliveredAt]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    state: row.state,
+    holdStartedAt: row.hold_started_at,
+    holdWindowDays: row.hold_window_days,
+    complaintWindowDays: row.complaint_window_days,
+    earliestReleaseAt: row.earliest_release_at,
+    releasedAt: row.released_at,
+  };
+}
+
 // ---- FR-45d: default release at end of full window ----
 
 async function releasePayout(orderId, { releasedVia = 'scheduled' } = {}) {
@@ -329,6 +356,7 @@ module.exports = {
   startHold,
   startHoldForReservationOrder,
   getReservationOrderHold,
+  getAdminOrderHoldSnapshot,
   checkAndReleaseDuePayouts,
   forceReleasePayoutEarly,
   releaseReservationPayout,

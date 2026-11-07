@@ -1,5 +1,6 @@
 jest.mock('../../src/db.service', () => ({
   query: jest.fn(),
+  read: jest.fn(),
   withTransaction: jest.fn(async (callback) => callback({ query: jest.fn() })),
 }));
 const db = require('../../src/db.service');
@@ -11,6 +12,23 @@ const reservations = require('../../src/modules/reservations.service');
 const settlement = require('../../src/modules/settlement.service');
 const eventBus = require('../../src/lib/eventBus');
 const { NotYetSpecifiedError } = require('../../src/lib/errors');
+
+describe('FR-68 Admin order dispute summary', () => {
+  test('FR-68: returns dispute ids, status and time without evidence or reason text', async () => {
+    db.read.mockResolvedValue({ rows: [
+      { id: 'dispute-1', status: 'open', created_at: new Date('2026-11-06T12:00:00Z') },
+      { id: 'dispute-2', status: 'resolved_release', created_at: new Date('2026-11-06T13:00:00Z') },
+    ] });
+    await expect(disputes.getAdminOrderDisputes('order-1')).resolves.toEqual({
+      disputes: [
+        { id: 'dispute-1', status: 'open', createdAt: new Date('2026-11-06T12:00:00Z') },
+        { id: 'dispute-2', status: 'resolved_release', createdAt: new Date('2026-11-06T13:00:00Z') },
+      ],
+      hasOpenDispute: true,
+    });
+    expect(db.read.mock.calls[0][0]).not.toMatch(/reason_text|resolution_note|evidence/i);
+  });
+});
 
 beforeEach(() => {
   jest.clearAllMocks();

@@ -228,6 +228,14 @@ purpose so the schema works whichever way this eventually gets decided.
   for the transaction-aware payout-hold insert, and
   `escrowPayments.service.js` for the money-audit row. It emits
   `events.PAYOUT_HELD` only after the transaction commits.
+- **FR-68 (Admin order reads)**: `delivery.service.js` composes the Admin
+  reservation-order list/detail views. The bounded multi-table list query is
+  the documented cross-module read-view exception; detail fields come from
+  exported owner helpers in orders, listings, users, reservations, escrow,
+  payout and disputes. Delivery status/tracking and exception metadata stay
+  with `delivery.service.js`. The list sorts by `(created_at, id)` descending;
+  `before` and `nextBefore` are reservation-backed order UUIDs for strict
+  keyset pagination, with no offset.
 - **FR-72e (order exception resolution)**: `delivery.service.js` owns and
   resolves `order_exceptions`; it delegates the resolution money-audit write
   to the owning `escrowPayments.service.js` within the same transaction.

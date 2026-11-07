@@ -45,6 +45,7 @@ const ADMIN_ONLY_ACTIONS = new Set([
   'delivery_partner.configure', // FR-57
   'order.mark_handover', // FR-72
   'order.mark_delivered', // FR-68
+  'order.view_admin', // FR-68
   'order.resolve_exception', // FR-72e
   'order.log_delivery_status', // FR-41
   'advertising.manage', // FR-59

@@ -274,6 +274,43 @@ async function getBuyerReservationSnapshot(reservationId, buyerId) {
   };
 }
 
+/** FR-68: return the reservation price and courier address snapshot for an Admin read. */
+async function getAdminOrderReservationSnapshot(reservationId) {
+  if (typeof reservationId !== 'string' || !UUID.test(reservationId)) {
+    throw new ValidationError('reservationId must be a UUID.');
+  }
+  const { rows } = await db.read(
+    `SELECT id, status, expires_at, item_price_snapshot, delivery_fee_snapshot,
+            total_amount_snapshot, recipient_name, recipient_phone, city_id,
+            address_line1, address_line2, postal_code
+     FROM reservations
+     WHERE id = $1`,
+    [reservationId]
+  );
+  const row = rows[0];
+  if (!row) return null;
+  const city = await users.getCityById(row.city_id);
+  if (!city) return null;
+  return {
+    id: row.id,
+    status: row.status,
+    expiresAt: row.expires_at,
+    amounts: {
+      itemPrice: String(row.item_price_snapshot),
+      deliveryFee: String(row.delivery_fee_snapshot),
+      total: String(row.total_amount_snapshot),
+    },
+    deliveryAddress: {
+      recipientName: row.recipient_name,
+      phone: row.recipient_phone,
+      city: city.name,
+      addressLine1: row.address_line1,
+      addressLine2: row.address_line2,
+      postalCode: row.postal_code,
+    },
+  };
+}
+
 /** FR-32a, FR-63, FR-63a: atomically reserve a published listing for one buyer. */
 async function buyListing(listingId, buyerId, input) {
   if (typeof listingId !== 'string' || !UUID.test(listingId)) {
@@ -438,5 +475,6 @@ module.exports = {
   endReservationForSystemAction,
   listActiveSupportedDeliveryCities,
   getBuyerReservationSnapshot,
+  getAdminOrderReservationSnapshot,
   buyListing,
 };

@@ -681,7 +681,7 @@ async function listCities() {
 
 /** FR-04: look up a city, optionally using the caller's transaction client. */
 async function getCityById(cityId, client = db) {
-  const { rows } = await client.query('SELECT id FROM cities WHERE id = $1', [cityId]);
+  const { rows } = await client.query('SELECT id, name FROM cities WHERE id = $1', [cityId]);
   return rows[0] || null;
 }
 
@@ -865,6 +865,28 @@ async function getSellerProfile(userId) {
   );
   if (!rows[0]) throw new NotFoundError('seller_profile', userId);
   return rows[0];
+}
+
+/** FR-68: return only party ids and display names for an Admin reservation-order read. */
+async function getAdminOrderParties(buyerId, sellerId) {
+  const { rows } = await db.read(
+    `SELECT u.id, u.full_name, sp.display_alias
+     FROM users u
+     LEFT JOIN seller_profiles sp ON sp.user_id = u.id
+     WHERE u.id = ANY($1::uuid[])`,
+    [[buyerId, sellerId]]
+  );
+  const usersById = new Map(rows.map((row) => [row.id, row]));
+  const buyer = usersById.get(buyerId);
+  const seller = usersById.get(sellerId);
+  if (!buyer || !seller) return null;
+  return {
+    buyer: { id: buyer.id, displayName: buyer.full_name },
+    seller: {
+      id: seller.id,
+      displayName: seller.display_alias?.trim() || seller.full_name,
+    },
+  };
 }
 
 /** FR-82: return the seller's profile city for structured SEO recommendations. */
@@ -1105,6 +1127,7 @@ module.exports = {
   isEmailVerified,
   verifySellerIdentity,
   getSellerProfile,
+  getAdminOrderParties,
   getSellerCityName,
   updateSellerPayoutMethod,
   getSellerPayoutSummary,

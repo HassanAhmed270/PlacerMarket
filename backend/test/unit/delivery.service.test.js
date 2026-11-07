@@ -1,4 +1,5 @@
 jest.mock('../../src/db.service', () => ({
+  read: jest.fn(),
   query: jest.fn(),
   withTransaction: jest.fn(),
   withTransactionRetry: jest.fn(),
@@ -12,6 +13,7 @@ jest.mock('../../src/modules/reservations.service', () => ({}));
 jest.mock('../../src/modules/listings.service', () => ({}));
 jest.mock('../../src/modules/users.service', () => ({}));
 jest.mock('../../src/modules/payout.service', () => ({}));
+jest.mock('../../src/modules/disputes.service', () => ({}));
 
 const db = require('../../src/db.service');
 const escrowPayments = require('../../src/modules/escrowPayments.service');
@@ -25,6 +27,31 @@ const client = { query: jest.fn() };
 beforeEach(() => {
   jest.clearAllMocks();
   db.withTransaction.mockImplementation((callback) => callback(client));
+});
+
+describe('FR-68 Admin delivery metadata summary', () => {
+  test('FR-68: returns only tracking number and safe exception fields', async () => {
+    db.read.mockResolvedValue({ rows: [{
+      tracking_note: 'Courier pickup confirmed\nTracking number: PK-123',
+      exceptions: [{
+        id: 'exception-1',
+        kind: 'handover_after_cancel',
+        recordedAt: '2026-11-06T12:00:00.000Z',
+        resolvedAt: null,
+      }],
+    }] });
+    await expect(delivery.getAdminOrderDeliveryMetadata(orderId)).resolves.toEqual({
+      trackingNumber: 'PK-123',
+      exceptions: [{
+        id: 'exception-1',
+        kind: 'handover_after_cancel',
+        recordedAt: '2026-11-06T12:00:00.000Z',
+        resolvedAt: null,
+      }],
+      hasUnresolvedException: true,
+    });
+    expect(db.read.mock.calls[0][0]).not.toMatch(/resolution_note|note AS|recorded_by/i);
+  });
 });
 
 describe('delivery.service order exceptions — FR-72e', () => {

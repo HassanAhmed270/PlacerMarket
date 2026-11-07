@@ -414,6 +414,15 @@ async function getBuyerOrderListingSummary(listingId) {
   };
 }
 
+/** FR-68: return the listing identity and title for an Admin reservation-order read. */
+async function getAdminOrderSummary(listingId) {
+  const { rows } = await db.read(
+    'SELECT id, title FROM listings WHERE id = $1',
+    [listingId]
+  );
+  return rows[0] || null;
+}
+
 /** FR-20: seller workspace list with status and safe image processing metadata. */
 async function getOwnListings(sellerId) {
   // cross-module read: sub_categories (owned by catalog.service.js)
@@ -821,6 +830,7 @@ module.exports = {
   addListingImages,
   getListingImages,
   getBuyerOrderListingSummary,
+  getAdminOrderSummary,
   getOwnListings,
   getListingUrlData,
   submitListingForReview,

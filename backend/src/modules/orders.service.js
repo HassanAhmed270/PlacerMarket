@@ -473,6 +473,21 @@ async function getBuyerReservationOrders(userId, limit = 20) {
   }));
 }
 
+/** FR-68: return the owner-scoped fields needed to compose an Admin reservation-order read. */
+async function getAdminReservationOrderContext(orderId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)) {
+    throw new ValidationError('orderId must be a UUID.');
+  }
+  return db.one(
+    `SELECT id, listing_id, reservation_id, buyer_id, seller_id, status,
+            funded_at, handover_deadline_at, handed_over_at, delivered_at,
+            courier_pickup_at, handover_recorded_at, created_at
+     FROM orders
+     WHERE id = $1 AND reservation_id IS NOT NULL`,
+    [orderId]
+  );
+}
+
 // ---- FR-27b: two-way reviews, entry point is the completed Orders page only ----
 
 /** FR-27b: only after order completion; entry point enforced by caller (Orders page), not here. */
@@ -538,6 +553,7 @@ module.exports = {
   getOrderHistory,
   getBuyerReservationOrder,
   getBuyerReservationOrders,
+  getAdminReservationOrderContext,
   getCodAmountDue,
   submitReview,
   getSellerRatingSummary,

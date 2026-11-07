@@ -40,7 +40,7 @@ describe('lib/roles FR-05a permission matrix', () => {
   });
 
   test('FR-68, FR-72: order delivery actions are Admin-only', () => {
-    for (const action of ['order.mark_handover', 'order.mark_delivered', 'order.log_delivery_status']) {
+    for (const action of ['order.mark_handover', 'order.mark_delivered', 'order.log_delivery_status', 'order.view_admin']) {
       expect(hasPermission(ROLES.ADMIN, action)).toBe(true);
       expect(hasPermission(ROLES.MODERATOR, action)).toBe(false);
       expect(hasPermission(ROLES.BUYER, action)).toBe(false);

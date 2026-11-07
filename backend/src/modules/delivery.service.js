@@ -25,12 +25,38 @@ const listings = require('./listings.service');
 const users = require('./users.service');
 const escrowPayments = require('./escrowPayments.service');
 const payout = require('./payout.service');
+const disputes = require('./disputes.service');
 const {
   ConflictError, NotFoundError, ValidationError,
 } = require('../lib/errors');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-](\d{2}):(\d{2}))$/;
+
+/** FR-68: validate and cap Admin order-list query parameters before the database read. */
+function validateAdminOrderListQuery(query) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) {
+    throw new ValidationError('Order list query must be an object.');
+  }
+  const rawLimit = query.limit === undefined ? '20' : query.limit;
+  if (typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit) ||
+      !Number.isSafeInteger(Number(rawLimit)) || Number(rawLimit) < 1) {
+    throw new ValidationError('limit must be a positive integer.');
+  }
+  const status = query.status === undefined || query.status === '' ? null : query.status;
+  if (status !== null && typeof status !== 'string') {
+    throw new ValidationError('status must be a single order_status value.');
+  }
+  const before = query.before === undefined ? null : query.before;
+  if (before !== null && (typeof before !== 'string' || !UUID.test(before))) {
+    throw new ValidationError('before must be a reservation-backed order UUID.');
+  }
+  return {
+    limit: Math.min(Number(rawLimit), 50),
+    status,
+    before,
+  };
+}
 
 // ---- FR-40, FR-40a: delivery partner config ----
 
@@ -531,6 +557,197 @@ async function resolveOrderException(exceptionId, { resolvedBy, resolutionNote }
   });
 }
 
+/** FR-68: list reservation-backed orders for the Admin using one bounded keyset query. */
+async function listAdminOrders(query = {}) {
+  const { limit, status, before } = validateAdminOrderListQuery(query);
+  let result;
+  try {
+    // Cross-module reads are permitted here because this is a single multi-table Admin list view.
+    // cross-module read: orders (owned by orders.service.js)
+    // cross-module read: listings (owned by listings.service.js)
+    // cross-module read: reservations (owned by reservations.service.js)
+    // cross-module read: payments (owned by escrowPayments.service.js)
+    // cross-module read: payout_holds (owned by payout.service.js)
+    // cross-module read: disputes (owned by disputes.service.js)
+    result = await db.read(
+      `WITH cursor_order AS (
+         SELECT id, created_at
+         FROM orders
+         WHERE id = $1::uuid AND reservation_id IS NOT NULL
+       ),
+       order_status_filter AS MATERIALIZED (
+         SELECT $3::order_status AS status
+       )
+       SELECT cursor_check.valid AS cursor_valid, page.*
+       FROM (
+         SELECT $1::uuid IS NULL OR EXISTS (SELECT 1 FROM cursor_order) AS valid
+       ) cursor_check
+       LEFT JOIN LATERAL (
+         SELECT o.id AS "orderId", o.status,
+                l.id AS "listingId", l.title AS "listingTitle",
+                r.item_price_snapshot::text AS "itemPrice",
+                r.delivery_fee_snapshot::text AS "deliveryFee",
+                r.total_amount_snapshot::text AS total,
+                latest_payment.status AS "paymentStatus",
+                o.funded_at AS "fundedAt",
+                o.handover_deadline_at AS "handoverDeadlineAt",
+                o.handed_over_at AS "handedOverAt",
+                o.delivered_at AS "deliveredAt",
+                EXISTS (
+                  SELECT 1 FROM disputes d
+                  WHERE d.order_id = o.id AND d.status IN ('open', 'seller_responded')
+                ) AS "hasOpenDispute",
+                EXISTS (
+                  SELECT 1 FROM order_exceptions oe
+                  WHERE oe.order_id = o.id AND oe.resolved_at IS NULL
+                ) AS "hasUnresolvedException",
+                o.created_at AS "createdAt"
+         FROM orders o
+         JOIN listings l ON l.id = o.listing_id
+         JOIN reservations r ON r.id = o.reservation_id
+         LEFT JOIN LATERAL (
+           SELECT p.status
+           FROM payments p
+           WHERE p.order_id = o.id
+           ORDER BY p.created_at DESC, p.id DESC
+           LIMIT 1
+         ) latest_payment ON true
+         CROSS JOIN order_status_filter status_filter
+         WHERE o.reservation_id IS NOT NULL
+           AND (status_filter.status IS NULL OR o.status = status_filter.status)
+           AND ($1::uuid IS NULL OR (o.created_at, o.id) < (
+             SELECT created_at, id FROM cursor_order
+           ))
+         ORDER BY o.created_at DESC, o.id DESC
+         LIMIT $2
+       ) page ON true`,
+      [before, limit + 1, status]
+    );
+  } catch (error) {
+    if (status !== null && error?.code === '22P02') {
+      throw new ValidationError('status is not a value in the order_status enum.');
+    }
+    throw error;
+  }
+  const first = result.rows[0];
+  if (before !== null && !first?.cursor_valid) {
+    throw new ValidationError('before must identify a reservation-backed order.');
+  }
+  const rows = result.rows.filter((row) => row.orderId !== null);
+  const hasMore = rows.length > limit;
+  const ordersForPage = rows.slice(0, limit).map((row) => ({
+    orderId: row.orderId,
+    status: row.status,
+    listing: { id: row.listingId, title: row.listingTitle },
+    amounts: {
+      itemPrice: String(row.itemPrice),
+      deliveryFee: String(row.deliveryFee),
+      total: String(row.total),
+    },
+    paymentStatus: row.paymentStatus,
+    fundedAt: row.fundedAt,
+    handoverDeadlineAt: row.handoverDeadlineAt,
+    handedOverAt: row.handedOverAt,
+    deliveredAt: row.deliveredAt,
+    hasOpenDispute: row.hasOpenDispute,
+    hasUnresolvedException: row.hasUnresolvedException,
+    createdAt: row.createdAt,
+  }));
+  return {
+    orders: ordersForPage,
+    nextBefore: hasMore ? ordersForPage[ordersForPage.length - 1].orderId : null,
+  };
+}
+
+/** FR-68: return the latest stored tracking number and safe exception metadata for an Admin order view. */
+async function getAdminOrderDeliveryMetadata(orderId) {
+  const { rows } = await db.read(
+    `SELECT
+       (SELECT log.note
+        FROM delivery_status_log log
+        WHERE log.order_id = $1 AND log.note LIKE '%Tracking number:%'
+        ORDER BY log.created_at DESC, log.id DESC
+        LIMIT 1) AS tracking_note,
+       COALESCE(
+         (SELECT jsonb_agg(
+                   jsonb_build_object(
+                     'id', oe.id,
+                     'kind', oe.kind,
+                     'recordedAt', oe.recorded_at,
+                     'resolvedAt', oe.resolved_at
+                   )
+                   ORDER BY oe.recorded_at, oe.id)
+          FROM order_exceptions oe
+          WHERE oe.order_id = $1),
+         '[]'::jsonb
+       ) AS exceptions`,
+    [orderId]
+  );
+  const trackingMatch = rows[0].tracking_note?.match(/(?:^|\r?\n)Tracking number: ([^\r\n]+)/);
+  const exceptions = rows[0].exceptions;
+  return {
+    trackingNumber: trackingMatch ? trackingMatch[1].trim() : null,
+    exceptions,
+    hasUnresolvedException: exceptions.some((exception) => exception.resolvedAt === null),
+  };
+}
+
+/** FR-68: compose an Admin reservation-order detail from owner-scoped read helpers. */
+async function getAdminOrderDetail(orderId) {
+  const order = await orders.getAdminReservationOrderContext(orderId);
+  if (!order) throw new NotFoundError('order', orderId);
+
+  const [
+    listing,
+    parties,
+    reservation,
+    paymentAndRefunds,
+    payoutHold,
+    disputeSummary,
+    deliveryMetadata,
+  ] = await Promise.all([
+    listings.getAdminOrderSummary(order.listing_id),
+    users.getAdminOrderParties(order.buyer_id, order.seller_id),
+    reservations.getAdminOrderReservationSnapshot(order.reservation_id),
+    escrowPayments.getAdminOrderPaymentAndRefunds(order.id),
+    payout.getAdminOrderHoldSnapshot(order.id, order.delivered_at),
+    disputes.getAdminOrderDisputes(order.id),
+    getAdminOrderDeliveryMetadata(order.id),
+  ]);
+  if (!listing || !parties || !reservation) throw new NotFoundError('order', orderId);
+
+  return {
+    orderId: order.id,
+    status: order.status,
+    listing,
+    amounts: reservation.amounts,
+    paymentStatus: paymentAndRefunds.payment?.status ?? null,
+    fundedAt: order.funded_at,
+    handoverDeadlineAt: order.handover_deadline_at,
+    handedOverAt: order.handed_over_at,
+    deliveredAt: order.delivered_at,
+    hasOpenDispute: disputeSummary.hasOpenDispute,
+    hasUnresolvedException: deliveryMetadata.hasUnresolvedException,
+    createdAt: order.created_at,
+    buyer: parties.buyer,
+    seller: parties.seller,
+    deliveryAddress: reservation.deliveryAddress,
+    reservation: {
+      id: reservation.id,
+      status: reservation.status,
+      expiresAt: reservation.expiresAt,
+    },
+    payment: paymentAndRefunds.payment || { status: null, amount: null },
+    courierPickupAt: order.courier_pickup_at,
+    handoverRecordedAt: order.handover_recorded_at,
+    trackingNumber: deliveryMetadata.trackingNumber,
+    payoutHold,
+    disputes: disputeSummary.disputes,
+    exceptions: deliveryMetadata.exceptions,
+    refunds: paymentAndRefunds.refunds,
+  };
+}
+
 module.exports = {
   createDeliveryPartner,
   listDeliveryPartners,
@@ -541,4 +758,8 @@ module.exports = {
   markOrderDelivered,
   listOrderExceptions,
   resolveOrderException,
+  validateAdminOrderListQuery,
+  listAdminOrders,
+  getAdminOrderDetail,
+  getAdminOrderDeliveryMetadata,
 };

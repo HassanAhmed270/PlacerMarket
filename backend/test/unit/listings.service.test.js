@@ -1,5 +1,6 @@
 jest.mock('../../src/db.service', () => ({
   withTransaction: jest.fn(),
+  read: jest.fn(),
 }));
 jest.mock('../../src/modules/catalog.service', () => ({
   assertNotRentalListing: jest.fn(),
@@ -34,6 +35,20 @@ describe('listings.service submission flow', () => {
     jest.clearAllMocks();
     users.isIdVerificationRequired.mockResolvedValue(false);
     users.isApprovedSeller.mockResolvedValue(true);
+  });
+
+  describe('FR-68 Admin order listing summary', () => {
+    test('FR-68: reads only listing id and title for the Admin order view', async () => {
+      db.read.mockResolvedValue({ rows: [{ id: 'listing-1', title: 'Order listing' }] });
+      await expect(listings.getAdminOrderSummary('listing-1')).resolves.toEqual({
+        id: 'listing-1',
+        title: 'Order listing',
+      });
+      expect(db.read).toHaveBeenCalledWith(
+        'SELECT id, title FROM listings WHERE id = $1',
+        ['listing-1']
+      );
+    });
   });
 
   test('FR-19: seller submission checks ownership, photos, and moves a draft into review', async () => {
