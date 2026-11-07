@@ -57,9 +57,11 @@ async function sellerOrderResponses(ordersForSeller) {
 }
 
 router.get('/selling', noStore, limiters.payments, async (req, res) => {
-  const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
-  const ordersForSeller = await orders.getSellerReservationOrders(req.user.id, limit);
-  res.json(await sellerOrderResponses(ordersForSeller));
+  const page = await orders.getSellerReservationOrders(req.user.id, req.query);
+  res.json({
+    orders: await sellerOrderResponses(page.orders),
+    nextBefore: page.nextBefore,
+  });
 });
 
 router.get('/selling/:orderId', noStore, limiters.payments, async (req, res) => {

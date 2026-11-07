@@ -85,14 +85,14 @@ async function createHarness() {
   return harness;
 }
 
-async function createListing(harness) {
+async function createListing(harness, sellerId = harness.fixture.userId) {
   const { rows } = await db.query(
     `INSERT INTO listings
        (seller_id, main_category_id, sub_category_id, condition, title, asking_price, status, published_at)
      VALUES ($1, $2, $3, 'brand_new', $4, '1250.50', 'published', now())
      RETURNING id`,
     [
-      harness.fixture.userId,
+      sellerId,
       harness.fixture.categoryId,
       harness.fixture.subCategoryId,
       `Handover listing ${crypto.randomUUID()}`,
@@ -101,8 +101,8 @@ async function createListing(harness) {
   return rows[0].id;
 }
 
-async function createScenario(harness) {
-  const listingId = await createListing(harness);
+async function createScenario(harness, sellerId = harness.fixture.userId) {
+  const listingId = await createListing(harness, sellerId);
   const buyerId = await createUser(harness, 'buyer');
   const reservation = await reservations.buyListing(listingId, buyerId, {
     address: {

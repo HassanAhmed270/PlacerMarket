@@ -504,23 +504,51 @@ async function getSellerReservationOrder(orderId, sellerId) {
   };
 }
 
-/** FR-34: list at most 20 of the seller's funded reservation-backed orders. */
-async function getSellerReservationOrders(sellerId, limit = 20) {
+/** FR-34: list a seller's funded reservation-backed orders using bounded keyset pagination. */
+async function getSellerReservationOrders(sellerId, query = {}) {
+  const rawLimit = query?.limit === undefined ? '20' : query.limit;
+  const before = query?.before === undefined ? null : query.before;
   if (typeof sellerId !== 'string' || !UUID.test(sellerId)
-      || !Number.isInteger(limit) || limit < 1 || limit > 20) {
-    throw new ValidationError('A buyer UUID and limit from 1 to 20 are required.');
+      || typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit)
+      || !Number.isSafeInteger(Number(rawLimit)) || Number(rawLimit) < 1) {
+    throw new ValidationError('limit must be a positive integer.');
   }
+  if (before !== null && (typeof before !== 'string' || !UUID.test(before))) {
+    throw new ValidationError('before must identify a funded reservation-backed order for this seller.');
+  }
+  const limit = Math.min(Number(rawLimit), 50);
   const { rows } = await db.read(
-    `SELECT id AS order_id, listing_id, reservation_id, status,
-            agreed_item_price, funded_at, handover_deadline_at, handed_over_at,
-            delivered_at, cancelled_at
-     FROM orders
-     WHERE seller_id = $1 AND reservation_id IS NOT NULL AND funded_at IS NOT NULL
-     ORDER BY funded_at DESC, id DESC
-     LIMIT $2`,
-    [sellerId, limit]
+    `WITH cursor_order AS (
+       SELECT id, funded_at
+       FROM orders
+       WHERE id = $1::uuid AND seller_id = $2
+         AND reservation_id IS NOT NULL AND funded_at IS NOT NULL
+     )
+     SELECT cursor_check.valid AS cursor_valid, page.*
+     FROM (
+       SELECT $1::uuid IS NULL OR EXISTS (SELECT 1 FROM cursor_order) AS valid
+     ) cursor_check
+     LEFT JOIN LATERAL (
+       SELECT id AS order_id, listing_id, reservation_id, status,
+              agreed_item_price, funded_at, handover_deadline_at, handed_over_at,
+              delivered_at, cancelled_at
+       FROM orders
+       WHERE seller_id = $2 AND reservation_id IS NOT NULL AND funded_at IS NOT NULL
+         AND ($1::uuid IS NULL OR (funded_at, id) < (
+           SELECT funded_at, id FROM cursor_order
+         ))
+       ORDER BY funded_at DESC, id DESC
+       LIMIT $3
+     ) page ON true`,
+    [before, sellerId, limit + 1]
   );
-  return rows.map((row) => ({
+  const first = rows[0];
+  if (before !== null && !first?.cursor_valid) {
+    throw new ValidationError('before must identify a funded reservation-backed order for this seller.');
+  }
+  const orders = rows.filter((row) => row.order_id !== null);
+  const hasMore = orders.length > limit;
+  const ordersForPage = orders.slice(0, limit).map((row) => ({
     orderId: row.order_id,
     listingId: row.listing_id,
     reservationId: row.reservation_id,
@@ -532,6 +560,10 @@ async function getSellerReservationOrders(sellerId, limit = 20) {
     deliveredAt: row.delivered_at,
     cancelledAt: row.cancelled_at,
   }));
+  return {
+    orders: ordersForPage,
+    nextBefore: hasMore ? ordersForPage[ordersForPage.length - 1].orderId : null,
+  };
 }
 
 /** FR-68: return the owner-scoped fields needed to compose an Admin reservation-order read. */

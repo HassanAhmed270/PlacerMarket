@@ -125,10 +125,11 @@ describe('FR-34 seller reservation-backed order reads', () => {
       .expect(200)
       .expect('Cache-Control', 'private, no-store');
 
-    expect(list.body).toHaveLength(1);
-    expect(Object.keys(list.body[0]).sort()).toEqual(SELLER_ORDER_KEYS);
+    expect(list.body.orders).toHaveLength(1);
+    expect(list.body.nextBefore).toBeNull();
+    expect(Object.keys(list.body.orders[0]).sort()).toEqual(SELLER_ORDER_KEYS);
     expect(Object.keys(detail.body).sort()).toEqual(SELLER_ORDER_KEYS);
-    expect(list.body[0]).toMatchObject({
+    expect(list.body.orders[0]).toMatchObject({
       orderId: scenario.orderId,
       listingId: scenario.listingId,
       title: expect.stringContaining('Handover listing'),
@@ -140,9 +141,9 @@ describe('FR-34 seller reservation-backed order reads', () => {
       payoutHoldState: null,
       disputeStatus: null,
     });
-    expect(detail.body).toEqual(list.body[0]);
+    expect(detail.body).toEqual(list.body.orders[0]);
 
-    const serialized = JSON.stringify([list.body, detail.body]);
+    const serialized = JSON.stringify([list.body.orders, detail.body]);
     for (const privateValue of Object.values(buyerIdentity)) {
       expect(serialized).not.toContain(privateValue);
     }
@@ -162,9 +163,12 @@ describe('FR-34 seller reservation-backed order reads', () => {
 
     for (const userId of [otherSellerId, scenario.buyerId]) {
       const list = await sellerList(userId).expect(200);
-      expect(list.body).toEqual([]);
+      expect(list.body).toEqual({ orders: [], nextBefore: null });
     }
-    expect((await sellerList(harness.fixture.userId).expect(200)).body).toEqual([]);
+    expect((await sellerList(harness.fixture.userId).expect(200)).body).toEqual({
+      orders: [],
+      nextBefore: null,
+    });
 
     const orderIds = [
       scenario.orderId,
@@ -263,7 +267,7 @@ describe('FR-34 seller reservation-backed order reads', () => {
     });
   });
 
-  test('FR-34: list ordering and limit are bounded, and invalid limits match /mine', async () => {
+  test('FR-34: list ordering and keyset pages are bounded, and invalid limits are rejected', async () => {
     const additionalScenarios = [await createScenario(harness), await createScenario(harness)];
     scenarios.push(...additionalScenarios);
     const orderedScenarios = [scenario, ...additionalScenarios];
@@ -279,24 +283,60 @@ describe('FR-34 seller reservation-backed order reads', () => {
     }
 
     const allOrders = await sellerList(harness.fixture.userId).expect(200);
-    expect(allOrders.body.map((order) => order.orderId)).toEqual([
+    expect(allOrders.body.orders.map((order) => order.orderId)).toEqual([
       orderedScenarios[2].orderId,
       orderedScenarios[1].orderId,
       orderedScenarios[0].orderId,
     ]);
     const limited = await sellerList(harness.fixture.userId, '?limit=2').expect(200);
-    expect(limited.body.map((order) => order.orderId)).toEqual([
+    expect(limited.body.orders.map((order) => order.orderId)).toEqual([
       orderedScenarios[2].orderId,
       orderedScenarios[1].orderId,
     ]);
+    expect(limited.body.nextBefore).toBe(orderedScenarios[1].orderId);
 
-    for (const invalidLimit of ['0', '21', 'abc']) {
+    const lastPage = await sellerList(
+      harness.fixture.userId,
+      `?limit=2&before=${encodeURIComponent(limited.body.nextBefore)}`
+    ).expect(200);
+    expect(lastPage.body.orders.map((order) => order.orderId)).toEqual([orderedScenarios[0].orderId]);
+    expect(lastPage.body.nextBefore).toBeNull();
+    const pagedOrderIds = [
+      ...limited.body.orders.map((order) => order.orderId),
+      ...lastPage.body.orders.map((order) => order.orderId),
+    ];
+    expect(pagedOrderIds).toEqual(allOrders.body.orders.map((order) => order.orderId));
+    expect(new Set(pagedOrderIds).size).toBe(orderedScenarios.length);
+
+    for (const invalidLimit of ['0', 'abc']) {
       const response = await sellerList(harness.fixture.userId, `?limit=${invalidLimit}`).expect(400);
       const buyerResponse = await request(getApp())
         .get(`/api/orders/mine?limit=${invalidLimit}`)
         .set('Authorization', authHeader(harness.fixture.userId))
         .expect(400);
-      expect(response.body).toEqual(buyerResponse.body);
+      expect(response.body.error).toBe('limit must be a positive integer.');
+      expect(buyerResponse.status).toBe(400);
+    }
+    expect((await sellerList(harness.fixture.userId, '?limit=51').expect(200)).body.orders).toHaveLength(3);
+  });
+
+  test('FR-34: malformed, unknown, and other-seller cursors return the same 400', async () => {
+    const otherSellerId = await createOtherSeller();
+    const otherSellerScenario = await createScenario(harness, otherSellerId);
+    scenarios.push(otherSellerScenario);
+
+    const responses = [];
+    for (const cursor of ['not-a-uuid', otherSellerScenario.orderId, crypto.randomUUID()]) {
+      responses.push(await sellerList(
+        harness.fixture.userId,
+        `?before=${encodeURIComponent(cursor)}`
+      ).expect(400));
+    }
+
+    expect(responses[0].body.error)
+      .toBe('before must identify a funded reservation-backed order for this seller.');
+    for (const response of responses.slice(1)) {
+      expect(response.body).toEqual(responses[0].body);
     }
   });
 
