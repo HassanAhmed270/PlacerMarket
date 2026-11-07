@@ -352,3 +352,25 @@ unit test and a test process with the demo resend override; the mock was
 updated, and the full suite passed on rerun with the default resend interval
 explicitly set to 60 seconds. The integration suite used `testing_only`; all
 demo and migration/seed operations used `poshaak_demo`.
+
+## Admin demo
+
+On a local development setup, create an Admin interactively with the bootstrap
+command. Follow its password and authenticator enrollment prompts; keep the
+credentials and TOTP seed only in local secret storage:
+
+```powershell
+Set-Location D:\Havuor\marketplace\backend
+npm.cmd run admin:create
+```
+
+With the API and frontend running, open `http://127.0.0.1:5173/admin/login`,
+sign in with the Admin email and password, then enter the current authenticator
+code. Use **Orders** to open a funded order and record its courier handover,
+then open an eligible handed-over order and mark it delivered. After the hold
+and complaint windows have elapsed, open the held order and use **Release
+payout** to record the manual payout reference and note. Use **Exceptions** to
+review and resolve an unresolved delivery exception. Use **Disputes** to review
+the case and evidence, then record a supported full-release or full-refund
+resolution. Dispute resolution records the decision; it does not itself issue a
+refund or external payout.
