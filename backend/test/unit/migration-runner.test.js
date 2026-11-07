@@ -37,6 +37,7 @@ describe('FR-79b migration support', () => {
         '021_listing_search_availability.sql',
         '022_order_exceptions.sql',
         '023_order_exception_resolution.sql',
+        '024_dispute_refund_exception.sql',
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');
