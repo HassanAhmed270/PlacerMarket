@@ -218,6 +218,13 @@ purpose so the schema works whichever way this eventually gets decided.
   `listings`, `users`, `orders`, and `reservations` service functions for
   canonical lock order, then checks for an existing dispute while the order
   is locked.
+- **FR-45 dispute resolution**: reservation-backed resolutions acquire the
+  canonical listing, buyer, order, reservation and payment locks before
+  updating the dispute. `payout.service.js` handles the awaited
+  `DISPUTE_RESOLVED` event in that transaction; for buyer-favour resolutions,
+  it requests the `order_exceptions` write through a transaction-aware event
+  handled by the table-owning `delivery.service.js`, avoiding a payout/delivery
+  service require cycle.
 - **FR-65 manual payout**: `payout.service.releaseReservationPayout()`
   orchestrates one transaction and calls the owning `listings`, `users`,
   `orders`, `reservations`, `escrowPayments`, and `settlement` functions.

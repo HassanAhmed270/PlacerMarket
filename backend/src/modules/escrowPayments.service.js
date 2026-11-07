@@ -503,6 +503,36 @@ async function recordOrderExceptionResolvedAuditEvent(client, {
   );
 }
 
+/** FR-45: record a dispute-resolution money audit once in the caller's transaction. */
+async function recordDisputeResolutionAuditEvent(client, {
+  orderId, adminId, disputeId, resolutionStatus,
+}) {
+  const action = resolutionStatus === 'resolved_refund'
+    ? 'dispute_refund_required'
+    : 'dispute_resolved_release';
+  const reason = resolutionStatus === 'resolved_refund'
+    ? 'Dispute resolved in the buyer\'s favour; refund must be made manually'
+    : 'Dispute resolved in the seller\'s favour; payout hold resumed';
+  const { rows } = await client.query(
+    `INSERT INTO money_audit_events (actor_id, action, order_id, reason, metadata)
+     SELECT $1, $2, $3, $4, $5::jsonb
+     WHERE NOT EXISTS (
+       SELECT 1 FROM money_audit_events
+       WHERE order_id = $3 AND action = $2 AND metadata->>'disputeId' = $6
+     )
+     RETURNING id`,
+    [
+      adminId,
+      action,
+      orderId,
+      reason,
+      JSON.stringify({ disputeId, resolutionStatus }),
+      disputeId,
+    ]
+  );
+  return rows.length > 0;
+}
+
 function getCapturedPayment(payments) {
   return payments.find((payment) => ['succeeded', 'refunded', 'partially_refunded'].includes(payment.status));
 }
@@ -1369,6 +1399,7 @@ module.exports = {
   recordCourierHandoverAuditEvent,
   recordOrderDeliveredAuditEvent,
   recordOrderExceptionResolvedAuditEvent,
+  recordDisputeResolutionAuditEvent,
   sweepUnhandedOverOrders,
   reconcileMoneyState,
   processRefundJob,

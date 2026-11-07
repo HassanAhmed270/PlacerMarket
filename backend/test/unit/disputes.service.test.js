@@ -9,6 +9,7 @@ const orders = require('../../src/modules/orders.service');
 const listings = require('../../src/modules/listings.service');
 const users = require('../../src/modules/users.service');
 const reservations = require('../../src/modules/reservations.service');
+const escrowPayments = require('../../src/modules/escrowPayments.service');
 const settlement = require('../../src/modules/settlement.service');
 const eventBus = require('../../src/lib/eventBus');
 const { NotYetSpecifiedError } = require('../../src/lib/errors');
@@ -45,6 +46,14 @@ beforeEach(() => {
     status: 'held',
     delivered_at: new Date(),
   });
+  jest.spyOn(orders, 'lockReservationOrderForPayout').mockResolvedValue({
+    id: 'order-1',
+    listing_id: 'listing-1',
+    buyer_id: 'buyer-1',
+    reservation_id: 'reservation-1',
+    status: 'held',
+    delivered_at: new Date(),
+  });
   jest.spyOn(listings, 'lockListingForMoneyAction').mockResolvedValue({ id: 'listing-1' });
   jest.spyOn(users, 'lockBuyerForMoneyAction').mockResolvedValue({ id: 'buyer-1' });
   jest.spyOn(reservations, 'lockReservationForSystemAction').mockResolvedValue({
@@ -52,6 +61,12 @@ beforeEach(() => {
     listing_id: 'listing-1',
     status: 'paid',
   });
+  jest.spyOn(reservations, 'lockReservationForPayout').mockResolvedValue({
+    id: 'reservation-1',
+    listing_id: 'listing-1',
+    status: 'paid',
+  });
+  jest.spyOn(escrowPayments, 'lockPaymentsForOrder').mockResolvedValue([]);
   jest.spyOn(settlement, 'getSettingsForTransaction').mockResolvedValue({
     complaint_window_days: '3',
   });

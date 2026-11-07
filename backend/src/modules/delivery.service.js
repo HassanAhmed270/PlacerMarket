@@ -33,6 +33,20 @@ const {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-](\d{2}):(\d{2}))$/;
 
+eventBus.on(events.DISPUTE_REFUND_EXCEPTION_REQUIRED, async ({ orderId, resolvedBy }, context = {}) => {
+  if (!context.transaction) {
+    throw new TypeError('Dispute refund exceptions must be recorded in the resolution transaction.');
+  }
+  await context.transaction.query(
+    `INSERT INTO order_exceptions
+       (order_id, kind, courier_pickup_at, note, recorded_by)
+     VALUES ($1, 'dispute_refund_required', NULL,
+       'Dispute resolved in the buyer''s favour; refund must be made manually', $2)
+     ON CONFLICT (order_id, kind) WHERE resolved_at IS NULL DO NOTHING`,
+    [orderId, resolvedBy]
+  );
+});
+
 /** FR-68: validate and cap Admin order-list query parameters before the database read. */
 function validateAdminOrderListQuery(query) {
   if (!query || typeof query !== 'object' || Array.isArray(query)) {
@@ -473,7 +487,11 @@ async function listOrderExceptions(filters = {}) {
   if (!['unresolved', 'resolved', 'all'].includes(status)) {
     throw new ValidationError('status must be unresolved, resolved, or all.');
   }
-  const allowedKinds = new Set(['late_handover_after_auto_cancel', 'handover_after_cancel']);
+  const allowedKinds = new Set([
+    'late_handover_after_auto_cancel',
+    'handover_after_cancel',
+    'dispute_refund_required',
+  ]);
   const kind = filters.kind;
   if (kind !== undefined && (typeof kind !== 'string' || !allowedKinds.has(kind))) {
     throw new ValidationError('kind is not a supported order exception kind.');

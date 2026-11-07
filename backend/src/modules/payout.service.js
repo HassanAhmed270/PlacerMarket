@@ -56,6 +56,62 @@ eventBus.on(events.DISPUTE_FILED, async ({ orderId, disputeId }) => {
   }
 });
 
+/** FR-45: resume or block a reservation payout atomically with dispute resolution. */
+async function handleDisputeResolved({
+  disputeId, orderId, resolutionStatus,
+}, context = {}) {
+  const { transaction: client, resolvedBy } = context;
+  if (!client) {
+    throw new TypeError('Dispute resolution payout effects require the resolution transaction.');
+  }
+
+  const order = await orders.getMoneyLockContext(client, orderId);
+  if (!order || !order.reservation_id) return;
+
+  const { rows: holdRows } = await client.query(
+    `SELECT state
+     FROM payout_holds
+     WHERE order_id = $1
+     FOR UPDATE`,
+    [orderId]
+  );
+  const hold = holdRows[0];
+  if (!hold || hold.state !== 'paused_for_dispute') return;
+
+  if (resolutionStatus === 'resolved_release') {
+    const { rows: resumedRows } = await client.query(
+      `UPDATE payout_holds
+       SET state = 'held'
+       WHERE order_id = $1 AND state = 'paused_for_dispute'
+       RETURNING order_id`,
+      [orderId]
+    );
+    if (!resumedRows[0]) return;
+    await escrowPayments.recordDisputeResolutionAuditEvent(client, {
+      orderId, adminId: resolvedBy, disputeId, resolutionStatus,
+    });
+    return;
+  }
+
+  if (resolutionStatus !== 'resolved_refund') return;
+
+  const auditRecorded = await escrowPayments.recordDisputeResolutionAuditEvent(client, {
+    orderId, adminId: resolvedBy, disputeId, resolutionStatus,
+  });
+  if (!auditRecorded) return;
+
+  const exceptionListenerRegistered = await eventBus.emitAsync(
+    events.DISPUTE_REFUND_EXCEPTION_REQUIRED,
+    { orderId, disputeId, resolvedBy },
+    { transaction: client }
+  );
+  if (!exceptionListenerRegistered) {
+    throw new TypeError('The delivery exception owner is not listening for dispute refund exceptions.');
+  }
+}
+
+eventBus.on(events.DISPUTE_RESOLVED, handleDisputeResolved);
+
 // ---- FR-45b, FR-45c: start hold ----
 
 /** FR-45b: called ONLY from payments.service.confirmCodCollection() — see file header. */
@@ -360,5 +416,6 @@ module.exports = {
   checkAndReleaseDuePayouts,
   forceReleasePayoutEarly,
   releaseReservationPayout,
+  handleDisputeResolved,
   getHeldOrdersWithDisputeStatus,
 };

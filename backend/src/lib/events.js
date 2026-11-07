@@ -36,6 +36,7 @@ module.exports = {
   // Module 9: Disputes
   DISPUTE_FILED: 'dispute.filed', // FR-43
   DISPUTE_RESOLVED: 'dispute.resolved', // FR-45
+  DISPUTE_REFUND_EXCEPTION_REQUIRED: 'dispute.refund_exception_required', // FR-45
 
   // Module 9a: Payout Hold
   PAYOUT_HELD: 'payout.held', // FR-45b

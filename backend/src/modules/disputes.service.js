@@ -23,6 +23,7 @@ const orders = require('./orders.service');
 const listings = require('./listings.service');
 const users = require('./users.service');
 const reservations = require('./reservations.service');
+const escrowPayments = require('./escrowPayments.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const {
@@ -203,16 +204,44 @@ async function resolveDispute(disputeId, { resolutionAmountToBuyer, resolvedBy, 
 
   const resolutionStatus = amount === full ? 'resolved_refund' : 'resolved_release';
   return db.withTransaction(async (client) => {
+    const context = await orders.getMoneyLockContext(client, dispute.order_id);
+    if (!context) throw new NotFoundError('order', dispute.order_id);
+
+    if (context.reservation_id) {
+      if (!(await listings.lockListingForMoneyAction(client, context.listing_id))) {
+        throw new ConflictError('The order listing is no longer available.');
+      }
+      if (!(await users.lockBuyerForMoneyAction(client, context.buyer_id))) {
+        throw new ConflictError('The order buyer is no longer available.');
+      }
+      const order = await orders.lockReservationOrderForPayout(client, dispute.order_id);
+      if (!order || order.listing_id !== context.listing_id ||
+          order.buyer_id !== context.buyer_id || order.reservation_id !== context.reservation_id) {
+        throw new ConflictError('The order changed before the dispute could be resolved.');
+      }
+      const reservation = await reservations.lockReservationForPayout(client, context.reservation_id);
+      if (!reservation || reservation.listing_id !== order.listing_id) {
+        throw new ConflictError('The order reservation is no longer available.');
+      }
+      await escrowPayments.lockPaymentsForOrder(client, dispute.order_id);
+    }
+
     const { rows } = await client.query(
       `UPDATE disputes
        SET status = $1, resolution_amount_to_buyer = $2, resolved_by = $3, resolution_note = $4, resolved_at = now()
-       WHERE id = $5 RETURNING *`,
+       WHERE id = $5 AND status IN ('open', 'seller_responded') RETURNING *`,
       [resolutionStatus, amount, resolvedBy, resolutionNote || null, disputeId]
     );
+    if (!rows[0]) throw new ConflictError('This dispute is no longer open and cannot be resolved.');
     await eventBus.emitAsync(
       events.DISPUTE_RESOLVED,
-      { disputeId, orderId: dispute.order_id, resolutionStatus, resolutionAmountToBuyer: amount },
-      { transaction: client }
+      {
+        disputeId,
+        orderId: dispute.order_id,
+        resolutionStatus,
+        resolutionAmountToBuyer: amount,
+      },
+      { transaction: client, resolvedBy }
     );
     return rows[0];
   });
