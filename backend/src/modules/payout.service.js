@@ -173,6 +173,18 @@ async function getReservationOrderHold(client, orderId) {
   return rows[0];
 }
 
+/** FR-34: return payout hold states for a batch of seller order reads. */
+async function getSellerOrderHoldStates(orderIds) {
+  if (!orderIds.length) return [];
+  const { rows } = await db.read(
+    `SELECT order_id, state
+     FROM payout_holds
+     WHERE order_id = ANY($1::uuid[])`,
+    [orderIds]
+  );
+  return rows.map((row) => ({ orderId: row.order_id, state: row.state }));
+}
+
 /** FR-68: read a payout hold and compute release eligibility time using PostgreSQL timestamp arithmetic. */
 async function getAdminOrderHoldSnapshot(orderId, deliveredAt) {
   const { rows } = await db.read(
@@ -421,6 +433,7 @@ module.exports = {
   startHold,
   startHoldForReservationOrder,
   getReservationOrderHold,
+  getSellerOrderHoldStates,
   getAdminOrderHoldSnapshot,
   checkAndReleaseDuePayouts,
   forceReleasePayoutEarly,

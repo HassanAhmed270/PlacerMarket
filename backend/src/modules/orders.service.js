@@ -473,6 +473,67 @@ async function getBuyerReservationOrders(userId, limit = 20) {
   }));
 }
 
+/** FR-34: return a seller's funded reservation-backed order details. */
+async function getSellerReservationOrder(orderId, sellerId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)
+      || typeof sellerId !== 'string' || !UUID.test(sellerId)) {
+    throw new ValidationError('Order and buyer ids must be UUIDs.');
+  }
+  const { rows } = await db.read(
+    `SELECT id AS order_id, listing_id, reservation_id, status,
+            agreed_item_price, funded_at, handover_deadline_at, handed_over_at,
+            delivered_at, cancelled_at
+     FROM orders
+     WHERE id = $1 AND seller_id = $2
+       AND reservation_id IS NOT NULL AND funded_at IS NOT NULL`,
+    [orderId, sellerId]
+  );
+  const row = rows[0];
+  if (!row) throw new NotFoundError('order', orderId);
+  return {
+    orderId: row.order_id,
+    listingId: row.listing_id,
+    reservationId: row.reservation_id,
+    status: row.status,
+    itemPrice: String(row.agreed_item_price),
+    fundedAt: row.funded_at,
+    handoverDeadlineAt: row.handover_deadline_at,
+    handedOverAt: row.handed_over_at,
+    deliveredAt: row.delivered_at,
+    cancelledAt: row.cancelled_at,
+  };
+}
+
+/** FR-34: list at most 20 of the seller's funded reservation-backed orders. */
+async function getSellerReservationOrders(sellerId, limit = 20) {
+  if (typeof sellerId !== 'string' || !UUID.test(sellerId)
+      || !Number.isInteger(limit) || limit < 1 || limit > 20) {
+    throw new ValidationError('A buyer UUID and limit from 1 to 20 are required.');
+  }
+  const { rows } = await db.read(
+    `SELECT id AS order_id, listing_id, reservation_id, status,
+            agreed_item_price, funded_at, handover_deadline_at, handed_over_at,
+            delivered_at, cancelled_at
+     FROM orders
+     WHERE seller_id = $1 AND reservation_id IS NOT NULL AND funded_at IS NOT NULL
+     ORDER BY funded_at DESC, id DESC
+     LIMIT $2`,
+    [sellerId, limit]
+  );
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    listingId: row.listing_id,
+    reservationId: row.reservation_id,
+    status: row.status,
+    itemPrice: String(row.agreed_item_price),
+    fundedAt: row.funded_at,
+    handoverDeadlineAt: row.handover_deadline_at,
+    handedOverAt: row.handed_over_at,
+    deliveredAt: row.delivered_at,
+    cancelledAt: row.cancelled_at,
+  }));
+}
+
 /** FR-68: return the owner-scoped fields needed to compose an Admin reservation-order read. */
 async function getAdminReservationOrderContext(orderId) {
   if (typeof orderId !== 'string' || !UUID.test(orderId)) {
@@ -553,6 +614,8 @@ module.exports = {
   getOrderHistory,
   getBuyerReservationOrder,
   getBuyerReservationOrders,
+  getSellerReservationOrder,
+  getSellerReservationOrders,
   getAdminReservationOrderContext,
   getCodAmountDue,
   submitReview,

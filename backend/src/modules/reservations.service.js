@@ -274,6 +274,24 @@ async function getBuyerReservationSnapshot(reservationId, buyerId) {
   };
 }
 
+/** FR-34: return reservation currency and delivery city for seller order reads. */
+async function getSellerOrderDeliveryCities(reservationIds) {
+  if (!reservationIds.length) return [];
+  // cross-module read: cities (owned by users.service.js)
+  const { rows } = await db.read(
+    `SELECT r.id AS reservation_id, r.currency, city.name AS delivery_city
+     FROM reservations r
+     JOIN cities city ON city.id = r.city_id
+     WHERE r.id = ANY($1::uuid[])`,
+    [reservationIds]
+  );
+  return rows.map((row) => ({
+    reservationId: row.reservation_id,
+    currency: row.currency,
+    deliveryCity: row.delivery_city,
+  }));
+}
+
 /** FR-68: return the reservation price and courier address snapshot for an Admin read. */
 async function getAdminOrderReservationSnapshot(reservationId) {
   if (typeof reservationId !== 'string' || !UUID.test(reservationId)) {
@@ -475,6 +493,7 @@ module.exports = {
   endReservationForSystemAction,
   listActiveSupportedDeliveryCities,
   getBuyerReservationSnapshot,
+  getSellerOrderDeliveryCities,
   getAdminOrderReservationSnapshot,
   buyListing,
 };

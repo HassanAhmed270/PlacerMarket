@@ -414,6 +414,27 @@ async function getBuyerOrderListingSummary(listingId) {
   };
 }
 
+/** FR-34: return listing titles and first ready image URLs for seller order reads. */
+async function getSellerOrderListingSummaries(listingIds) {
+  if (!listingIds.length) return [];
+  const { rows } = await db.read(
+    `SELECT l.id AS listing_id, l.title,
+            (SELECT image.image_url
+             FROM listing_images image
+             WHERE image.listing_id = l.id AND image.processing_state = 'ready'
+             ORDER BY image.display_order, image.id
+             LIMIT 1) AS image_url
+     FROM listings l
+     WHERE l.id = ANY($1::uuid[])`,
+    [listingIds]
+  );
+  return rows.map((row) => ({
+    listingId: row.listing_id,
+    title: row.title,
+    imageUrl: row.image_url || null,
+  }));
+}
+
 /** FR-68: return the listing identity and title for an Admin reservation-order read. */
 async function getAdminOrderSummary(listingId) {
   const { rows } = await db.read(
@@ -830,6 +851,7 @@ module.exports = {
   addListingImages,
   getListingImages,
   getBuyerOrderListingSummary,
+  getSellerOrderListingSummaries,
   getAdminOrderSummary,
   getOwnListings,
   getListingUrlData,

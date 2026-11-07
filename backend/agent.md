@@ -243,6 +243,11 @@ purpose so the schema works whichever way this eventually gets decided.
   with `delivery.service.js`. The list sorts by `(created_at, id)` descending;
   `before` and `nextBefore` are reservation-backed order UUIDs for strict
   keyset pagination, with no offset.
+- **FR-34 (seller order reads)**: `orders.routes.js` composes seller-safe
+  list/detail responses from owner-scoped order rows and batched read helpers
+  in listings, reservations, payout and disputes. Each helper returns only
+  listing title/image, reservation currency/city, payout hold state, or dispute
+  status; no buyer identity or delivery address-line data is included.
 - **FR-72e (order exception resolution)**: `delivery.service.js` owns and
   resolves `order_exceptions`; it delegates the resolution money-audit write
   to the owning `escrowPayments.service.js` within the same transaction.

@@ -177,6 +177,19 @@ async function getAdminOrderDisputes(orderId) {
   };
 }
 
+/** FR-34: return the latest dispute status for each seller order in a batch. */
+async function getSellerOrderDisputeStatuses(orderIds) {
+  if (!orderIds.length) return [];
+  const { rows } = await db.read(
+    `SELECT DISTINCT ON (order_id) order_id, status
+     FROM disputes
+     WHERE order_id = ANY($1::uuid[])
+     ORDER BY order_id, created_at DESC, id DESC`,
+    [orderIds]
+  );
+  return rows.map((row) => ({ orderId: row.order_id, status: row.status }));
+}
+
 // ---- FR-45, FR-45a: resolution ----
 
 /**
@@ -284,6 +297,7 @@ module.exports = {
   getDisputeQueue,
   getDisputeEvidence,
   getAdminOrderDisputes,
+  getSellerOrderDisputeStatuses,
   resolveDispute,
   hasOpenDispute,
   hasOpenDisputeInTransaction,
