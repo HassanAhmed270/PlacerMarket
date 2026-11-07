@@ -101,7 +101,7 @@ async function createListing(harness, sellerId = harness.fixture.userId) {
   return rows[0].id;
 }
 
-async function createScenario(harness, sellerId = harness.fixture.userId) {
+async function createScenario(harness, sellerId = harness.fixture.userId, { funded = true } = {}) {
   const listingId = await createListing(harness, sellerId);
   const buyerId = await createUser(harness, 'buyer');
   const reservation = await reservations.buyListing(listingId, buyerId, {
@@ -122,30 +122,37 @@ async function createScenario(harness, sellerId = harness.fixture.userId) {
     orderId: reservation.orderId,
     reservationId: reservation.reservationId,
     paymentId: payment.paymentId,
+    sellerId,
     fixture: harness.fixture,
   };
-  await db.withTransaction(async (client) => {
-    await client.query(
-      `UPDATE reservations SET status = 'paid', paid_at = now()
-       WHERE id = $1`,
-      [scenario.reservationId]
-    );
-    await client.query(
-      `UPDATE orders
-       SET status = 'funded', funded_at = now() - INTERVAL '10 minutes',
-           handover_deadline_at = now() + INTERVAL '71 hours 50 minutes'
-       WHERE id = $1`,
-      [scenario.orderId]
-    );
-    await client.query(
-      `UPDATE payments SET status = 'succeeded', succeeded_at = now()
-       WHERE id = $1`,
-      [scenario.paymentId]
-    );
-  });
+  if (funded) {
+    await db.withTransaction(async (client) => {
+      await client.query(
+        `UPDATE reservations SET status = 'paid', paid_at = now()
+         WHERE id = $1`,
+        [scenario.reservationId]
+      );
+      await client.query(
+        `UPDATE orders
+         SET status = 'funded', funded_at = now() - INTERVAL '10 minutes',
+             handover_deadline_at = now() + INTERVAL '71 hours 50 minutes'
+         WHERE id = $1`,
+        [scenario.orderId]
+      );
+      await client.query(
+        `UPDATE payments SET status = 'succeeded', succeeded_at = now()
+         WHERE id = $1`,
+        [scenario.paymentId]
+      );
+    });
+  }
   harness.scenarios ||= [];
   harness.scenarios.push(scenario);
   return scenario;
+}
+
+async function createUnfundedScenario(harness, sellerId = harness.fixture.userId) {
+  return createScenario(harness, sellerId, { funded: false });
 }
 
 async function setDeadlinePast(scenario) {
@@ -260,7 +267,9 @@ async function cleanupScenario(harness, scenario) {
     [scenario.listingId]
   );
   await db.query('DELETE FROM conversations WHERE listing_id = $1', [scenario.listingId]);
-  await db.query('DELETE FROM notifications WHERE user_id = $1', [scenario.buyerId]);
+  await db.query('DELETE FROM notifications WHERE user_id = ANY($1::uuid[])', [
+    [scenario.buyerId, scenario.sellerId],
+  ]);
   await cleanupListingProjections(scenario.listingId);
   await db.query('DELETE FROM listings WHERE id = $1', [scenario.listingId]);
   await db.query('DELETE FROM users WHERE id = $1', [scenario.buyerId]);
@@ -300,6 +309,7 @@ module.exports = {
   createHarness,
   createLegacyOrder,
   createScenario,
+  createUnfundedScenario,
   db,
   escrowPayments,
   getApp: () => app,

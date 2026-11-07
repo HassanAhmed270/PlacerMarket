@@ -48,15 +48,24 @@ describe('FR-77d: notification event listeners enqueue durable jobs', () => {
     }));
   });
 
-  test('FR-77a: transactional notification enqueue failures propagate to roll back the state change', async () => {
+  test('FR-51: a notification enqueue failure never fails the state change', async () => {
     const transaction = { query: jest.fn() };
     queue.enqueue.mockRejectedValueOnce(new Error('queue unavailable'));
+    const errorLog = jest.spyOn(console, 'error').mockImplementation(() => {});
 
-    await expect(eventBus.emitAsync(
-      events.LISTING_STATUS_CHANGED,
-      { listingId: 'listing-42', status: 'published' },
-      { transaction }
-    )).rejects.toThrow('queue unavailable');
+    try {
+      await expect(eventBus.emitAsync(
+        events.LISTING_STATUS_CHANGED,
+        { listingId: 'listing-42', status: 'published' },
+        { transaction }
+      )).resolves.toBe(true);
+      expect(errorLog).toHaveBeenCalledWith(
+        'Notification job enqueue failed',
+        { eventName: events.LISTING_STATUS_CHANGED, code: 'unknown' }
+      );
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 
   test('FR-51 and FR-77d: worker notification writes share the job transaction', async () => {
