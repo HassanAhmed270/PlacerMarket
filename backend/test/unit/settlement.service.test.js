@@ -13,6 +13,19 @@ describe('settlement.service', () => {
     expect(commissionAmount).toBe(500);
   });
 
+  test('FR-47: reservation settlement computes exact decimal-string amounts from item price only', () => {
+    expect(settlement.calculateReservationSettlement('1250.50', '10.00')).toEqual({
+      commissionPercent: '10.00',
+      commissionAmount: '125.05',
+      sellerNetAmount: '1125.45',
+    });
+    expect(settlement.calculateReservationSettlement('0.05', '10')).toEqual({
+      commissionPercent: '10',
+      commissionAmount: '0.01',
+      sellerNetAmount: '0.04',
+    });
+  });
+
   test('FR-50a: calculateSettlement refuses a partial resolutionAmountToBuyer', async () => {
     await expect(
       settlement.calculateSettlement('order-1', { agreedItemPrice: 5000, resolutionAmountToBuyer: 2000 })

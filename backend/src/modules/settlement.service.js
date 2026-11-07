@@ -61,6 +61,53 @@ async function calculateCommission(itemPrice) {
   return { percent, commissionAmount };
 }
 
+function decimalToMinorUnits(value, fieldName) {
+  if (typeof value !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(value)) {
+    throw new ValidationError(`${fieldName} must be a non-negative decimal string with at most two decimal places.`);
+  }
+  const [whole, fraction = ''] = value.split('.');
+  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+}
+
+function minorUnitsToDecimal(value) {
+  return `${value / 100n}.${String(value % 100n).padStart(2, '0')}`;
+}
+
+/** FR-47: calculate reservation settlement amounts exactly from decimal strings. */
+function calculateReservationSettlement(itemPrice, commissionPercent) {
+  const itemPriceMinor = decimalToMinorUnits(itemPrice, 'itemPrice');
+  if (typeof commissionPercent !== 'string' ||
+      !/^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(commissionPercent)) {
+    throw new ValidationError('commissionPercent must be a decimal string from 0 to 100.');
+  }
+  const percentParts = commissionPercent.split('.');
+  const percentMinor = BigInt(percentParts[0]) * 100n + BigInt((percentParts[1] || '').padEnd(2, '0'));
+  if (percentMinor > 10000n) {
+    throw new ValidationError('commissionPercent must be a decimal string from 0 to 100.');
+  }
+
+  const commissionMinor = (itemPriceMinor * percentMinor + 5000n) / 10000n;
+  return {
+    commissionPercent,
+    commissionAmount: minorUnitsToDecimal(commissionMinor),
+    sellerNetAmount: minorUnitsToDecimal(itemPriceMinor - commissionMinor),
+  };
+}
+
+/** FR-47, FR-49: insert a reservation settlement in the payout transaction. */
+async function recordReservationSettlement(client, orderId, adminId, amounts) {
+  const { rows } = await client.query(
+    `INSERT INTO settlements
+       (order_id, commission_percent, commission_amount, seller_net_payout,
+        payout_initiated_by, payout_initiated_at)
+     VALUES ($1, $2, $3::numeric, $4::numeric, $5, now())
+     RETURNING order_id, commission_percent, commission_amount, seller_net_payout,
+               payout_initiated_by, payout_initiated_at`,
+    [orderId, amounts.commissionPercent, amounts.commissionAmount, amounts.sellerNetAmount, adminId]
+  );
+  return rows[0];
+}
+
 // ---- FR-47, FR-49: settlement record ----
 
 /**
@@ -140,6 +187,8 @@ module.exports = {
   getSettingsForTransaction,
   setSetting,
   calculateCommission,
+  calculateReservationSettlement,
+  recordReservationSettlement,
   calculateSettlement,
   initiateSellerPayout,
   getSettlementRecord,

@@ -1,11 +1,15 @@
 /**
  * modules/payout.service.js
  *
- * Owns: FR-45b to FR-45h (specs.md section "9a. Payout Hold Window")
+ * Owns: FR-45b to FR-45h (specs.md section "9a. Payout Hold Window") and FR-65 reservation payout release.
  * Tables owned: payout_holds
  *
  * Cross-module dependencies OUT (one-directional, no cycles):
- * - orders.service.getCodAmountDue() for agreed_item_price at release time.
+ * - orders.service.getCodAmountDue() for legacy agreed_item_price at release time.
+ * - listings, users, orders, reservations and escrowPayments owner functions
+ *   for canonical locking and the reservation-backed manual release.
+ * - settlement.service.calculateReservationSettlement() and
+ *   recordReservationSettlement() for decimal-string math and its record.
  * - disputes.service.hasOpenDispute() — FR-45f, a REQUIRED SYNCHRONOUS call
  *   before any force-release. Do not replace this with an event listener;
  *   FR-45f gates a decision inside the same request and must not depend on
@@ -28,9 +32,13 @@ const db = require('../db.service');
 const orders = require('./orders.service');
 const disputes = require('./disputes.service');
 const settlement = require('./settlement.service');
+const listings = require('./listings.service');
+const reservations = require('./reservations.service');
+const users = require('./users.service');
+const escrowPayments = require('./escrowPayments.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
-const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
+const { NotFoundError, ValidationError, ForbiddenError, ConflictError } = require('../lib/errors');
 
 // ---- FR-45g: reactive pause on dispute filed ----
 
@@ -103,6 +111,7 @@ async function getReservationOrderHold(client, orderId) {
 // ---- FR-45d: default release at end of full window ----
 
 async function releasePayout(orderId, { releasedVia = 'scheduled' } = {}) {
+  await orders.assertLegacyOrder(orderId);
   const { agreed_item_price: agreedItemPrice } = await orders.getCodAmountDue(orderId);
   const resolutionAmountToBuyer = await disputes.getResolvedResolutionAmount(orderId); // may be null (no dispute)
 
@@ -124,14 +133,17 @@ async function releasePayout(orderId, { releasedVia = 'scheduled' } = {}) {
 }
 
 /**
- * FR-45d: the scheduled job entry point — intended to run on a cron/worker,
- * not from an HTTP route. No release happens outside this function or
- * forceReleasePayoutEarly() below.
+ * FR-45d: the legacy scheduled job entry point — intended to run on a
+ * cron/worker, not from an HTTP route.
  */
 async function checkAndReleaseDuePayouts() {
   const { rows: due } = await db.query(
-    `SELECT order_id FROM payout_holds
-     WHERE state = 'held' AND hold_started_at + (hold_window_days || ' days')::interval <= now()`
+    `SELECT ph.order_id
+     FROM payout_holds ph
+     JOIN orders o ON o.id = ph.order_id
+     WHERE ph.state = 'held'
+       AND ph.hold_started_at + (ph.hold_window_days || ' days')::interval <= now()
+       AND o.reservation_id IS NULL`
   );
   const results = [];
   for (const { order_id: orderId } of due) {
@@ -145,6 +157,7 @@ async function checkAndReleaseDuePayouts() {
 
 /** FR-45e: admin can force-release early but MUST supply a reason. FR-45f: blocked while a dispute is open. */
 async function forceReleasePayoutEarly(orderId, { adminId, reasonNote }) {
+  await orders.assertLegacyOrder(orderId);
   if (!reasonNote || !reasonNote.trim()) {
     throw new ValidationError('A reason/note is required to force-release a payout (FR-45e)');
   }
@@ -157,6 +170,145 @@ async function forceReleasePayoutEarly(orderId, { adminId, reasonNote }) {
     [adminId, reasonNote, orderId]
   );
   return releasePayout(orderId, { releasedVia: 'force' });
+}
+
+function validateManualPayoutRequest(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) ||
+      Object.keys(input).some((key) => !['payoutReference', 'note'].includes(key))) {
+    throw new ValidationError('Only payoutReference and note are accepted.');
+  }
+  const { payoutReference, note } = input;
+  if (typeof payoutReference !== 'string' || typeof note !== 'string') {
+    throw new ValidationError('payoutReference and note are required.');
+  }
+  const trimmedReference = payoutReference.trim();
+  const trimmedNote = note.trim();
+  if (trimmedReference.length < 3 || trimmedReference.length > 100) {
+    throw new ValidationError('payoutReference must be 3 to 100 characters.');
+  }
+  if (trimmedNote.length < 3 || trimmedNote.length > 500) {
+    throw new ValidationError('note must be 3 to 500 characters.');
+  }
+  return { payoutReference: trimmedReference, note: trimmedNote };
+}
+
+/** FR-65: manually record the Admin's reservation-backed seller payout. */
+async function releaseReservationPayout(orderId, adminId, input) {
+  const { payoutReference, note } = validateManualPayoutRequest(input);
+  return db.withTransaction(async (client) => {
+    const context = await orders.getMoneyLockContext(client, orderId);
+    if (!context) throw new NotFoundError('order', orderId);
+    if (!context.reservation_id) throw new NotFoundError('reservation-backed order', orderId);
+
+    if (!(await listings.lockListingForMoneyAction(client, context.listing_id))) {
+      throw new ConflictError('The order listing is no longer available.');
+    }
+    if (!(await users.lockBuyerForMoneyAction(client, context.buyer_id))) {
+      throw new ConflictError('The order buyer is no longer available.');
+    }
+
+    const order = await orders.lockReservationOrderForPayout(client, orderId);
+    if (!order || order.listing_id !== context.listing_id ||
+        order.buyer_id !== context.buyer_id || order.reservation_id !== context.reservation_id) {
+      throw new ConflictError('The order changed before payout release.');
+    }
+    if (order.status !== 'held' || !order.delivered_at) {
+      throw new ConflictError('Only a delivered held order can be released.');
+    }
+
+    const reservation = await reservations.lockReservationForPayout(client, order.reservation_id);
+    if (!reservation || reservation.listing_id !== order.listing_id || reservation.status !== 'paid') {
+      throw new ConflictError('The order does not have a paid reservation.');
+    }
+
+    const paymentRows = await escrowPayments.lockPaymentsForOrder(client, orderId);
+    const succeededPayments = paymentRows.filter((payment) => payment.status === 'succeeded');
+    if (succeededPayments.length !== 1) {
+      throw new ConflictError('The order must have exactly one succeeded payment.');
+    }
+    const payment = succeededPayments[0];
+
+    const { rows: holdRows } = await client.query(
+      `SELECT order_id, state, hold_started_at, hold_window_days,
+              complaint_window_days, released_at
+       FROM payout_holds
+       WHERE order_id = $1
+       FOR UPDATE`,
+      [orderId]
+    );
+    if (holdRows.length !== 1) throw new ConflictError('The order must have exactly one payout hold.');
+    const hold = holdRows[0];
+    if (hold.state === 'paused_for_dispute') {
+      throw new ConflictError('A dispute is open for this order; payout release is blocked.');
+    }
+    if (hold.state !== 'held') {
+      throw new ConflictError('The payout hold is not in the held state.');
+    }
+    if (await disputes.hasOpenDisputeInTransaction(client, orderId)) {
+      throw new ConflictError('A dispute is open for this order; payout release is blocked.');
+    }
+
+    const { rows: timingRows } = await client.query(
+      `SELECT GREATEST(
+                $1::timestamptz + ($2::text || ' days')::interval,
+                $3::timestamptz + ($4::text || ' days')::interval
+              ) AS earliest_release_at,
+              now() >= GREATEST(
+                $1::timestamptz + ($2::text || ' days')::interval,
+                $3::timestamptz + ($4::text || ' days')::interval
+              ) AS windows_elapsed`,
+      [hold.hold_started_at, hold.hold_window_days, order.delivered_at, hold.complaint_window_days]
+    );
+    const timing = timingRows[0];
+    if (!timing.windows_elapsed) {
+      throw new ConflictError(
+        `Payout windows have not elapsed; earliest release time is ${new Date(timing.earliest_release_at).toISOString()}.`
+      );
+    }
+
+    const settings = await settlement.getSettingsForTransaction(client, ['commission_percent']);
+    const amounts = settlement.calculateReservationSettlement(
+      reservation.item_price_snapshot,
+      settings.commission_percent
+    );
+    await settlement.recordReservationSettlement(client, orderId, adminId, amounts);
+    const completedOrder = await orders.completeReservationPayoutOrder(client, orderId);
+    if (!completedOrder) throw new ConflictError('The order state changed before payout release.');
+
+    const { rows: releasedRows } = await client.query(
+      `UPDATE payout_holds
+       SET state = 'released', released_at = now()
+       WHERE order_id = $1 AND state = 'held'
+       RETURNING released_at`,
+      [orderId]
+    );
+    if (!releasedRows[0]) throw new ConflictError('The payout hold changed before release.');
+
+    await escrowPayments.recordManualSellerPayout(client, {
+      orderId,
+      paymentId: payment.id,
+      adminId,
+      payoutReference,
+      note,
+      itemPrice: reservation.item_price_snapshot,
+      deliveryFee: reservation.delivery_fee_snapshot,
+      sellerNetAmount: amounts.sellerNetAmount,
+      commissionAmount: amounts.commissionAmount,
+      currency: reservation.currency,
+    });
+
+    return {
+      orderId,
+      status: 'completed',
+      payout: {
+        sellerNetAmount: amounts.sellerNetAmount,
+        commissionAmount: amounts.commissionAmount,
+        currency: reservation.currency,
+      },
+      releasedAt: releasedRows[0].released_at,
+      payoutReference,
+    };
+  });
 }
 
 // ---- FR-45h / FR-44: combined admin view ----
@@ -179,5 +331,6 @@ module.exports = {
   getReservationOrderHold,
   checkAndReleaseDuePayouts,
   forceReleasePayoutEarly,
+  releaseReservationPayout,
   getHeldOrdersWithDisputeStatus,
 };

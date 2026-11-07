@@ -374,6 +374,7 @@ async function processRefundJob({ refundId, gateway } = {}) {
   });
 }
 
+/** FR-65, FR-72: lock an order's payment rows after its reservation is locked. */
 async function lockPaymentsForOrder(client, orderId) {
   const { rows } = await client.query(
     `SELECT id, order_id, status, amount, currency
@@ -384,6 +385,49 @@ async function lockPaymentsForOrder(client, orderId) {
     [orderId]
   );
   return rows;
+}
+
+/** FR-65: record a manual seller payout in the caller's transaction. */
+async function recordManualSellerPayout(client, {
+  orderId,
+  paymentId,
+  adminId,
+  payoutReference,
+  note,
+  itemPrice,
+  deliveryFee,
+  sellerNetAmount,
+  commissionAmount,
+  currency,
+}) {
+  if (sellerNetAmount !== '0.00') {
+    await client.query(
+      `INSERT INTO ledger_entries
+         (order_id, payment_id, currency, amount, entry_type, idempotency_key)
+       VALUES ($1, $2, $3, -($4::numeric), 'seller_payout_manual', $5)`,
+      [orderId, paymentId, currency, sellerNetAmount, `seller_payout_manual:${orderId}`]
+    );
+  }
+  await client.query(
+    `INSERT INTO money_audit_events
+       (actor_id, action, order_id, payment_id, reason, metadata)
+     VALUES ($1, 'seller_payout_manual_released', $2, $3, $4, $5::jsonb)`,
+    [
+      adminId,
+      orderId,
+      paymentId,
+      note,
+      JSON.stringify({
+        payoutReference,
+        note,
+        itemPrice,
+        deliveryFee,
+        sellerNetAmount,
+        commissionAmount,
+        currency,
+      }),
+    ]
+  );
 }
 
 /** FR-72: lock payment and refund rows after the order reservation is locked. */
@@ -1278,6 +1322,8 @@ module.exports = {
   cancelReservationOrder,
   refundUnhandedOverOrder,
   lockPaymentAndRefundRowsForHandover,
+  lockPaymentsForOrder,
+  recordManualSellerPayout,
   recordCourierHandoverAuditEvent,
   recordOrderDeliveredAuditEvent,
   sweepUnhandedOverOrders,

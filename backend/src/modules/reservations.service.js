@@ -183,6 +183,18 @@ async function lockReservationForSystemAction(client, reservationId) {
   return rows[0] || null;
 }
 
+/** FR-65: lock and read the reservation snapshot used for payout settlement. */
+async function lockReservationForPayout(client, reservationId) {
+  const { rows } = await client.query(
+    `SELECT id, listing_id, status, item_price_snapshot, delivery_fee_snapshot, currency
+     FROM reservations
+     WHERE id = $1
+     FOR UPDATE`,
+    [reservationId]
+  );
+  return rows[0] || null;
+}
+
 /** FR-33a, FR-63a, FR-72: close an owning reservation with its system end reason. */
 async function endReservationForSystemAction(client, reservationId, {
   status,
@@ -422,6 +434,7 @@ module.exports = {
   getDueReservationIds,
   getLiveReservationForListing,
   lockReservationForSystemAction,
+  lockReservationForPayout,
   endReservationForSystemAction,
   listActiveSupportedDeliveryCities,
   getBuyerReservationSnapshot,

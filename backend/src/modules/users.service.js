@@ -685,7 +685,7 @@ async function getCityById(cityId, client = db) {
   return rows[0] || null;
 }
 
-/** FR-63a, FR-69, FR-72: lock a buyer row after the listing and before its order. */
+/** FR-63a, FR-65, FR-69, FR-72: lock a buyer row after the listing and before its order. */
 async function lockBuyerForMoneyAction(client, buyerId) {
   const { rows } = await client.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [buyerId]);
   return rows[0] || null;

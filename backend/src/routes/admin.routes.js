@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const admin = require('../modules/admin.service');
 const listingSearch = require('../modules/listingSearch.service');
+const payout = require('../modules/payout.service');
 const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ValidationError } = require('../lib/errors');
@@ -43,6 +44,19 @@ router.delete('/listing-search/synonyms/:id', requirePermission('search.synonyms
 router.post('/users/:id/suspend', requirePermission('user.suspend'), async (req, res) => {
   res.json(await admin.suspendUser(req.params.id, { adminId: req.user.id, reason: req.body.reason })); // FR-52
 });
+
+router.post(
+  '/orders/:orderId/payout/release',
+  (req, res, next) => {
+    res.set('Cache-Control', 'private, no-store');
+    next();
+  },
+  requirePermission('order.release_payout'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await payout.releaseReservationPayout(req.params.orderId, req.user.id, req.body)); // FR-65
+  }
+);
 
 router.get('/seller-applications', requirePermission('seller_application.approve'), async (req, res) => {
   res.json(await admin.getSellerApplicationQueue({ status: req.query.status || 'pending' })); // FR-07b

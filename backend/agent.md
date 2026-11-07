@@ -135,10 +135,10 @@ later): `orders.service.createBagEntry()` (reads `conversations`),
 | 6. Orders | FR-32–34, FR-61–62 owner operations | `modules/orders.service.js` | orders, reviews (FR-27b lives here, not in module 4) |
 | 6a. Reservations | FR-32a, FR-61–63a | `modules/reservations.service.js` | reservations, supported_delivery_cities |
 | 7. Payments & COD (legacy COD paths) | FR-36–38 | `modules/payments.service.js` | cod_collections (also owns FR-41a reconciliation — see correction note below) |
-| 7a. Escrow Payments | FR-60a, FR-61–62, FR-77b | `modules/escrowPayments.service.js` | payments, webhook_inbox, refunds, ledger_entries, money_audit_events |
+| 7a. Escrow Payments | FR-60a, FR-61–62, FR-65, FR-77b | `modules/escrowPayments.service.js` | payments, webhook_inbox, refunds, ledger_entries, money_audit_events |
 | 8. Delivery | FR-39–42 | `modules/delivery.service.js` | delivery_partners, delivery_status_log |
 | 9. Disputes, Returns & Refunds | FR-43–45a | `modules/disputes.service.js` | disputes, dispute_evidence |
-| 9a. Payout Hold Window | FR-45b–45h | `modules/payout.service.js` | payout_holds |
+| 9a. Payout Hold Window | FR-45b–45h, FR-65 reservation payout | `modules/payout.service.js` | payout_holds |
 | 10. Commission & Settlement | FR-46–50a | `modules/settlement.service.js` | platform_settings, settlements |
 | 11. Notifications | FR-51 | `modules/notifications.service.js` | notifications |
 | 12. Administration | FR-52–59 | `modules/admin.service.js` | **none** — thin orchestration only |
@@ -218,6 +218,11 @@ purpose so the schema works whichever way this eventually gets decided.
   `listings`, `users`, `orders`, and `reservations` service functions for
   canonical lock order, then checks for an existing dispute while the order
   is locked.
+- **FR-65 manual payout**: `payout.service.releaseReservationPayout()`
+  orchestrates one transaction and calls the owning `listings`, `users`,
+  `orders`, `reservations`, `escrowPayments`, and `settlement` functions.
+  The order completion is atomic with hold release, settlement, ledger, and
+  audit writes; the manual path emits no notification or order event.
 - **FR-68 (Admin-delivered reservation orders)**: `delivery.service.js`
   uses `orders.service.js` for the order-state transition, `payout.service.js`
   for the transaction-aware payout-hold insert, and

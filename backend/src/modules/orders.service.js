@@ -184,7 +184,7 @@ async function cancelUnpaidReservationOrder(client, orderId) {
   return rows[0] || null;
 }
 
-/** FR-63a, FR-69, FR-72: read immutable order context before acquiring canonical money locks. */
+/** FR-63a, FR-65, FR-69, FR-72: read immutable order context before acquiring canonical money locks. */
 async function getMoneyLockContext(client, orderId) {
   const { rows } = await client.query(
     'SELECT id, listing_id, buyer_id, reservation_id FROM orders WHERE id = $1',
@@ -255,6 +255,30 @@ async function lockReservationOrderForHandover(client, orderId) {
      FROM orders
      WHERE id = $1
      FOR UPDATE`,
+    [orderId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-65: lock a reservation-backed order after its listing and buyer. */
+async function lockReservationOrderForPayout(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT id, listing_id, reservation_id, buyer_id, seller_id, status, delivered_at
+     FROM orders
+     WHERE id = $1
+     FOR UPDATE`,
+    [orderId]
+  );
+  return rows[0] || null;
+}
+
+/** FR-65: complete a payout order through its owner in the caller's transaction. */
+async function completeReservationPayoutOrder(client, orderId) {
+  const { rows } = await client.query(
+    `UPDATE orders
+     SET status = 'completed', completed_at = now()
+     WHERE id = $1 AND reservation_id IS NOT NULL AND status = 'held'
+     RETURNING id, status, completed_at`,
     [orderId]
   );
   return rows[0] || null;
@@ -502,6 +526,8 @@ module.exports = {
   lockOrderForRefund,
   lockReservationOrderForSystemAction,
   lockReservationOrderForHandover,
+  lockReservationOrderForPayout,
+  completeReservationPayoutOrder,
   markReservationOrderDelivered,
   recordCourierHandover,
   cancelReservationOrder,

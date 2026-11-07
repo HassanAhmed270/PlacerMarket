@@ -189,7 +189,7 @@ async function expireDueReservations({ limit = 100, timeBudgetMs = 20000, logger
   return counts;
 }
 
-/** FR-63a, FR-69, FR-72: lock the listing before buyer, order, and escrow rows. */
+/** FR-63a, FR-65, FR-69, FR-72: lock the listing before buyer, order, and escrow rows. */
 async function lockListingForMoneyAction(client, listingId) {
   const { rows } = await client.query(
     'SELECT id FROM listings WHERE id = $1 FOR UPDATE',

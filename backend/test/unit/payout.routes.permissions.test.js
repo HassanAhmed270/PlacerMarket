@@ -10,6 +10,7 @@ const request = require('supertest');
 const payout = require('../../src/modules/payout.service');
 const users = require('../../src/modules/users.service');
 const router = require('../../src/routes/payout.routes');
+const { ConflictError } = require('../../src/lib/errors');
 
 function appAs(role) {
   const app = express();
@@ -41,5 +42,16 @@ describe('FR-83f: force release requires the dedicated permission and a session-
     expect(payout.forceReleasePayoutEarly).toHaveBeenCalledWith('order-1', {
       adminId: 'admin-1', reasonNote: 'Approved exception',
     });
+  });
+
+  test('FR-63a: the legacy force-release route returns 409 for a reservation-backed order', async () => {
+    payout.forceReleasePayoutEarly.mockRejectedValueOnce(
+      new ConflictError('Reservation-backed orders cannot use legacy payout operations.')
+    );
+    const response = await request(appAs('admin'))
+      .post('/api/payout/orders/order-1/force-release')
+      .set('X-Step-Up-Grant', 'g'.repeat(43))
+      .send({ reasonNote: 'Approved exception' });
+    expect(response.status).toBe(409);
   });
 });

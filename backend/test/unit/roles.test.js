@@ -9,6 +9,7 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.ADMIN, 'catalog.attribute.review')).toBe(true);
     expect(hasPermission(ROLES.ADMIN, 'search.synonyms.manage')).toBe(true);
     expect(hasPermission(ROLES.ADMIN, 'payout.force_release')).toBe(true);
+    expect(hasPermission(ROLES.ADMIN, 'order.release_payout')).toBe(true);
   });
 
   test('Moderator/Ops CAN review/approve listings and disputes, and seller applications', () => {
@@ -45,5 +46,12 @@ describe('lib/roles FR-05a permission matrix', () => {
       expect(hasPermission(ROLES.BUYER, action)).toBe(false);
       expect(hasPermission(ROLES.SELLER, action)).toBe(false);
     }
+  });
+
+  test('FR-65: only Admin can release a reservation-backed payout', () => {
+    for (const role of [ROLES.SELLER, ROLES.BUYER, ROLES.MODERATOR]) {
+      expect(hasPermission(role, 'order.release_payout')).toBe(false);
+    }
+    expect(hasPermission(ROLES.ADMIN, 'order.release_payout')).toBe(true);
   });
 });
