@@ -228,6 +228,7 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
     expect(holdRows).toEqual([{ state: 'paused_for_dispute', dispute_id: dispute.body.id }]);
     expect(await getDisputeExceptionRows(scenario.orderId)).toHaveLength(1);
     expect(await getDisputeAuditCount(scenario.orderId)).toBe(1);
+    await elapsePayoutWindows(scenario);
     await expect(releasePayout(harness.adminId, scenario.orderId)).resolves.toMatchObject({
       status: 409,
     });
