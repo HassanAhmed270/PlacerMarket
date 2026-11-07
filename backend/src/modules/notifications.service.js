@@ -16,8 +16,17 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.LISTING_REVISION_BLOCKED_BY_RESERVATION,
   events.OFFER_CREATED,
   events.ORDER_STATUS_CHANGED,
+  events.ORDER_FUNDED,
+  events.ORDER_CANCELLED,
+  events.ORDER_AUTO_CANCELLED,
+  events.ORDER_HANDED_OVER,
+  events.ORDER_DELIVERED,
   events.DELIVERY_STATUS_CHANGED,
   events.DISPUTE_RESOLVED,
+  events.DISPUTE_FILED,
+  events.DISPUTE_RESOLUTION_COMMITTED,
+  events.PAYOUT_RELEASED,
+  events.PAYOUT_FORCE_RELEASED,
   events.MESSAGE_SENT,
 ]);
 
@@ -31,6 +40,15 @@ function jobKeys(eventName, payload) {
       orderingKey: `conversation:${payload.conversationId}`,
     };
   }
+  if ([events.DISPUTE_FILED, events.DISPUTE_RESOLUTION_COMMITTED].includes(eventName)) {
+    if (!payload.disputeId || !payload.orderId) {
+      throw new TypeError('Dispute notification event is missing its dispute or order ID.');
+    }
+    return {
+      idempotencyKey: `${eventName}:${payload.disputeId}`,
+      orderingKey: `order:${payload.orderId}`,
+    };
+  }
   const entityByEvent = {
     [events.SELLER_APPLICATION_STATUS_CHANGED]: ['seller-application', payload.applicationId],
     [events.LISTING_STATUS_CHANGED]: ['listing', payload.listingId],
@@ -38,8 +56,15 @@ function jobKeys(eventName, payload) {
     [events.LISTING_REVISION_BLOCKED_BY_RESERVATION]: ['listing-revision-blocked', payload.revisionId],
     [events.OFFER_CREATED]: ['offer', payload.offerId],
     [events.ORDER_STATUS_CHANGED]: ['order', payload.orderId],
+    [events.ORDER_FUNDED]: ['order-funded', payload.orderId],
+    [events.ORDER_CANCELLED]: ['order-cancelled', payload.orderId],
+    [events.ORDER_AUTO_CANCELLED]: ['order-auto-cancelled', payload.orderId],
+    [events.ORDER_HANDED_OVER]: ['order-handed-over', payload.orderId],
+    [events.ORDER_DELIVERED]: ['order-delivered', payload.orderId],
     [events.DELIVERY_STATUS_CHANGED]: ['order', payload.orderId],
     [events.DISPUTE_RESOLVED]: ['order', payload.orderId],
+    [events.PAYOUT_RELEASED]: ['payout-released', payload.orderId],
+    [events.PAYOUT_FORCE_RELEASED]: ['payout-released', payload.orderId],
   };
   const [kind, id] = entityByEvent[eventName] || [];
   if (id === undefined || id === null || String(id).length === 0) {
@@ -175,6 +200,7 @@ async function processNotificationJob(job, transactionDb) {
 
   let recipients;
   let eventType;
+  let notificationContent;
   switch (job.eventName) {
     case events.SELLER_APPLICATION_STATUS_CHANGED: {
       // cross-module notification-recipient read: seller_applications (owned by users.service.js)
@@ -224,6 +250,7 @@ async function processNotificationJob(job, transactionDb) {
     case events.ORDER_STATUS_CHANGED:
     case events.DELIVERY_STATUS_CHANGED:
     case events.DISPUTE_RESOLVED: {
+      if (job.eventName === events.ORDER_STATUS_CHANGED && job.payload.status === 'completed') return;
       // cross-module notification-recipient read: orders (owned by orders.service.js)
       const result = await transactionDb.executeSql(
         'SELECT buyer_id, seller_id FROM orders WHERE id = $1', [job.payload.orderId]
@@ -234,11 +261,110 @@ async function processNotificationJob(job, transactionDb) {
         : job.eventName === events.DELIVERY_STATUS_CHANGED ? 'delivery_update' : 'dispute_update';
       break;
     }
+    case events.ORDER_FUNDED:
+    case events.ORDER_CANCELLED:
+    case events.ORDER_AUTO_CANCELLED:
+    case events.ORDER_HANDED_OVER:
+    case events.ORDER_DELIVERED:
+    case events.DISPUTE_FILED:
+    case events.DISPUTE_RESOLUTION_COMMITTED:
+    case events.PAYOUT_RELEASED:
+    case events.PAYOUT_FORCE_RELEASED: {
+      // cross-module notification-recipient read: orders (owned by orders.service.js)
+      const { rows } = await transactionDb.executeSql(
+        'SELECT buyer_id, seller_id FROM orders WHERE id = $1',
+        [job.payload.orderId]
+      );
+      const order = rows[0];
+      if (!order) return;
+
+      const sellerOnly = [
+        events.DISPUTE_FILED,
+        events.PAYOUT_RELEASED,
+        events.PAYOUT_FORCE_RELEASED,
+      ].includes(job.eventName);
+      recipients = sellerOnly
+        ? [{ userId: order.seller_id, role: 'seller' }]
+        : [
+            { userId: order.buyer_id, role: 'buyer' },
+            { userId: order.seller_id, role: 'seller' },
+          ];
+
+      let buyerRefundRequested = false;
+      if (job.eventName === events.ORDER_CANCELLED) {
+        // cross-module read: refunds (owned by escrowPayments.service.js)
+        const { rows: refundRows } = await transactionDb.executeSql(
+          `SELECT EXISTS (
+             SELECT 1 FROM refunds
+             WHERE order_id = $1 AND trigger = 'system_cancel'
+           ) AS requested`,
+          [job.payload.orderId]
+        );
+        buyerRefundRequested = refundRows[0]?.requested === true;
+      }
+
+      notificationContent = (role) => {
+        const isSeller = role === 'seller';
+        const href = `${isSeller ? '/seller/orders' : '/orders'}/${encodeURIComponent(job.payload.orderId)}`;
+        let message;
+        if (job.eventName === events.ORDER_FUNDED) {
+          message = isSeller
+            ? 'You have a new sale; handover is recorded by our team after courier pickup.'
+            : 'Payment confirmed for your order.';
+        } else if (job.eventName === events.ORDER_CANCELLED) {
+          message = isSeller
+            ? 'An order was cancelled.'
+            : buyerRefundRequested
+              ? 'Your order was cancelled; a refund was requested.'
+              : 'Your order was cancelled.';
+        } else if (job.eventName === events.ORDER_AUTO_CANCELLED) {
+          message = isSeller
+            ? 'A sale was cancelled after the handover deadline.'
+            : 'Your order was automatically cancelled and a refund was requested.';
+        } else if (job.eventName === events.ORDER_HANDED_OVER) {
+          message = isSeller
+            ? 'Your sale has been handed to delivery.'
+            : 'Your order has been handed to delivery.';
+        } else if (job.eventName === events.ORDER_DELIVERED) {
+          message = isSeller ? 'Your sale was delivered.' : 'Your order was delivered.';
+        } else if (job.eventName === events.DISPUTE_FILED) {
+          message = 'A dispute was filed for your sale.';
+        } else if (job.eventName === events.DISPUTE_RESOLUTION_COMMITTED) {
+          message = isSeller
+            ? 'A dispute on your sale was resolved.'
+            : 'A dispute on your order was resolved.';
+        } else {
+          message = 'Your payout was released.';
+        }
+        return { orderId: job.payload.orderId, message, href };
+      };
+
+      if (job.eventName === events.ORDER_FUNDED) eventType = 'payment_confirmed';
+      else if (job.eventName === events.ORDER_CANCELLED) eventType = 'order_cancelled';
+      else if (job.eventName === events.ORDER_AUTO_CANCELLED) eventType = 'order_auto_cancelled';
+      else if (job.eventName === events.ORDER_HANDED_OVER) eventType = 'order_handed_over';
+      else if (job.eventName === events.ORDER_DELIVERED) eventType = 'order_delivered';
+      else if (job.eventName === events.DISPUTE_FILED) eventType = 'dispute_filed';
+      else if (job.eventName === events.DISPUTE_RESOLUTION_COMMITTED) eventType = 'dispute_resolved';
+      else eventType = 'payout_released';
+
+      if (job.eventName === events.ORDER_FUNDED) {
+        recipients = recipients.map((recipient) => ({
+          ...recipient,
+          eventType: recipient.role === 'seller' ? 'new_sale' : 'payment_confirmed',
+        }));
+      }
+      break;
+    }
     default:
       throw new TypeError('Unsupported notification event.');
   }
 
-  for (const recipientId of new Set(recipients)) {
+  const uniqueRecipients = new Map(recipients.map((recipient) => {
+    const userId = typeof recipient === 'object' ? recipient.userId : recipient;
+    return [userId, typeof recipient === 'object' ? recipient : { userId, role: null }];
+  }));
+  for (const [recipientId, recipient] of uniqueRecipients) {
     if (job.eventName === events.LISTING_REVISION_BLOCKED_BY_RESERVATION) {
       await transactionDb.executeSql(
         `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
@@ -249,6 +375,21 @@ async function processNotificationJob(job, transactionDb) {
           eventType,
           JSON.stringify(job.payload),
           `revision-blocked:${job.payload.revisionId}`,
+        ]
+      );
+    } else if (notificationContent) {
+      const recipientEventType = recipient.eventType || eventType;
+      const dedupeId = job.payload.disputeId || job.payload.orderId;
+      const dedupeKey = `${recipientEventType}:${dedupeId}`;
+      await transactionDb.executeSql(
+        `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+        [
+          recipientId,
+          recipientEventType,
+          JSON.stringify(notificationContent(recipient.role)),
+          dedupeKey,
         ]
       );
     } else {
@@ -264,13 +405,13 @@ async function processNotificationJob(job, transactionDb) {
 function registerListeners() {
   for (const eventName of NOTIFICATION_EVENTS) {
     eventBus.on(eventName, async (payload, context = {}) => {
+      if (eventName === events.DISPUTE_RESOLVED && context.transaction) return;
       try {
         const keys = jobKeys(eventName, payload);
         const options = { ...keys };
         if (context.transaction) options.transaction = context.transaction;
         await queue.enqueue(queue.QUEUES.NOTIFICATIONS, { eventName, payload }, options);
       } catch (error) {
-        if (context.transaction) throw error;
         console.error('Notification job enqueue failed', { eventName, code: error?.code || 'unknown' });
       }
     });

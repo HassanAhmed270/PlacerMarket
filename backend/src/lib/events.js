@@ -29,6 +29,10 @@ module.exports = {
   // Module 6: Orders
   ORDER_STATUS_CHANGED: 'order.status_changed', // FR-33
   ORDER_CANCELLED: 'order.cancelled', // FR-33a
+  ORDER_FUNDED: 'order.funded', // FR-51
+  ORDER_AUTO_CANCELLED: 'order.auto_cancelled', // FR-51
+  ORDER_HANDED_OVER: 'order.handed_over', // FR-51
+  ORDER_DELIVERED: 'order.delivered', // FR-51
 
   // Module 8: Delivery
   DELIVERY_STATUS_CHANGED: 'delivery.status_changed', // FR-41, FR-42
@@ -36,6 +40,7 @@ module.exports = {
   // Module 9: Disputes
   DISPUTE_FILED: 'dispute.filed', // FR-43
   DISPUTE_RESOLVED: 'dispute.resolved', // FR-45
+  DISPUTE_RESOLUTION_COMMITTED: 'dispute.resolution_committed', // FR-51
   DISPUTE_REFUND_EXCEPTION_REQUIRED: 'dispute.refund_exception_required', // FR-45
 
   // Module 9a: Payout Hold

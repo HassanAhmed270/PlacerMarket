@@ -6,6 +6,8 @@
 const db = require('../db.service');
 const { performance } = require('node:perf_hooks');
 const queue = require('../lib/queue');
+const eventBus = require('../lib/eventBus');
+const events = require('../lib/events');
 const paymentGateway = require('../lib/adapters/paymentGateway');
 const orders = require('./orders.service');
 const reservations = require('./reservations.service');
@@ -557,7 +559,7 @@ async function cancelReservationOrder({ orderId, buyerId }) {
     throw new ValidationError('buyerId must be a UUID.');
   }
 
-  return db.withTransactionRetry(async (client) => {
+  const result = await db.withTransactionRetry(async (client) => {
     const context = await orders.getMoneyLockContext(client, orderId);
     if (!context) throw new NotFoundError('order', orderId);
     if (context.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
@@ -638,6 +640,10 @@ async function cancelReservationOrder({ orderId, buyerId }) {
     await listings.syncAvailabilityProjection(client, order.listing_id);
     return { legacy: false, orderId: order.id, status: 'cancelled', refund };
   });
+  if (!result.legacy && result.status === 'cancelled') {
+    eventBus.emit(events.ORDER_CANCELLED, { orderId });
+  }
+  return result;
 }
 
 /** FR-63a: cancel a reserved listing's unpaid or unhanded paid order during moderator take-down. */
@@ -677,7 +683,7 @@ async function handleListingTakedown(client, listingId) {
        WHERE order_id = $1 AND status IN ('created', 'pending')`,
       [order.id]
     );
-    return true;
+    return order.id;
   }
 
   if (reservation.status === 'paid' && order.handed_over_at !== null) {
@@ -713,13 +719,13 @@ async function handleListingTakedown(client, listingId) {
     trigger: 'system_cancel',
     reason: 'Listing taken down',
   });
-  return true;
+  return order.id;
 }
 
 /** FR-72: cancel and fully refund a paid order after its database handover deadline. */
 async function refundUnhandedOverOrder({ orderId }) {
   validateOrderId(orderId);
-  return db.withTransactionRetry(async (client) => {
+  const result = await db.withTransactionRetry(async (client) => {
     const context = await orders.getMoneyLockContext(client, orderId);
     if (!context || context.reservation_id === null) return { outcome: 'skipped' };
     if (!(await listings.lockListingForMoneyAction(client, context.listing_id)) ||
@@ -761,6 +767,10 @@ async function refundUnhandedOverOrder({ orderId }) {
     await listings.syncAvailabilityProjection(client, order.listing_id);
     return { outcome: 'refunded', refundId: intent.refundId };
   });
+  if (result.outcome === 'refunded') {
+    eventBus.emit(events.ORDER_AUTO_CANCELLED, { orderId });
+  }
+  return result;
 }
 
 function validateOrderId(orderId) {
@@ -1009,8 +1019,9 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
   const initialEvent = parseWebhookEvent(initialInbox.raw_body);
   const paymentLookup = await findPaymentForWebhook(initialInbox, initialEvent);
 
+  let fundedOrderId = null;
   try {
-    return await db.withTransaction(async (client) => {
+    const result = await db.withTransaction(async (client) => {
       let order = null;
       let reservation = null;
       let payment = null;
@@ -1184,10 +1195,13 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
            VALUES (NULL, 'payment_funded', $1, $2, 'verified_webhook', $3::jsonb)`,
           [order.id, payment.id, JSON.stringify({ eventType: event.type })]
         );
+        fundedOrderId = order.id;
       }
 
       return recordWebhookProcessed(client, inbox);
     });
+    if (fundedOrderId) eventBus.emit(events.ORDER_FUNDED, { orderId: fundedOrderId });
+    return result;
   } catch (error) {
     try {
       await recordWebhookProcessingError(webhookInboxId);

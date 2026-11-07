@@ -216,7 +216,7 @@ async function resolveDispute(disputeId, { resolutionAmountToBuyer, resolvedBy, 
   }
 
   const resolutionStatus = amount === full ? 'resolved_refund' : 'resolved_release';
-  return db.withTransaction(async (client) => {
+  const resolvedDispute = await db.withTransaction(async (client) => {
     const context = await orders.getMoneyLockContext(client, dispute.order_id);
     if (!context) throw new NotFoundError('order', dispute.order_id);
 
@@ -258,6 +258,11 @@ async function resolveDispute(disputeId, { resolutionAmountToBuyer, resolvedBy, 
     );
     return rows[0];
   });
+  eventBus.emit(events.DISPUTE_RESOLUTION_COMMITTED, {
+    disputeId,
+    orderId: dispute.order_id,
+  });
+  return resolvedDispute;
 }
 
 /** FR-45f: the synchronous check payout.service.js's force-release MUST call before overriding a hold. */

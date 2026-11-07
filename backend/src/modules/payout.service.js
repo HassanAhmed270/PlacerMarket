@@ -299,7 +299,7 @@ function validateManualPayoutRequest(input) {
 /** FR-65: manually record the Admin's reservation-backed seller payout. */
 async function releaseReservationPayout(orderId, adminId, input) {
   const { payoutReference, note } = validateManualPayoutRequest(input);
-  return db.withTransaction(async (client) => {
+  const result = await db.withTransaction(async (client) => {
     const context = await orders.getMoneyLockContext(client, orderId);
     if (!context) throw new NotFoundError('order', orderId);
     if (!context.reservation_id) throw new NotFoundError('reservation-backed order', orderId);
@@ -413,6 +413,8 @@ async function releaseReservationPayout(orderId, adminId, input) {
       payoutReference,
     };
   });
+  eventBus.emit(events.PAYOUT_RELEASED, { orderId });
+  return result;
 }
 
 // ---- FR-45h / FR-44: combined admin view ----

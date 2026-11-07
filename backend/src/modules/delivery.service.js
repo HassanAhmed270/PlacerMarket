@@ -412,6 +412,7 @@ async function recordAdminHandover(orderId, body, adminId) {
     }
     throw new ConflictError('The order was cancelled and refunded; it will not be reopened. A handover-after-cancel exception was recorded for manual resolution.');
   }
+  eventBus.emit(events.ORDER_HANDED_OVER, { orderId });
   return result;
 }
 
@@ -473,6 +474,7 @@ async function markOrderDelivered(orderId, body, adminId) {
     };
   });
 
+  eventBus.emit(events.ORDER_DELIVERED, { orderId });
   if (result.holdCreated) eventBus.emit(events.PAYOUT_HELD, { orderId });
   const { holdCreated: _holdCreated, ...response } = result;
   return response;

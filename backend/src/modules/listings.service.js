@@ -770,9 +770,18 @@ async function rejectOrUnpublishListing(listingId, { reviewerId, reason }) {
         { listingId, status: updated[0].status, reason },
         { transaction: client }
       );
-      return { retry: false, listing: updated[0] };
+      return {
+        retry: false,
+        listing: updated[0],
+        cancelledOrderId: typeof handledReservation === 'string' ? handledReservation : null,
+      };
     });
-    if (!result.retry) return result.listing;
+    if (!result.retry) {
+      if (result.cancelledOrderId) {
+        eventBus.emit(events.ORDER_CANCELLED, { orderId: result.cancelledOrderId });
+      }
+      return result.listing;
+    }
   }
   throw new ConflictError('The listing reservation changed during take-down. Please retry.');
 }
