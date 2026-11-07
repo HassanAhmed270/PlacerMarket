@@ -147,8 +147,8 @@ afterAll(async () => {
   restoreHandoverTestEnvironment();
 });
 
-describe('FR-45 dispute resolution with reservation-backed payouts', () => {
-  test('FR-45, FR-65: seller resolution resumes the hold and allows stage 9 manual payout release', async () => {
+describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
+  test('FR-65: seller resolution resumes the hold and allows stage 9 manual payout release', async () => {
     const dispute = await fileBuyerDispute();
     expect(await db.query('SELECT state FROM payout_holds WHERE order_id = $1', [scenario.orderId]))
       .toMatchObject({ rows: [{ state: 'paused_for_dispute' }] });
@@ -172,7 +172,7 @@ describe('FR-45 dispute resolution with reservation-backed payouts', () => {
     expect(orderRows).toEqual([{ status: 'completed', hold_state: 'released' }]);
   });
 
-  test('FR-45, FR-72e: buyer resolution records one manual exception and moves no money', async () => {
+  test('FR-72e: buyer resolution records one manual exception and moves no money', async () => {
     const dispute = await fileBuyerDispute();
     const before = await getMoneyState(scenario.orderId);
 
@@ -210,7 +210,7 @@ describe('FR-45 dispute resolution with reservation-backed payouts', () => {
       .expect(200);
   });
 
-  test('FR-45: Moderator cannot resolve disputes but can still list them', async () => {
+  test('FR-43: Moderator cannot resolve disputes but can still list them', async () => {
     const dispute = await fileBuyerDispute();
 
     await resolveDispute(harness.moderatorId, dispute.body.id, 0).expect(403);
@@ -221,7 +221,7 @@ describe('FR-45 dispute resolution with reservation-backed payouts', () => {
     expect(response.body.some((row) => row.id === dispute.body.id)).toBe(true);
   });
 
-  test('FR-45: a failing resolution listener rolls the dispute update back', async () => {
+  test('FR-43: a failing resolution listener rolls the dispute update back', async () => {
     const dispute = await fileBuyerDispute();
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
     const failResolution = () => {
@@ -244,7 +244,7 @@ describe('FR-45 dispute resolution with reservation-backed payouts', () => {
     expect(await getDisputeExceptionRows(scenario.orderId)).toEqual([]);
   });
 
-  test('FR-45: ten parallel resolves produce exactly one success', async () => {
+  test('FR-43: ten parallel resolves produce exactly one success', async () => {
     const dispute = await fileBuyerDispute();
     const responses = await Promise.all(
       Array.from({ length: 10 }, () => resolveDispute(harness.adminId, dispute.body.id, 0))
@@ -260,7 +260,7 @@ describe('FR-45 dispute resolution with reservation-backed payouts', () => {
     expect(rows).toEqual([{ status: 'resolved_release' }]);
   });
 
-  test('FR-45: legacy non-reservation dispute resolution leaves its payout hold unchanged', async () => {
+  test('FR-43: legacy non-reservation dispute resolution leaves its payout hold unchanged', async () => {
     const legacyOrderId = await createLegacyOrder(harness, scenario);
     await db.query(
       `UPDATE orders SET status = 'delivered', delivered_at = now() WHERE id = $1`,

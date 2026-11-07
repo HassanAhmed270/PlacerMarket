@@ -92,7 +92,7 @@ describe('admin routes: permission gates at the route layer', () => {
     expect(res.status).not.toBe(403); // gets past the gate (then fails on the mocked DB — irrelevant here)
   });
 
-  test('FR-45: only Admin can resolve a dispute; Moderator keeps dispute review access', async () => {
+  test('FR-05a: only Admin can resolve a dispute; Moderator keeps dispute review access', async () => {
     const moderatorResolve = await request(appAs('moderator'))
       .post('/api/disputes/dispute-1/resolve').send({ resolutionAmountToBuyer: 0 });
     const moderatorList = await request(appAs('moderator')).get('/api/disputes');

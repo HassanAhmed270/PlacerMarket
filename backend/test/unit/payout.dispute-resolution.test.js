@@ -14,7 +14,7 @@ const payout = require('../../src/modules/payout.service');
 const eventBus = require('../../src/lib/eventBus');
 const events = require('../../src/lib/events');
 
-describe('FR-45 reservation payout hold dispute-resolution listener', () => {
+describe('FR-65 reservation payout hold dispute-resolution listener', () => {
   const payload = {
     disputeId: 'dispute-1',
     orderId: 'order-1',
@@ -39,7 +39,7 @@ describe('FR-45 reservation payout hold dispute-resolution listener', () => {
     jest.restoreAllMocks();
   });
 
-  test('FR-45: seller resolution resumes a paused hold and retains its dispute id', async () => {
+  test('FR-65: seller resolution resumes a paused hold and retains its dispute id', async () => {
     transaction.query
       .mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] })
       .mockResolvedValueOnce({ rows: [{ order_id: payload.orderId }] });
@@ -59,7 +59,7 @@ describe('FR-45 reservation payout hold dispute-resolution listener', () => {
     expect(eventBus.emitAsync).not.toHaveBeenCalled();
   });
 
-  test('FR-45: buyer resolution records one audit and requests one manual exception in the same transaction', async () => {
+  test('FR-72e: buyer resolution records one audit and requests one manual exception in the same transaction', async () => {
     transaction.query.mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] });
     escrowPayments.recordDisputeResolutionAuditEvent.mockResolvedValueOnce(true);
 
@@ -80,7 +80,7 @@ describe('FR-45 reservation payout hold dispute-resolution listener', () => {
     );
   });
 
-  test('FR-45: repeated buyer-resolution events do not request another exception or audit', async () => {
+  test('FR-72e: repeated buyer-resolution events do not request another exception or audit', async () => {
     transaction.query
       .mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] })
       .mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] });
@@ -96,7 +96,7 @@ describe('FR-45 reservation payout hold dispute-resolution listener', () => {
     expect(escrowPayments.recordDisputeResolutionAuditEvent).toHaveBeenCalledTimes(2);
   });
 
-  test('FR-45: a non-paused hold or legacy order has no resolution side effects', async () => {
+  test('FR-65: a non-paused hold or legacy order has no resolution side effects', async () => {
     transaction.query.mockResolvedValueOnce({ rows: [{ state: 'released' }] });
     await payout.handleDisputeResolved(payload, { transaction, resolvedBy });
     expect(escrowPayments.recordDisputeResolutionAuditEvent).not.toHaveBeenCalled();
@@ -108,7 +108,7 @@ describe('FR-45 reservation payout hold dispute-resolution listener', () => {
     expect(escrowPayments.recordDisputeResolutionAuditEvent).not.toHaveBeenCalled();
   });
 
-  test('FR-45: a missing transaction is surfaced as an error', async () => {
+  test('FR-65: a missing transaction is surfaced as an error', async () => {
     await expect(payout.handleDisputeResolved(payload)).rejects.toThrow(
       'Dispute resolution payout effects require the resolution transaction.'
     );
