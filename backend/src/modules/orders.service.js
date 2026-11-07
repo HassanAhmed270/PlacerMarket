@@ -489,7 +489,7 @@ async function getSellerReservationOrder(orderId, sellerId) {
     [orderId, sellerId]
   );
   const row = rows[0];
-  if (!row) throw new NotFoundError('order', orderId);
+  if (!row) throw new NotFoundError('order', 'unavailable');
   return {
     orderId: row.order_id,
     listingId: row.listing_id,
