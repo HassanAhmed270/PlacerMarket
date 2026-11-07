@@ -351,7 +351,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     const schema = newSchemaName();
     await resetPgBossSchema();
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(22);
+    expect(applied).toHaveLength(23);
 
     const relations = await db.query(
       `SELECT table_name FROM information_schema.tables
@@ -430,7 +430,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     await expect(runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir }))
-      .resolves.toHaveLength(3);
+      .resolves.toHaveLength(4);
     await withSchemaClient(schema, async (client) => {
       const { rows } = await client.query(
         'SELECT title, search_text, is_reserved, reserved_until, is_sold FROM listing_search WHERE listing_id = $1',
@@ -482,7 +482,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(4);
+    expect(applied).toHaveLength(5);
 
     await withSchemaClient(schema, async (client) => {
       const preservedOrders = await client.query(
