@@ -210,6 +210,29 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
       .expect(200);
   });
 
+  test('FR-45g: buyer resolution pauses an unpaused hold and blocks payout release', async () => {
+    const dispute = await fileBuyerDispute();
+    await db.query(
+      `UPDATE payout_holds
+       SET state = 'held', dispute_id = NULL
+       WHERE order_id = $1`,
+      [scenario.orderId]
+    );
+
+    await resolveDispute(harness.adminId, dispute.body.id, '1250.50').expect(200);
+
+    const { rows: holdRows } = await db.query(
+      'SELECT state, dispute_id FROM payout_holds WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(holdRows).toEqual([{ state: 'paused_for_dispute', dispute_id: dispute.body.id }]);
+    expect(await getDisputeExceptionRows(scenario.orderId)).toHaveLength(1);
+    expect(await getDisputeAuditCount(scenario.orderId)).toBe(1);
+    await expect(releasePayout(harness.adminId, scenario.orderId)).resolves.toMatchObject({
+      status: 409,
+    });
+  });
+
   test('FR-43: Moderator cannot resolve disputes but can still list them', async () => {
     const dispute = await fileBuyerDispute();
 

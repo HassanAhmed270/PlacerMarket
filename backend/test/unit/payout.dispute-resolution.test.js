@@ -80,6 +80,57 @@ describe('FR-65 reservation payout hold dispute-resolution listener', () => {
     );
   });
 
+  test('FR-45g: buyer resolution pauses a held payout before recording the exception', async () => {
+    transaction.query
+      .mockResolvedValueOnce({ rows: [{ state: 'held' }] })
+      .mockResolvedValueOnce({ rows: [{ order_id: payload.orderId }] });
+
+    await payout.handleDisputeResolved(
+      { ...payload, resolutionStatus: 'resolved_refund' },
+      { transaction, resolvedBy }
+    );
+
+    expect(transaction.query.mock.calls[0][0]).toMatch(/FOR UPDATE/i);
+    expect(transaction.query.mock.calls[1][0]).toMatch(/SET state = 'paused_for_dispute', dispute_id = \$1/);
+    expect(transaction.query.mock.calls[1][1]).toEqual([payload.disputeId, payload.orderId]);
+    expect(escrowPayments.recordDisputeResolutionAuditEvent).toHaveBeenCalledWith(
+      transaction,
+      expect.objectContaining({
+        disputeId: payload.disputeId,
+        adminId: resolvedBy,
+        resolutionStatus: 'resolved_refund',
+      })
+    );
+    expect(eventBus.emitAsync).toHaveBeenCalledWith(
+      events.DISPUTE_REFUND_EXCEPTION_REQUIRED,
+      { orderId: payload.orderId, disputeId: payload.disputeId, resolvedBy },
+      { transaction }
+    );
+  });
+
+  test('FR-45g: buyer resolution records the audit and exception when no payout hold exists', async () => {
+    transaction.query.mockResolvedValueOnce({ rows: [] });
+
+    await payout.handleDisputeResolved(
+      { ...payload, resolutionStatus: 'resolved_refund' },
+      { transaction, resolvedBy }
+    );
+
+    expect(escrowPayments.recordDisputeResolutionAuditEvent).toHaveBeenCalledWith(
+      transaction,
+      expect.objectContaining({
+        disputeId: payload.disputeId,
+        adminId: resolvedBy,
+        resolutionStatus: 'resolved_refund',
+      })
+    );
+    expect(eventBus.emitAsync).toHaveBeenCalledWith(
+      events.DISPUTE_REFUND_EXCEPTION_REQUIRED,
+      { orderId: payload.orderId, disputeId: payload.disputeId, resolvedBy },
+      { transaction }
+    );
+  });
+
   test('FR-72e: repeated buyer-resolution events do not request another exception or audit', async () => {
     transaction.query
       .mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] })

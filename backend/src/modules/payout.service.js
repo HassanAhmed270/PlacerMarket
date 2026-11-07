@@ -76,9 +76,9 @@ async function handleDisputeResolved({
     [orderId]
   );
   const hold = holdRows[0];
-  if (!hold || hold.state !== 'paused_for_dispute') return;
 
   if (resolutionStatus === 'resolved_release') {
+    if (!hold || hold.state !== 'paused_for_dispute') return;
     const { rows: resumedRows } = await client.query(
       `UPDATE payout_holds
        SET state = 'held'
@@ -94,6 +94,15 @@ async function handleDisputeResolved({
   }
 
   if (resolutionStatus !== 'resolved_refund') return;
+
+  if (hold && hold.state === 'held') {
+    await client.query(
+      `UPDATE payout_holds
+       SET state = 'paused_for_dispute', dispute_id = $1
+       WHERE order_id = $2 AND state = 'held'`,
+      [disputeId, orderId]
+    );
+  }
 
   const auditRecorded = await escrowPayments.recordDisputeResolutionAuditEvent(client, {
     orderId, adminId: resolvedBy, disputeId, resolutionStatus,
