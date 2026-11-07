@@ -20,6 +20,12 @@ const nonPublicRoutes = new Set([
   '/orders',
   '/orders/:orderId',
   '/orders/:orderId/payment-return',
+  '/admin',
+  '/admin/login',
+  '/admin/orders',
+  '/admin/orders/:orderId',
+  '/admin/exceptions',
+  '/admin/disputes',
 ])
 const privateModules = new Set([
   'src/CheckoutPage.jsx',
@@ -30,6 +36,13 @@ const privateModules = new Set([
   'src/ListingWorkspace.jsx',
   'src/ModerationWorkspace.jsx',
   'src/WorkspaceFrame.jsx',
+  'src/AdminApp.jsx',
+  'src/AdminLogin.jsx',
+  'src/AdminLayout.jsx',
+  'src/AdminOrders.jsx',
+  'src/AdminExceptions.jsx',
+  'src/AdminDisputes.jsx',
+  'src/lib/admin.js',
 ])
 const maxBytes = 200 * 1024
 

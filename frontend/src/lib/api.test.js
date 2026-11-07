@@ -149,3 +149,46 @@ test('customer and moderation APIs use the existing authenticated routes', async
     .filter(({ url, options }) => !url.endsWith('/discovery/listings/listing-1/status') && !options.headers.Authorization)
     .map(({ url }) => url), [])
 })
+
+test('Admin APIs call the existing protected routes with their exact methods and bodies', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({}) }
+    },
+  })
+  client.setAccessToken('short-lived-memory-token')
+  await client.getAdminOrders({ limit: 20, status: 'funded', before: 'cursor-id' })
+  await client.getAdminOrder('order-1')
+  await client.recordAdminHandover('order-1', { status: 'handed_to_delivery', courierPickupAt: '2026-11-07T10:00:00+00:00', handoverConfirmationNote: 'Courier picked up' })
+  await client.markAdminOrderDelivered('order-1', { note: 'Delivery confirmed' })
+  await client.releaseAdminOrderPayout('order-1', { payoutReference: 'ref-123', note: 'Manual transfer recorded' })
+  await client.getAdminExceptions({ status: 'unresolved', kind: 'handover_after_cancel', limit: 100 })
+  await client.resolveAdminException('exception-1', 'Resolution recorded')
+  await client.getAdminDisputes({ status: 'open' })
+  await client.getAdminDisputeEvidence('dispute-1')
+  await client.resolveAdminDispute('dispute-1', { resolutionAmountToBuyer: '0' })
+  client.clearAccessToken()
+
+  assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
+    ['https://api.example.test/api/admin/orders?limit=20&status=funded&before=cursor-id', 'GET'],
+    ['https://api.example.test/api/admin/orders/order-1', 'GET'],
+    ['https://api.example.test/api/admin/orders/order-1/delivery', 'PATCH'],
+    ['https://api.example.test/api/admin/orders/order-1/delivered', 'POST'],
+    ['https://api.example.test/api/admin/orders/order-1/payout/release', 'POST'],
+    ['https://api.example.test/api/admin/order-exceptions?status=unresolved&kind=handover_after_cancel&limit=100', 'GET'],
+    ['https://api.example.test/api/admin/order-exceptions/exception-1/resolve', 'POST'],
+    ['https://api.example.test/api/disputes?status=open', 'GET'],
+    ['https://api.example.test/api/disputes/dispute-1/evidence', 'GET'],
+    ['https://api.example.test/api/disputes/dispute-1/resolve', 'POST'],
+  ])
+  assert.deepEqual(JSON.parse(calls[2].options.body), {
+    status: 'handed_to_delivery',
+    courierPickupAt: '2026-11-07T10:00:00+00:00',
+    handoverConfirmationNote: 'Courier picked up',
+  })
+  assert.deepEqual(JSON.parse(calls[4].options.body), { payoutReference: 'ref-123', note: 'Manual transfer recorded' })
+  assert.ok(calls.every(({ options }) => options.headers.Authorization?.startsWith('Bearer ')))
+})

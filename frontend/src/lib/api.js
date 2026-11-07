@@ -160,6 +160,16 @@ export function createApiClient({
     getAdminPayouts: () => get('admin/payouts', { authenticated: true }),
     setPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold`, { reason }, { authenticated: true }),
     clearPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold/clear`, { reason }, { authenticated: true }),
+    getAdminOrders: (filters = {}) => get(`admin/orders${queryString(filters)}`, { authenticated: true }),
+    getAdminOrder: (id) => get(`admin/orders/${encodeURIComponent(id)}`, { authenticated: true }),
+    recordAdminHandover: (id, input) => send('PATCH', `admin/orders/${encodeURIComponent(id)}/delivery`, input, { authenticated: true }),
+    markAdminOrderDelivered: (id, input) => post(`admin/orders/${encodeURIComponent(id)}/delivered`, input, { authenticated: true }),
+    releaseAdminOrderPayout: (id, input) => post(`admin/orders/${encodeURIComponent(id)}/payout/release`, input, { authenticated: true }),
+    getAdminExceptions: (filters = {}) => get(`admin/order-exceptions${queryString(filters)}`, { authenticated: true }),
+    resolveAdminException: (id, resolutionNote) => post(`admin/order-exceptions/${encodeURIComponent(id)}/resolve`, { resolutionNote }, { authenticated: true }),
+    getAdminDisputes: (filters = {}) => get(`disputes${queryString(filters)}`, { authenticated: true }),
+    getAdminDisputeEvidence: (id) => get(`disputes/${encodeURIComponent(id)}/evidence`, { authenticated: true }),
+    resolveAdminDispute: (id, input) => post(`disputes/${encodeURIComponent(id)}/resolve`, input, { authenticated: true }),
   }
 }
 

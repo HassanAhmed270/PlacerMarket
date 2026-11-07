@@ -16,6 +16,7 @@ const CheckoutPage = lazy(() => import('./CheckoutPage.jsx'))
 const OrderPage = lazy(() => import('./OrderPage.jsx'))
 const MyOrdersPage = lazy(() => import('./MyOrdersPage.jsx'))
 const PaymentReturnPage = lazy(() => import('./PaymentReturnPage.jsx'))
+const AdminApp = lazy(() => import('./AdminApp.jsx'))
 
 const authRoutes = new Set(['/login', '/register', '/forgot-password', '/reset-password', '/account'])
 const staticPageRoutes = new Set(['/about', '/how-it-works', '/terms', '/privacy', '/help', '/contact'])
@@ -56,6 +57,14 @@ function App() {
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
+
+  if (path === '/admin' || path.startsWith('/admin/')) {
+    return (
+      <Suspense fallback={<main className="route-loading" role="status">Loading Admin area…</main>}>
+        <AdminApp path={path} />
+      </Suspense>
+    )
+  }
 
   let page
   if (authRoutes.has(path)) {
