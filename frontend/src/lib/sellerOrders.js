@@ -32,7 +32,9 @@ export function getSellerOrderStatusMessage(status) {
   }
 }
 
-export function getSellerHandoverDeadline(deadlineAt, now) {
+export function getSellerHandoverDeadline(status, deadlineAt, now) {
+  if (status !== 'funded') return { text: '', overdue: false }
+
   const deadline = Date.parse(deadlineAt)
   if (!Number.isFinite(deadline)) return { text: '', overdue: false }
 

@@ -79,7 +79,7 @@ function SellerOrdersPage() {
             const status = getSellerOrderStatusMessage(order.status)
             const deadline = now === null
               ? null
-              : getSellerHandoverDeadline(order.handoverDeadlineAt, now)
+              : getSellerHandoverDeadline(order.status, order.handoverDeadlineAt, now)
             return (
               <li key={order.orderId}>
                 <a href={`/seller/orders/${encodeURIComponent(order.orderId)}`}>

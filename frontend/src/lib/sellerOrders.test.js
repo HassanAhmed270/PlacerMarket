@@ -38,18 +38,24 @@ test('FR-34: seller order labels cover every funded and delivery status', () => 
   })
 })
 
-test('FR-34: seller handover deadline labels use the supplied time for overdue state', () => {
+test('FR-34: seller handover deadline labels apply only to funded orders', () => {
   const deadline = '2026-11-07T10:00:00.000Z'
   const deadlineText = `Handover deadline: ${new Date(deadline).toLocaleString()}`
-  assert.deepEqual(getSellerHandoverDeadline(deadline, Date.parse('2026-11-07T10:00:01.000Z')), {
+  assert.deepEqual(getSellerHandoverDeadline('funded', deadline, Date.parse('2026-11-07T10:00:01.000Z')), {
     text: deadlineText,
     overdue: true,
   })
-  assert.deepEqual(getSellerHandoverDeadline(deadline, Date.parse('2026-11-07T09:59:59.000Z')), {
+  assert.deepEqual(getSellerHandoverDeadline('funded', deadline, Date.parse('2026-11-07T09:59:59.000Z')), {
     text: deadlineText,
     overdue: false,
   })
-  assert.deepEqual(getSellerHandoverDeadline(null, Date.parse('2026-11-07T09:59:59.000Z')), {
+  for (const status of ['handed_to_delivery', 'held', 'delivered', 'completed', 'cancelled']) {
+    assert.deepEqual(getSellerHandoverDeadline(status, deadline, Date.parse('2026-11-07T10:00:01.000Z')), {
+      text: '',
+      overdue: false,
+    })
+  }
+  assert.deepEqual(getSellerHandoverDeadline('funded', null, Date.parse('2026-11-07T09:59:59.000Z')), {
     text: '',
     overdue: false,
   })

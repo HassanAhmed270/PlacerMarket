@@ -59,7 +59,7 @@ function SellerOrderPage({ orderId }) {
   const status = getSellerOrderStatusMessage(order.status)
   const deadline = now === null
     ? null
-    : getSellerHandoverDeadline(order.handoverDeadlineAt, now)
+    : getSellerHandoverDeadline(order.status, order.handoverDeadlineAt, now)
   const disputeLabel = getSellerDisputeLabel(order.disputeStatus)
 
   return (
