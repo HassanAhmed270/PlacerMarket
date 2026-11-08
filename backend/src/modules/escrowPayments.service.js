@@ -1,6 +1,6 @@
 /**
  * Owns: FR-60a hosted checkout intents, FR-61 funding, FR-69 refunds, and FR-77b webhooks.
- * Tables owned: payments, webhook_inbox, refunds, ledger_entries, money_audit_events
+ * Tables owned: payments, webhook_inbox, refunds, ledger_entries
  */
 
 const db = require('../db.service');
@@ -13,6 +13,7 @@ const orders = require('./orders.service');
 const reservations = require('./reservations.service');
 const listings = require('./listings.service');
 const users = require('./users.service');
+const moneyAudit = require('./moneyAudit.service');
 const {
   ConflictError,
   NotFoundError,
@@ -113,19 +114,14 @@ async function createSystemRefundIntent(client, { payment, order, trigger, reaso
           ? 'duplicate_capture'
           : 'ineligible_capture'
       : reason;
-    await client.query(
-      `INSERT INTO money_audit_events
-         (actor_id, action, order_id, payment_id, refund_id, reason, metadata)
-       VALUES (NULL, $1, $2, $3, $4, $5, $6::jsonb)`,
-      [
-        isLateCapture ? 'late_payment_refund_requested' : 'system_refund_requested',
-        order.id,
-        payment.id,
-        refund.id,
-        auditReason,
-        JSON.stringify(isLateCapture ? { trigger } : { trigger, cause }),
-      ]
-    );
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      action: isLateCapture ? 'late_payment_refund_requested' : 'system_refund_requested',
+      orderId: order.id,
+      paymentId: payment.id,
+      refundId: refund.id,
+      reason: auditReason,
+      metadata: isLateCapture ? { trigger } : { trigger, cause },
+    });
   }
 
   return { refundId: refund.id, status: refund.status, created: Boolean(inserted[0]) };
@@ -172,17 +168,13 @@ async function findPaymentForWebhook(inbox, event) {
 }
 
 async function recordWebhookFailure(client, inbox, payment, code) {
-  await client.query(
-    `INSERT INTO money_audit_events
-       (actor_id, action, order_id, payment_id, reason, metadata)
-     VALUES (NULL, 'payment_webhook_manual_review', $1, $2, $3, $4::jsonb)`,
-    [
-      payment?.order_id || null,
-      payment?.id || null,
-      code,
-      JSON.stringify({ errorCode: code, eventType: inbox.event_type }),
-    ]
-  );
+  await moneyAudit.recordMoneyAuditEvent(client, {
+    action: 'payment_webhook_manual_review',
+    orderId: payment?.order_id || null,
+    paymentId: payment?.id || null,
+    reason: code,
+    metadata: { errorCode: code, eventType: inbox.event_type },
+  });
   await client.query(
     `UPDATE webhook_inbox
      SET status = 'failed', error_code = $2, processed_at = now()
@@ -372,21 +364,17 @@ async function processRefundJob({ refundId, gateway } = {}) {
         `refund:${refund.id}`,
       ]
     );
-    await client.query(
-      `INSERT INTO money_audit_events
-         (actor_id, action, order_id, payment_id, refund_id, reason, metadata)
-       VALUES (NULL, 'system_refund_succeeded', $1, $2, $3, $4, $5::jsonb)`,
-      [
-        order.id,
-        payment.id,
-        refund.id,
-        refund.reason,
-        JSON.stringify({
-          trigger: refund.trigger,
-          providerRefundRef: gatewayResult.providerRefundRef,
-        }),
-      ]
-    );
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      action: 'system_refund_succeeded',
+      orderId: order.id,
+      paymentId: payment.id,
+      refundId: refund.id,
+      reason: refund.reason,
+      metadata: {
+        trigger: refund.trigger,
+        providerRefundRef: gatewayResult.providerRefundRef,
+      },
+    });
 
     const { rows: totalRows } = await client.query(
       `SELECT COALESCE(SUM(amount), 0) = $2::numeric AS fully_refunded
@@ -440,26 +428,22 @@ async function recordManualSellerPayout(client, {
       [orderId, paymentId, currency, sellerNetAmount, `seller_payout_manual:${orderId}`]
     );
   }
-  await client.query(
-    `INSERT INTO money_audit_events
-       (actor_id, action, order_id, payment_id, reason, metadata)
-     VALUES ($1, 'seller_payout_manual_released', $2, $3, $4, $5::jsonb)`,
-    [
-      adminId,
-      orderId,
-      paymentId,
+  await moneyAudit.recordMoneyAuditEvent(client, {
+    actorId: adminId,
+    action: 'seller_payout_manual_released',
+    orderId,
+    paymentId,
+    reason: note,
+    metadata: {
+      payoutReference,
       note,
-      JSON.stringify({
-        payoutReference,
-        note,
-        itemPrice,
-        deliveryFee,
-        sellerNetAmount,
-        commissionAmount,
-        currency,
-      }),
-    ]
-  );
+      itemPrice,
+      deliveryFee,
+      sellerNetAmount,
+      commissionAmount,
+      currency,
+    },
+  });
 }
 
 /** FR-72: lock payment and refund rows after the order reservation is locked. */
@@ -478,31 +462,36 @@ async function lockPaymentAndRefundRowsForHandover(client, orderId) {
 
 /** FR-72: write the financial audit record for an Admin-recorded courier handover. */
 async function recordCourierHandoverAuditEvent(client, { orderId, adminId, courierPickupAt, hasTrackingNumber }) {
-  await client.query(
-    `INSERT INTO money_audit_events (actor_id, action, order_id, reason, metadata)
-     VALUES ($1, 'courier_handover_recorded', $2, 'Admin recorded courier handover', $3::jsonb)`,
-    [adminId, orderId, JSON.stringify({ courierPickupAt, hasTrackingNumber })]
-  );
+  await moneyAudit.recordMoneyAuditEvent(client, {
+    actorId: adminId,
+    action: 'courier_handover_recorded',
+    orderId,
+    reason: 'Admin recorded courier handover',
+    metadata: { courierPickupAt, hasTrackingNumber },
+  });
 }
 
 /** FR-68: write the financial audit record for an Admin-recorded delivery. */
 async function recordOrderDeliveredAuditEvent(client, { orderId, adminId }) {
-  await client.query(
-    `INSERT INTO money_audit_events (actor_id, action, order_id, reason)
-     VALUES ($1, 'order_delivered', $2, 'Admin marked reservation-backed order delivered')`,
-    [adminId, orderId]
-  );
+  await moneyAudit.recordMoneyAuditEvent(client, {
+    actorId: adminId,
+    action: 'order_delivered',
+    orderId,
+    reason: 'Admin marked reservation-backed order delivered',
+  });
 }
 
 /** FR-72e: write the financial audit record for an Admin-resolved order exception. */
 async function recordOrderExceptionResolvedAuditEvent(client, {
   orderId, adminId, exceptionId, kind, resolutionNote,
 }) {
-  await client.query(
-    `INSERT INTO money_audit_events (actor_id, action, order_id, reason, metadata)
-     VALUES ($1, 'order_exception_resolved', $2, $3, $4::jsonb)`,
-    [adminId, orderId, resolutionNote, JSON.stringify({ exceptionId, kind })]
-  );
+  await moneyAudit.recordMoneyAuditEvent(client, {
+    actorId: adminId,
+    action: 'order_exception_resolved',
+    orderId,
+    reason: resolutionNote,
+    metadata: { exceptionId, kind },
+  });
 }
 
 /** FR-45: record a dispute-resolution money audit once in the caller's transaction. */
@@ -515,24 +504,15 @@ async function recordDisputeResolutionAuditEvent(client, {
   const reason = resolutionStatus === 'resolved_refund'
     ? 'Dispute resolved in the buyer\'s favour; refund must be made manually'
     : 'Dispute resolved in the seller\'s favour; payout hold resumed';
-  const { rows } = await client.query(
-    `INSERT INTO money_audit_events (actor_id, action, order_id, reason, metadata)
-     SELECT $1, $2, $3, $4, $5::jsonb
-     WHERE NOT EXISTS (
-       SELECT 1 FROM money_audit_events
-       WHERE order_id = $3 AND action = $2 AND metadata->>'disputeId' = $6
-     )
-     RETURNING id`,
-    [
-      adminId,
-      action,
-      orderId,
-      reason,
-      JSON.stringify({ disputeId, resolutionStatus }),
-      disputeId,
-    ]
-  );
-  return rows.length > 0;
+  return moneyAudit.recordMoneyAuditEventOnce(client, {
+    actorId: adminId,
+    action,
+    orderId,
+    reason,
+    metadata: { disputeId, resolutionStatus },
+    uniqueMetadataKey: 'disputeId',
+    uniqueMetadataValue: disputeId,
+  });
 }
 
 function getCapturedPayment(payments) {
@@ -687,11 +667,12 @@ async function handleListingTakedown(client, listingId) {
   }
 
   if (reservation.status === 'paid' && order.handed_over_at !== null) {
-    await client.query(
-      `INSERT INTO money_audit_events (actor_id, action, order_id, reason, metadata)
-       VALUES (NULL, 'takedown_after_handover', $1, 'Listing taken down after courier handover', $2::jsonb)`,
-      [order.id, JSON.stringify({ listingId })]
-    );
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      action: 'takedown_after_handover',
+      orderId: order.id,
+      reason: 'Listing taken down after courier handover',
+      metadata: { listingId },
+    });
     return true;
   }
 
@@ -1189,12 +1170,13 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
           throw new ConflictError('Payment funding state changed before commit.');
         }
         await listings.syncAvailabilityProjection(client, order.listing_id);
-        await client.query(
-          `INSERT INTO money_audit_events
-             (actor_id, action, order_id, payment_id, reason, metadata)
-           VALUES (NULL, 'payment_funded', $1, $2, 'verified_webhook', $3::jsonb)`,
-          [order.id, payment.id, JSON.stringify({ eventType: event.type })]
-        );
+        await moneyAudit.recordMoneyAuditEvent(client, {
+          action: 'payment_funded',
+          orderId: order.id,
+          paymentId: payment.id,
+          reason: 'verified_webhook',
+          metadata: { eventType: event.type },
+        });
         fundedOrderId = order.id;
       }
 

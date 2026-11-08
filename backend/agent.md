@@ -135,7 +135,8 @@ later): `orders.service.createBagEntry()` (reads `conversations`),
 | 6. Orders | FR-32–34, FR-61–62 owner operations | `modules/orders.service.js` | orders, reviews (FR-27b lives here, not in module 4) |
 | 6a. Reservations | FR-32a, FR-61–63a | `modules/reservations.service.js` | reservations, supported_delivery_cities |
 | 7. Payments & COD (legacy COD paths) | FR-36–38 | `modules/payments.service.js` | cod_collections (also owns FR-41a reconciliation — see correction note below) |
-| 7a. Escrow Payments | FR-60a, FR-61–62, FR-65, FR-77b | `modules/escrowPayments.service.js` | payments, webhook_inbox, refunds, ledger_entries, money_audit_events |
+| 7a. Escrow Payments | FR-60a, FR-61–62, FR-65, FR-77b | `modules/escrowPayments.service.js` | payments, webhook_inbox, refunds, ledger_entries |
+| Shared Money Audit | FR-45, FR-65, FR-68, FR-69, FR-72, FR-77b | `modules/moneyAudit.service.js` | money_audit_events |
 | 8. Delivery | FR-39–42, FR-72e | `modules/delivery.service.js` | delivery_partners, delivery_status_log, order_exceptions |
 | 9. Disputes, Returns & Refunds | FR-43–45a | `modules/disputes.service.js` | disputes, dispute_evidence |
 | 9a. Payout Hold Window | FR-45b–45h, FR-65 reservation payout | `modules/payout.service.js` | payout_holds |
@@ -233,7 +234,7 @@ purpose so the schema works whichever way this eventually gets decided.
 - **FR-68 (Admin-delivered reservation orders)**: `delivery.service.js`
   uses `orders.service.js` for the order-state transition, `payout.service.js`
   for the transaction-aware payout-hold insert, and
-  `escrowPayments.service.js` for the money-audit row. It emits
+  `moneyAudit.service.js` for the money-audit row. It emits
   `events.PAYOUT_HELD` only after the transaction commits.
 - **FR-68 (Admin order reads)**: `delivery.service.js` composes the Admin
   reservation-order list/detail views. The bounded multi-table list query is
@@ -250,7 +251,7 @@ purpose so the schema works whichever way this eventually gets decided.
   status; no buyer identity or delivery address-line data is included.
 - **FR-72e (order exception resolution)**: `delivery.service.js` owns and
   resolves `order_exceptions`; it delegates the resolution money-audit write
-  to the owning `escrowPayments.service.js` within the same transaction.
+  to the owning `moneyAudit.service.js` within the same transaction.
 - **FR-50a guard**: `settlement.service.js` deliberately does NOT require
   `disputes.service.js` (would create a circular require with
   `disputes.service.js` → `settlement.service.js` for the complaint-window
@@ -261,7 +262,8 @@ purpose so the schema works whichever way this eventually gets decided.
   optional payment link through its payments-table ownership, then delegates
   the webhook inbox insert and transactional `payment-webhooks` enqueue to
   `lib/queue.js`. Its Stage 5b consumer owns webhook, capture-ledger,
-  system-expiry-refund-request and money-audit writes; it calls exported
+  system-expiry-refund-request writes; it delegates money-audit writes to
+  `moneyAudit.service.js` and calls exported
   transaction-aware operations in `orders.service.js`,
   `reservations.service.js`, `listings.service.js` and `users.service.js` for
   those owners' tables and canonical money-row locking.

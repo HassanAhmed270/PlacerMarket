@@ -23,13 +23,16 @@
 const { randomUUID, randomBytes, createHash, createHmac } = require('node:crypto');
 const db = require('../db.service');
 const settlement = require('./settlement.service');
+const moneyAudit = require('./moneyAudit.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const { hashPassword, verifyPassword } = require('../lib/passwordHashPool');
 const { signAccessToken, getJwtConfig } = require('../lib/jwt');
-const { decryptStaffTotpSecret, matchingTotpStep } = require('../lib/totp');
-const { encryptStaffTotpSecret, verifyTotpCode } = require('../lib/totp');
-const { NotFoundError, ForbiddenError, ValidationError } = require('../lib/errors');
+const {
+  decryptStaffTotpSecret, encryptStaffTotpSecret, generateTotpSecret,
+  matchingTotpStep, verifyTotpCode,
+} = require('../lib/totp');
+const { NotFoundError, ForbiddenError, ValidationError, ConflictError } = require('../lib/errors');
 const { createIdentityVerifier } = require('../lib/adapters/identityVerifier');
 const { keyProviderFromEnv } = require('../lib/keyProvider');
 const { encryptPayoutDetails } = require('../lib/payoutEncryption');
@@ -448,6 +451,113 @@ async function createInitialAdmin({ name, email, phone, password, totpSecret, to
     ]);
     return { id: user.id, email: email.trim().toLowerCase(), role: 'admin' };
   });
+}
+
+/** FR-69: create an additional Admin only after the initiating Admin and new authenticator verify. */
+async function createAdditionalAdmin({
+  initiatorEmail, name, email, phone, password,
+}, { promptTotpCode, totpVerifier = matchingTotpStep } = {}) {
+  const normalizedInitiatorEmail = typeof initiatorEmail === 'string' ? initiatorEmail.trim().toLowerCase() : '';
+  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (typeof promptTotpCode !== 'function' || typeof totpVerifier !== 'function' ||
+      typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof phone !== 'string' ||
+      !/^\+?[1-9]\d{7,19}$/.test(phone) || typeof password !== 'string' ||
+      password.length < 12 || password.length > 128 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedInitiatorEmail)) {
+    throw new ValidationError('Valid additional administrator details and TOTP prompts are required.');
+  }
+
+  const passwordHash = await hashPassword(password);
+  try {
+    return await db.withTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('poshaak-additional-admin-creation'))");
+      const { rows: initiators } = await client.query(
+        'SELECT id, role, is_suspended FROM users WHERE email = $1 FOR UPDATE',
+        [normalizedInitiatorEmail]
+      );
+      const initiator = initiators[0];
+      if (!initiator || initiator.role !== 'admin' || initiator.is_suspended) {
+        throw new ValidationError('A current TOTP code from an active Admin account is required.');
+      }
+
+      const { rows: credentials } = await client.query(
+        `SELECT encrypted_secret, nonce, auth_tag, key_version, last_used_step
+         FROM staff_totp_credentials WHERE user_id = $1 AND enabled_at IS NOT NULL FOR UPDATE`,
+        [initiator.id]
+      );
+      const initiatorCredential = credentials[0];
+      if (!initiatorCredential) {
+        throw new ValidationError('A current TOTP code from an active Admin account is required.');
+      }
+
+      const initiatorSecret = decryptStaffTotpSecret({
+        encrypted_secret: initiatorCredential.encrypted_secret,
+        nonce: initiatorCredential.nonce,
+        auth_tag: initiatorCredential.auth_tag,
+        key_version: initiatorCredential.key_version,
+      });
+      const initiatorCode = await promptTotpCode({ purpose: 'initiator', email: normalizedInitiatorEmail });
+      const initiatorStep = totpVerifier(initiatorSecret, initiatorCode);
+      if (!Number.isSafeInteger(initiatorStep) ||
+          (initiatorCredential.last_used_step !== null && initiatorCredential.last_used_step !== undefined &&
+           initiatorStep <= Number(initiatorCredential.last_used_step))) {
+        throw new ValidationError('The initiating Admin authenticator code is invalid or has already been used.');
+      }
+      await client.query(
+        'UPDATE staff_totp_credentials SET last_used_step = $1, updated_at = now() WHERE user_id = $2',
+        [initiatorStep, initiator.id]
+      );
+
+      const { rows: duplicates } = await client.query(
+        'SELECT id FROM users WHERE phone = $1 OR email = $2 LIMIT 1',
+        [phone, normalizedEmail]
+      );
+      if (duplicates.length) throw new ConflictError('An account with that phone or email already exists.');
+
+      const secret = generateTotpSecret();
+      const encrypted = encryptStaffTotpSecret(secret);
+      const { rows } = await client.query(
+        `INSERT INTO users (full_name, phone, email, password_hash, role)
+         VALUES ($1, $2, $3, $4, 'admin') RETURNING id`,
+        [name.trim(), phone, normalizedEmail, passwordHash]
+      );
+      const newAdmin = rows[0];
+      await client.query(
+        `INSERT INTO staff_totp_credentials
+           (user_id, encrypted_secret, nonce, auth_tag, key_version)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [newAdmin.id, encrypted.encryptedSecret, encrypted.nonce, encrypted.authTag, encrypted.keyVersion]
+      );
+
+      const enrollmentCode = await promptTotpCode({
+        purpose: 'new-admin-enrollment',
+        email: normalizedEmail,
+        secret,
+      });
+      const enrollmentStep = totpVerifier(secret, enrollmentCode);
+      if (!Number.isSafeInteger(enrollmentStep)) {
+        throw new ValidationError('The new Admin authenticator code is invalid.');
+      }
+      await client.query(
+        `UPDATE staff_totp_credentials
+         SET enabled_at = now(), last_used_step = $1, updated_at = now()
+         WHERE user_id = $2`,
+        [enrollmentStep, newAdmin.id]
+      );
+      await moneyAudit.recordMoneyAuditEvent(client, {
+        actorId: initiator.id,
+        action: 'additional_admin_created',
+        metadata: { newAdminId: newAdmin.id },
+      });
+      return { id: newAdmin.id, email: normalizedEmail, role: 'admin' };
+    });
+  } catch (error) {
+    if (error?.code === '23505' && ['users_phone_key', 'users_email_key'].includes(error.constraint)) {
+      throw new ConflictError('An account with that phone or email already exists.');
+    }
+    throw error;
+  }
 }
 
 /** FR-83c: prepare encrypted TOTP enrollment; the secret is returned once for authenticator setup. */
@@ -1102,6 +1212,7 @@ module.exports = {
   requestPasswordReset,
   resetPassword,
   createInitialAdmin,
+  createAdditionalAdmin,
   completeBuyerLogin,
   refreshSession,
   revokeAllSessions,
