@@ -1,5 +1,19 @@
 const crypto = require('node:crypto');
 const request = require('supertest');
+const { getSharedRedisClient, setSharedRedisClient } = require('../../src/lib/redis');
+const originalRedisClient = getSharedRedisClient();
+const ADMIN_OPS_ENV_KEYS = [
+  'RATE_LIMIT_ADMIN_OPS_IP_MAX',
+  'RATE_LIMIT_ADMIN_OPS_ACCOUNT_MAX',
+  'RATE_LIMIT_WINDOW_SECONDS',
+];
+const originalAdminOpsEnvironment = Object.fromEntries(
+  ADMIN_OPS_ENV_KEYS.map((key) => [key, process.env[key]])
+);
+process.env.RATE_LIMIT_ADMIN_OPS_IP_MAX = '1000';
+process.env.RATE_LIMIT_ADMIN_OPS_ACCOUNT_MAX = '1000';
+process.env.RATE_LIMIT_WINDOW_SECONDS = '60';
+setSharedRedisClient({ isOpen: true, eval: async () => [1, 1] });
 const db = require('../../src/db.service');
 const app = require('../../src/app');
 const queue = require('../../src/lib/queue');
@@ -28,6 +42,7 @@ const ENV_KEYS = [
   'PAYMENT_WEBHOOK_URL',
   'PUBLIC_BASE_URL',
   'NODE_ENV',
+  ...ADMIN_OPS_ENV_KEYS,
 ];
 
 let originalEnvironment;
@@ -35,6 +50,14 @@ let fixture;
 let scenario;
 let staff;
 let buyerId;
+
+afterAll(() => {
+  setSharedRedisClient(originalRedisClient);
+  for (const [key, value] of Object.entries(originalAdminOpsEnvironment)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 function authHeader(userId, sessionId) {
   return `Bearer ${signAccessToken(userId, { secret: JWT_SECRET, sessionId })}`;

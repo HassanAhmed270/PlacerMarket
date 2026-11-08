@@ -40,6 +40,7 @@ router.get(
   '/orders/:orderId/refundable-balance',
   noStoreOrderResponses,
   requirePermission('refund.view_balance'),
+  limiters.adminOps,
   async (req, res) => {
     res.json(await admin.getRefundableBalance(req.params.orderId, req.user.id)); // FR-69, SEC-39
   }
@@ -49,6 +50,7 @@ router.get(
   '/refunds',
   noStoreOrderResponses,
   requirePermission('refund.view'),
+  limiters.adminOps,
   async (req, res) => {
     res.json(await admin.listManualRefunds(req.query, req.user.id)); // FR-69, SEC-39
   }
@@ -58,6 +60,7 @@ router.get(
   '/refunds/:refundId',
   noStoreOrderResponses,
   requirePermission('refund.view'),
+  limiters.adminOps,
   async (req, res) => {
     res.json(await admin.getManualRefund(req.params.refundId, req.user.id)); // FR-69, SEC-39
   }
@@ -67,6 +70,7 @@ router.post(
   '/orders/:orderId/refunds',
   noStoreOrderResponses,
   requirePermission('refund.request'),
+  limiters.adminOps,
   async (req, res) => {
     res.status(201).json(await admin.requestManualRefund(
       req.params.orderId,
@@ -81,6 +85,7 @@ router.post(
   '/refunds/:refundId/approve',
   noStoreOrderResponses,
   requirePermission('refund.decide'),
+  limiters.adminOps,
   async (req, res) => {
     res.json(await admin.decideManualRefund(
       req.params.refundId,
@@ -95,6 +100,7 @@ router.post(
   '/refunds/:refundId/reject',
   noStoreOrderResponses,
   requirePermission('refund.decide'),
+  limiters.adminOps,
   async (req, res) => {
     res.json(await admin.decideManualRefund(
       req.params.refundId,
