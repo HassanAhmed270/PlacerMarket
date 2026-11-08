@@ -157,6 +157,13 @@ export function createApiClient({
     getPayout: () => get('users/me/payout', { authenticated: true }),
     updatePayout: (input) => send('PATCH', 'users/me/payout-method', input, { authenticated: true }),
     getAdminApplications: () => get('admin/seller-applications', { authenticated: true }),
+    getAdminDeliveryCities: () => get('admin/delivery-cities', { authenticated: true }),
+    setAdminDeliveryCityActive: (cityId, active) => send(
+      'PUT',
+      `admin/delivery-cities/${encodeURIComponent(cityId)}`,
+      { active },
+      { authenticated: true },
+    ),
     reviewSellerApplication: (id, decision, reason) => post(`admin/seller-applications/${encodeURIComponent(id)}/review`, { decision, reason }, { authenticated: true }),
     verifySellerIdentity: (id, note) => post(`admin/sellers/${encodeURIComponent(id)}/identity-verification`, { note }, { authenticated: true }),
     getAdminPayouts: () => get('admin/payouts', { authenticated: true }),

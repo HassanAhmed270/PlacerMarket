@@ -6,6 +6,7 @@ import AdminLayout from './AdminLayout.jsx'
 import AdminOrders from './AdminOrders.jsx'
 import AdminExceptions from './AdminExceptions.jsx'
 import AdminDisputes from './AdminDisputes.jsx'
+import AdminDeliveryCities from './AdminDeliveryCities.jsx'
 import './AdminWorkspace.css'
 
 function isAdminOrderAccessError(error) {
@@ -118,6 +119,7 @@ export default function AdminApp({ path }) {
   if (orderId) page = <AdminOrders orderId={orderId} />
   else if (path === '/admin/exceptions') page = <AdminExceptions />
   else if (path === '/admin/disputes') page = <AdminDisputes />
+  else if (path === '/admin/delivery-cities') page = <AdminDeliveryCities />
   else page = <AdminOrders />
 
   return <AdminLayout onLogout={signOut}>{page}</AdminLayout>

@@ -142,6 +142,10 @@ export function adminStatusLabel(status) {
   return STATUS_LABELS[status] || status.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+export function deliveryCityActionLabel(active) {
+  return active ? 'Deactivate' : 'Activate'
+}
+
 export function orderActionEligibility(order, permissions = {}, now = Date.now()) {
   const cancelledAfterFunding = order?.status === 'cancelled' && Boolean(order?.fundedAt) && !order?.handedOverAt
   const handoverStatus = order?.status === 'funded' || cancelledAfterFunding

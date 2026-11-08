@@ -6,6 +6,7 @@ import {
   adminLoginErrorMessage,
   adminStatusLabel,
   buildAdminOrderQuery,
+  deliveryCityActionLabel,
   formatAdminAmount,
   formatAdminDate,
   localDateTimeToIsoWithOffset,
@@ -75,6 +76,11 @@ test('Admin helpers format server decimal strings and dates without money arithm
   assert.equal(formatAdminDate('invalid'), '—')
   assert.equal(adminStatusLabel('handed_to_delivery'), 'Handed to delivery')
   assert.equal(adminStatusLabel('dispute_refund_required'), 'Dispute refund required (manual)')
+})
+
+test('FR-86: delivery city toggle labels describe the next action', () => {
+  assert.equal(deliveryCityActionLabel(true), 'Deactivate')
+  assert.equal(deliveryCityActionLabel(false), 'Activate')
 })
 
 test('Admin order eligibility hints follow the order state and available permissions', () => {

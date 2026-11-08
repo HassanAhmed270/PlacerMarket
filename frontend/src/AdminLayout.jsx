@@ -20,6 +20,7 @@ export default function AdminLayout({ children, onLogout }) {
           <a href="/admin/orders">Orders</a>
           <a href="/admin/exceptions">Exceptions</a>
           <a href="/admin/disputes">Disputes</a>
+          <a href="/admin/delivery-cities">Delivery cities</a>
           <button className="admin-text-button" type="button" onClick={logout} disabled={logoutPending}>
             {logoutPending ? 'Signing out…' : 'Logout'}
           </button>
