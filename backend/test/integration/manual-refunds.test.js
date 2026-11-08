@@ -335,6 +335,42 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     expect(JSON.stringify(auditRows)).not.toMatch(/"amount"\s*:/);
   });
 
+  test('FR-69: Admin refund reads expose queue and detail metadata without provider data', async () => {
+    const requested = await createRequest();
+    const list = await request(app)
+      .get('/api/admin/refunds?limit=20')
+      .set('Authorization', authHeader(staff.second.id, staff.second.sessionId))
+      .expect(200)
+      .expect('Cache-Control', 'private, no-store');
+    const item = list.body.refunds.find((refund) => refund.refundId === requested.body.refundId);
+    expect(item).toMatchObject({
+      refundId: requested.body.refundId,
+      orderId: scenario.orderId,
+      status: 'requested',
+      amount: '1550.50',
+      currency: 'PKR',
+      requestedBy: staff.first.id,
+      requestedByMe: false,
+    });
+    expect(Date.parse(item.expiresAt) - Date.parse(item.requestedAt)).toBe(48 * 60 * 60 * 1000);
+    expect(item).not.toHaveProperty('providerRefundId');
+
+    const detail = await request(app)
+      .get(`/api/admin/refunds/${requested.body.refundId}`)
+      .set('Authorization', authHeader(staff.first.id, staff.first.sessionId))
+      .expect(200)
+      .expect('Cache-Control', 'private, no-store');
+    expect(detail.body).toMatchObject({
+      refundId: requested.body.refundId,
+      orderId: scenario.orderId,
+      requestedBy: staff.first.id,
+      requestedByMe: true,
+      reason: 'Customer service reviewed the delivery issue.',
+    });
+    expect(detail.body).not.toHaveProperty('providerRefundId');
+    expect(detail.body).not.toHaveProperty('idempotencyKey');
+  });
+
   test('FR-69, SEC-39: rejection is final and a new request creates a different refund idempotency key', async () => {
     const requested = await createRequest();
     await sendDecision(staff.second, requested.body.refundId, 'reject', {

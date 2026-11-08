@@ -45,6 +45,24 @@ router.get(
   }
 );
 
+router.get(
+  '/refunds',
+  noStoreOrderResponses,
+  requirePermission('refund.view'),
+  async (req, res) => {
+    res.json(await admin.listManualRefunds(req.query, req.user.id)); // FR-69, SEC-39
+  }
+);
+
+router.get(
+  '/refunds/:refundId',
+  noStoreOrderResponses,
+  requirePermission('refund.view'),
+  async (req, res) => {
+    res.json(await admin.getManualRefund(req.params.refundId, req.user.id)); // FR-69, SEC-39
+  }
+);
+
 router.post(
   '/orders/:orderId/refunds',
   noStoreOrderResponses,

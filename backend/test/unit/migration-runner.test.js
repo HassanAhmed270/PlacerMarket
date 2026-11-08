@@ -39,6 +39,7 @@ describe('FR-79b migration support', () => {
         '023_order_exception_resolution.sql',
         '024_dispute_refund_exception.sql',
         '025_manual_two_admin_refunds.sql',
+        '026_admin_manual_refund_read_idx.sql',
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');
@@ -55,5 +56,15 @@ describe('FR-79b migration support', () => {
     expect(migration).toContain('refunds_manual_approval_identity');
     expect(migration).toContain('decided_at TIMESTAMPTZ');
     expect(generateSnapshot()).toContain('-- Migration: 025_manual_two_admin_refunds.sql');
+  });
+
+  test('FR-69: manual refund queue has an index for descending request-time keyset pagination', () => {
+    const migration = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'db', 'migrations', '026_admin_manual_refund_read_idx.sql'),
+      'utf8'
+    );
+    expect(migration).toContain('ON refunds (requested_at DESC, id DESC)');
+    expect(migration).toContain("WHERE trigger = 'manual_admin'");
+    expect(generateSnapshot()).toContain('-- Migration: 026_admin_manual_refund_read_idx.sql');
   });
 });

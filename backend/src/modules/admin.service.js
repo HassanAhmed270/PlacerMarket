@@ -67,6 +67,16 @@ async function getRefundableBalance(orderId, actorId) {
   return escrowPayments.getRefundableBalance(orderId, actorId);
 }
 
+/** FR-69, SEC-39: list manual refund requests for the Admin queue. */
+async function listManualRefunds(query, actorId) {
+  return escrowPayments.listAdminManualRefunds(query, actorId);
+}
+
+/** FR-69, SEC-39: return one manual refund request for Admin review. */
+async function getManualRefund(refundId, actorId) {
+  return escrowPayments.getAdminManualRefund(refundId, actorId);
+}
+
 /** FR-69, SEC-39: create a step-up-protected manual refund request. */
 async function requestManualRefund(orderId, actorId, sessionId, input) {
   return escrowPayments.requestManualRefund(orderId, actorId, sessionId, input, {
@@ -155,6 +165,8 @@ module.exports = {
   setSellerPayoutHold,
   clearSellerPayoutHold,
   getRefundableBalance,
+  listManualRefunds,
+  getManualRefund,
   requestManualRefund,
   decideManualRefund,
   verifySellerIdentity,

@@ -39,6 +39,7 @@ const ADMIN_ONLY_ACTIONS = new Set([
   'user.reinstate',
   'payout.force_release', // FR-45e / FR-83f
   'order.release_payout', // FR-65
+  'refund.view', // SEC-39
   'refund.request', // SEC-39
   'refund.decide', // SEC-39
   'refund.view_balance', // SEC-39

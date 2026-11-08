@@ -268,8 +268,10 @@ purpose so the schema works whichever way this eventually gets decided.
   `reservations.service.js`, `listings.service.js` and `users.service.js` for
   those owners' tables and canonical money-row locking.
 - **FR-69 manual two-Admin refunds**: `escrowPayments.service.js` owns manual
-  refund writes, balance aggregation, expiry, audit events and transactional
-  refund-job enqueue. `users.service.js` consumes the request/decision step-up
+  refund writes, balance aggregation, expiry, audit events, transactional
+  refund-job enqueue, and safe Admin queue/detail reads. The reads are exposed
+  through the Admin-only `refund.view` permission and do not include provider
+  identifiers. `users.service.js` consumes the request/decision step-up
   grant in that transaction. `payout.service.js` owns the payout-state lookup;
   its manual release path checks the escrow owner's open-refund guard after
   locking the payment row. This guarded transactional check blocks payout while

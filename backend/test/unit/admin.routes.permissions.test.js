@@ -60,6 +60,8 @@ const DELIVERY_ADMIN_ONLY_PATHS = [
   { method: 'get', path: '/api/admin/orders' },
   { method: 'get', path: '/api/admin/orders/x' },
   { method: 'get', path: '/api/admin/order-exceptions' },
+  { method: 'get', path: '/api/admin/refunds' },
+  { method: 'get', path: '/api/admin/refunds/x' },
 ];
 
 beforeAll(() => jest.spyOn(console, 'error').mockImplementation(() => {})); // errorHandler logs 5xx

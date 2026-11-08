@@ -7,8 +7,8 @@ describe('FR-69, SEC-39 manual refund security gates', () => {
     expect(users.STEP_UP_ACTIONS).not.toContain('refund.approve');
   });
 
-  test('SEC-39: refund permissions are Admin-only for request, decision, and balance access', () => {
-    for (const action of ['refund.request', 'refund.decide', 'refund.view_balance']) {
+  test('SEC-39: refund permissions are Admin-only for read, request, decision, and balance access', () => {
+    for (const action of ['refund.view', 'refund.request', 'refund.decide', 'refund.view_balance']) {
       expect(ADMIN_ONLY_ACTIONS.has(action)).toBe(true);
       expect(hasPermission(ROLES.ADMIN, action)).toBe(true);
       expect(hasPermission(ROLES.MODERATOR, action)).toBe(false);

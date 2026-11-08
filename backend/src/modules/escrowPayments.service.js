@@ -366,6 +366,92 @@ async function getRefundableBalance(orderId, actorId) {
   });
 }
 
+function validateAdminManualRefundListQuery(query) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) {
+    throw new ValidationError('Refund list query must be an object.');
+  }
+  const rawLimit = query.limit === undefined ? '20' : query.limit;
+  if (typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit) ||
+      !Number.isSafeInteger(Number(rawLimit)) || Number(rawLimit) < 1) {
+    throw new ValidationError('limit must be a positive integer.');
+  }
+  const before = query.before === undefined ? null : query.before;
+  if (before !== null && (typeof before !== 'string' || !UUID.test(before))) {
+    throw new ValidationError('before must be a manual refund UUID.');
+  }
+  return { limit: Math.min(Number(rawLimit), 50), before };
+}
+
+/** FR-69, SEC-39: return a bounded, keyset-paginated Admin manual-refund queue. */
+async function listAdminManualRefunds(query = {}, actorId) {
+  const { limit, before } = validateAdminManualRefundListQuery(query);
+  let cursor = null;
+  if (before) {
+    const result = await db.read(
+      `SELECT requested_at, id
+       FROM refunds
+       WHERE id = $1 AND trigger = 'manual_admin'`,
+      [before]
+    );
+    cursor = result.rows[0];
+    if (!cursor) throw new ValidationError('before must identify a manual refund.');
+  }
+
+  const { rows } = await db.read(
+    `SELECT id AS "refundId",
+            order_id AS "orderId",
+            amount::text AS amount,
+            currency,
+            status,
+            requested_by AS "requestedBy",
+            requested_at AS "requestedAt",
+            requested_at + INTERVAL '48 hours' AS "expiresAt"
+     FROM refunds
+     WHERE trigger = 'manual_admin'
+       AND ($1::timestamptz IS NULL OR (requested_at, id) < ($1::timestamptz, $2::uuid))
+     ORDER BY requested_at DESC, id DESC
+     LIMIT $3`,
+    [cursor?.requested_at || null, cursor?.id || null, limit + 1]
+  );
+  const hasMore = rows.length > limit;
+  const refunds = rows.slice(0, limit).map((row) => ({
+    ...row,
+    requestedByMe: row.requestedBy === actorId,
+  }));
+  return {
+    refunds,
+    nextBefore: hasMore ? refunds[refunds.length - 1].refundId : null,
+  };
+}
+
+/** FR-69, SEC-39: return one safe manual-refund detail for Admin review. */
+async function getAdminManualRefund(refundId, actorId) {
+  if (typeof refundId !== 'string' || !UUID.test(refundId)) {
+    throw new ValidationError('refundId must be a UUID.');
+  }
+  const { rows } = await db.read(
+    `SELECT id AS "refundId",
+            order_id AS "orderId",
+            amount::text AS amount,
+            currency,
+            status,
+            requested_by AS "requestedBy",
+            approved_by AS "approvedBy",
+            requested_at AS "requestedAt",
+            requested_at + INTERVAL '48 hours' AS "expiresAt",
+            approved_at AS "approvedAt",
+            decided_at AS "decidedAt",
+            reason,
+            decision_note AS "decisionNote"
+     FROM refunds
+     WHERE id = $1 AND trigger = 'manual_admin'`,
+    [refundId]
+  );
+  const refund = rows[0];
+  if (!refund) throw new NotFoundError('refund');
+  return { ...refund, requestedByMe: refund.requestedBy === actorId };
+}
+
 /** FR-69, SEC-39: create a full-balance manual request with a one-use request grant. */
 async function requestManualRefund(orderId, actorId, sessionId, input, { isOrderPayoutReleased }) {
   const reason = normalizeManualRefundNote(input?.reason);
@@ -1647,6 +1733,8 @@ listings.setSystemTakedownHandler(handleListingTakedown);
 module.exports = {
   getAdminOrderPaymentAndRefunds,
   getRefundableBalance,
+  listAdminManualRefunds,
+  getAdminManualRefund,
   requestManualRefund,
   decideManualRefund,
   assertNoOpenManualRefund,
