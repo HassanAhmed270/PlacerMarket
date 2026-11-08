@@ -14,6 +14,7 @@
     "test:integration": "node --env-file-if-exists=.env --experimental-vm-modules ./node_modules/jest/bin/jest.js --runInBand --config test/integration/jest.config.js",
     "password:benchmark": "node scripts/benchmark-argon2.js",
     "admin:create": "node --env-file-if-exists=.env scripts/create-admin.js",
+    "admin:create:additional": "node --env-file-if-exists=.env scripts/create-additional-admin.js",
     "prepare": "node hooks/install.js",
     "hooks:install": "node hooks/install.js",
     "db:migrate": "node --env-file-if-exists=.env db/migrate.js",
