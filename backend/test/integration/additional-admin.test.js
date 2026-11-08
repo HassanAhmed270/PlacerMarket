@@ -3,6 +3,7 @@ const db = require('../../src/db.service');
 const users = require('../../src/modules/users.service');
 const { generateTotpSecret, generateTotpCode, encryptStaffTotpSecret } = require('../../src/lib/totp');
 const { passwordHashPool } = require('../../src/lib/passwordHashPool');
+const { ConflictError } = require('../../src/lib/errors');
 
 const createdUserIds = new Set();
 const password = 'additional-admin-password-2026';
@@ -56,6 +57,29 @@ function promptFor(initiator, {
   enrollmentCode = (secret) => generateTotpCode(secret),
 } = {}) {
   return async ({ purpose, secret }) => purpose === 'initiator' ? initiatorCode : enrollmentCode(secret);
+}
+
+async function expectNoPromptLocks() {
+  const { rows: transactions } = await db.query(
+    `SELECT pid FROM pg_stat_activity
+     WHERE datname = current_database()
+       AND state LIKE 'idle in transaction%'
+       AND pid <> pg_backend_pid()`
+  );
+  const { rows: advisoryLocks } = await db.query(
+    `WITH lock_key AS (
+       SELECT hashtext('poshaak-additional-admin-creation')::bigint AS value
+     )
+     SELECT pid FROM pg_locks, lock_key
+     WHERE locktype = 'advisory' AND granted
+       AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+       AND classid = ((lock_key.value >> 32) & 4294967295)::oid
+       AND objid = (lock_key.value & 4294967295)::oid
+       AND objsubid = 1
+       AND pid <> pg_backend_pid()`
+  );
+  expect(transactions).toHaveLength(0);
+  expect(advisoryLocks).toHaveLength(0);
 }
 
 async function createAdditional(initiator, values = {}, promptOptions = {}) {
@@ -129,6 +153,37 @@ describe('additional Admin provisioning', () => {
     expect(JSON.stringify(audits[0].metadata).toLowerCase().includes('password')).toBe(false);
   });
 
+  test('FR-69: holds no transaction or advisory lock while either TOTP prompt waits', async () => {
+    const initiator = await createAdminInitiator();
+    const values = input(initiator);
+    const purposes = [];
+    const returned = await users.createAdditionalAdmin(values, {
+      promptTotpCode: async ({ purpose, secret, attempt }) => {
+        purposes.push(`${purpose}:${attempt}`);
+        await expectNoPromptLocks();
+        return purpose === 'initiator'
+          ? generateTotpCode(initiator.secret)
+          : generateTotpCode(secret);
+      },
+    });
+    createdUserIds.add(returned.id);
+    expect(purposes).toEqual(['initiator:1', 'new-admin-enrollment:1']);
+  });
+
+  test('FR-69: creates the Admin after an enrollment prompt lasts longer than the database idle timeout', async () => {
+    const initiator = await createAdminInitiator();
+    const values = input(initiator);
+    const returned = await users.createAdditionalAdmin(values, {
+      promptTotpCode: async ({ purpose, secret }) => {
+        if (purpose === 'initiator') return generateTotpCode(initiator.secret);
+        await new Promise((resolve) => setTimeout(resolve, 11000));
+        return generateTotpCode(secret);
+      },
+    });
+    createdUserIds.add(returned.id);
+    expect(returned.email).toBe(values.email.toLowerCase());
+  }, 30000);
+
   test('FR-69: refuses an unknown, non-Admin, suspended, or unenrolled initiator', async () => {
     const unknown = await createAdminInitiator();
     const unknownInput = input(unknown, { initiatorEmail: `missing-${randomUUID()}@example.test` });
@@ -146,22 +201,49 @@ describe('additional Admin provisioning', () => {
     await expect(createAdditional(unenrolled)).rejects.toThrow('active Admin account');
   });
 
-  test('FR-69: refuses a wrong or already-used initiating Admin TOTP code', async () => {
+  test('FR-69: refuses a wrong initiating code and a code already consumed by a successful creation', async () => {
     const initiator = await createAdminInitiator();
     await expect(createAdditional(initiator, {}, { initiatorCode: 'not-a-code' }))
       .rejects.toThrow('invalid or has already been used');
 
-    await createAdditional(initiator);
-    await expect(createAdditional(initiator))
+    const reusedCode = generateTotpCode(initiator.secret);
+    const returned = await createAdditional(initiator, {}, { initiatorCode: reusedCode });
+    createdUserIds.add(returned.id);
+    await expect(createAdditional(initiator, {}, { initiatorCode: reusedCode }))
       .rejects.toThrow('invalid or has already been used');
   });
 
-  test('FR-69: does not leave an account or enabled credential after an invalid first enrollment code', async () => {
+  test('FR-69: ignores a TOTP verifier override and creates nothing for invalid codes', async () => {
     const initiator = await createAdminInitiator();
     const values = input(initiator);
     await expect(users.createAdditionalAdmin(values, {
-      promptTotpCode: promptFor(initiator, { enrollmentCode: () => 'not-a-code' }),
+      totpVerifier: () => 4000000,
+      promptTotpCode: async () => 'not-a-code',
+    })).rejects.toThrow('invalid or has already been used');
+
+    const { rows: accounts } = await db.query('SELECT id FROM users WHERE email = $1', [values.email]);
+    const { rows: audits } = await db.query(
+      `SELECT id FROM money_audit_events
+       WHERE actor_id = $1 AND action = 'additional_admin_created'`,
+      [initiator.id]
+    );
+    expect(accounts).toHaveLength(0);
+    expect(audits).toHaveLength(0);
+  });
+
+  test('FR-69: consumes the initiator code after three wrong enrollment codes and creates nothing', async () => {
+    const initiator = await createAdminInitiator();
+    const values = input(initiator);
+    const reusedCode = generateTotpCode(initiator.secret);
+    const attempts = [];
+    await expect(users.createAdditionalAdmin(values, {
+      promptTotpCode: async ({ purpose, attempt }) => {
+        if (purpose === 'initiator') return reusedCode;
+        attempts.push(attempt);
+        return 'not-a-code';
+      },
     })).rejects.toThrow('new Admin authenticator code is invalid');
+    expect(attempts).toEqual([1, 2, 3]);
 
     const { rows: accounts } = await db.query(
       `SELECT u.id FROM users u WHERE u.email = $1`,
@@ -172,8 +254,98 @@ describe('additional Admin provisioning', () => {
        JOIN users u ON u.id = t.user_id WHERE u.email = $1`,
       [values.email]
     );
+    const { rows: audits } = await db.query(
+      `SELECT id FROM money_audit_events
+       WHERE actor_id = $1 AND action = 'additional_admin_created'`,
+      [initiator.id]
+    );
     expect(accounts).toHaveLength(0);
     expect(credentials).toHaveLength(0);
+    expect(audits).toHaveLength(0);
+    await expect(createAdditional(initiator, { email: values.email, phone: values.phone }, {
+      initiatorCode: reusedCode,
+    })).rejects.toThrow('invalid or has already been used');
+  });
+
+  test('FR-69: retries one enrollment typo and creates exactly one Admin and audit record', async () => {
+    const initiator = await createAdminInitiator();
+    const values = input(initiator);
+    const attempts = [];
+    const returned = await users.createAdditionalAdmin(values, {
+      promptTotpCode: async ({ purpose, secret, attempt }) => {
+        if (purpose === 'initiator') return generateTotpCode(initiator.secret);
+        attempts.push(attempt);
+        return attempt === 1 ? 'not-a-code' : generateTotpCode(secret);
+      },
+    });
+    createdUserIds.add(returned.id);
+
+    const { rows: accounts } = await db.query(
+      `SELECT u.id FROM users u
+       JOIN staff_totp_credentials t ON t.user_id = u.id AND t.enabled_at IS NOT NULL
+       WHERE u.email = $1`,
+      [values.email]
+    );
+    const { rows: audits } = await db.query(
+      `SELECT id FROM money_audit_events
+       WHERE actor_id = $1 AND action = 'additional_admin_created'
+         AND metadata->>'newAdminId' = $2`,
+      [initiator.id, returned.id]
+    );
+    expect(attempts).toEqual([1, 2]);
+    expect(accounts).toHaveLength(1);
+    expect(audits).toHaveLength(1);
+  });
+
+  test('FR-69: aborts if the initiator is suspended during the enrollment prompt', async () => {
+    const initiator = await createAdminInitiator();
+    const values = input(initiator);
+    await expect(users.createAdditionalAdmin(values, {
+      promptTotpCode: async ({ purpose, secret }) => {
+        if (purpose === 'initiator') return generateTotpCode(initiator.secret);
+        await db.query('UPDATE users SET is_suspended = true, updated_at = now() WHERE id = $1', [initiator.id]);
+        return generateTotpCode(secret);
+      },
+    })).rejects.toThrow('A current TOTP code from an active Admin account is required.');
+
+    const { rows: accounts } = await db.query('SELECT id FROM users WHERE email = $1', [values.email]);
+    const { rows: audits } = await db.query(
+      `SELECT id FROM money_audit_events
+       WHERE actor_id = $1 AND action = 'additional_admin_created'`,
+      [initiator.id]
+    );
+    expect(accounts).toHaveLength(0);
+    expect(audits).toHaveLength(0);
+  });
+
+  test('FR-69: refuses an email inserted during the enrollment prompt without adding another account', async () => {
+    const initiator = await createAdminInitiator();
+    const values = input(initiator);
+    let duplicateId;
+    await expect(users.createAdditionalAdmin(values, {
+      promptTotpCode: async ({ purpose, secret }) => {
+        if (purpose === 'initiator') return generateTotpCode(initiator.secret);
+        const { rows } = await db.query(
+          `INSERT INTO users (full_name, phone, email, password_hash, role)
+           VALUES ('Duplicate email during prompt', $1, $2, 'integration-hash', 'buyer')
+           RETURNING id`,
+          [uniquePhone('9'), values.email]
+        );
+        duplicateId = rows[0].id;
+        createdUserIds.add(duplicateId);
+        return generateTotpCode(secret);
+      },
+    })).rejects.toBeInstanceOf(ConflictError);
+
+    const { rows: accounts } = await db.query('SELECT id FROM users WHERE email = $1', [values.email]);
+    const { rows: audits } = await db.query(
+      `SELECT id FROM money_audit_events
+       WHERE actor_id = $1 AND action = 'additional_admin_created'`,
+      [initiator.id]
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0].id).toBe(duplicateId);
+    expect(audits).toHaveLength(0);
   });
 
   test('FR-69: refuses invalid identity fields and passwords below the bootstrap policy', async () => {
