@@ -412,6 +412,7 @@ function registerListeners() {
         if (context.transaction) options.transaction = context.transaction;
         await queue.enqueue(queue.QUEUES.NOTIFICATIONS, { eventName, payload }, options);
       } catch (error) {
+        if (context.transaction) throw error;
         console.error('Notification job enqueue failed', { eventName, code: error?.code || 'unknown' });
       }
     });
