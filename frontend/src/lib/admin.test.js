@@ -65,6 +65,7 @@ test('Admin error mapping covers the API statuses and preserves 409/422 server m
     assert.ok(adminErrorMessage({ status }).length > 0)
   }
   assert.equal(adminErrorMessage({ status: 409, payload: { error: 'Order changed on the server.' } }), 'Order changed on the server.')
+  assert.equal(adminErrorMessage({ status: 409, payload: { error: 'This refund is no longer failed and cannot be retried.' } }), 'This refund is no longer failed and cannot be retried.')
   assert.equal(adminErrorMessage({ status: 400, payload: { error: 'A reason between 20 and 1000 characters is required.' } }), 'A reason between 20 and 1000 characters is required.')
   assert.equal(adminErrorMessage({ status: 403, payload: { error: 'Authenticator verification failed.' } }), 'Authenticator verification failed.')
   assert.equal(adminErrorMessage({ status: 422, payload: { error: 'The note is invalid.' } }), 'The note is invalid.')

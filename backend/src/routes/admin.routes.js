@@ -57,12 +57,32 @@ router.get(
 );
 
 router.get(
+  '/refunds/attention',
+  noStoreOrderResponses,
+  requirePermission('refund.view'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await admin.listFailedRefundsNeedingAttention(req.query)); // FR-69
+  }
+);
+
+router.get(
   '/refunds/:refundId',
   noStoreOrderResponses,
   requirePermission('refund.view'),
   limiters.adminOps,
   async (req, res) => {
     res.json(await admin.getManualRefund(req.params.refundId, req.user.id)); // FR-69, SEC-39
+  }
+);
+
+router.post(
+  '/refunds/:refundId/retry',
+  noStoreOrderResponses,
+  requirePermission('refund.decide'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await admin.retryFailedRefund(req.params.refundId, req.user.id)); // FR-69
   }
 );
 

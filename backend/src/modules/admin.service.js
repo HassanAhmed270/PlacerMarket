@@ -91,6 +91,18 @@ async function decideManualRefund(refundId, actorId, sessionId, input) {
   });
 }
 
+/** FR-69: list failed refunds that require admin attention. */
+async function listFailedRefundsNeedingAttention(query) {
+  return escrowPayments.listFailedRefundsNeedingAttention(query);
+}
+
+/** FR-69: queue a failed refund for manual admin retry. */
+async function retryFailedRefund(refundId, actorId) {
+  return escrowPayments.retryFailedRefund(refundId, actorId, {
+    isOrderPayoutReleased: payout.isOrderPayoutReleased,
+  });
+}
+
 /** FR-66: Admin-only manual identity check delegates storage to users.service. */
 async function verifySellerIdentity(sellerId, { adminId, note }) {
   return users.verifySellerIdentity(sellerId, { adminId, note });
@@ -169,6 +181,8 @@ module.exports = {
   getManualRefund,
   requestManualRefund,
   decideManualRefund,
+  listFailedRefundsNeedingAttention,
+  retryFailedRefund,
   verifySellerIdentity,
   approveListing,
   rejectListing,

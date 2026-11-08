@@ -177,6 +177,8 @@ export function createApiClient({
     getAdminOrder: (id) => get(`admin/orders/${encodeURIComponent(id)}`, { authenticated: true }),
     getAdminManualRefunds: (filters = {}) => get(`admin/refunds${queryString(filters)}`, { authenticated: true }),
     getAdminManualRefund: (id) => get(`admin/refunds/${encodeURIComponent(id)}`, { authenticated: true }),
+    getAdminRefundsNeedingAttention: (filters = {}) => get(`admin/refunds/attention${queryString(filters)}`, { authenticated: true }),
+    retryAdminFailedRefund: (id) => post(`admin/refunds/${encodeURIComponent(id)}/retry`, {}, { authenticated: true }),
     getAdminRefundableBalance: (orderId) => get(`admin/orders/${encodeURIComponent(orderId)}/refundable-balance`, { authenticated: true }),
     requestAdminManualRefund: (orderId, input) => post(`admin/orders/${encodeURIComponent(orderId)}/refunds`, input, { authenticated: true }),
     decideAdminManualRefund: (id, decision, input) => post(`admin/refunds/${encodeURIComponent(id)}/${decision}`, input, { authenticated: true }),

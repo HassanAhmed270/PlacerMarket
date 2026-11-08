@@ -40,6 +40,7 @@ describe('FR-79b migration support', () => {
         '024_dispute_refund_exception.sql',
         '025_manual_two_admin_refunds.sql',
         '026_admin_manual_refund_read_idx.sql',
+        '027_refund_failure_tracking.sql',
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');
@@ -66,5 +67,19 @@ describe('FR-79b migration support', () => {
     expect(migration).toContain('ON refunds (requested_at DESC, id DESC)');
     expect(migration).toContain("WHERE trigger = 'manual_admin'");
     expect(generateSnapshot()).toContain('-- Migration: 026_admin_manual_refund_read_idx.sql');
+  });
+
+  test('FR-69: failed refund retries track attempts and attention state', () => {
+    const migration = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'db', 'migrations', '027_refund_failure_tracking.sql'),
+      'utf8'
+    );
+    expect(migration).toContain('attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0)');
+    expect(migration).toContain('last_error_code TEXT');
+    expect(migration).toContain('last_attempt_at TIMESTAMPTZ');
+    expect(migration).toContain('needs_attention_at TIMESTAMPTZ');
+    expect(migration).toContain("CREATE INDEX refunds_failed_needs_attention_idx");
+    expect(migration).toContain("WHERE status = 'failed' AND needs_attention_at IS NOT NULL");
+    expect(generateSnapshot()).toContain('-- Migration: 027_refund_failure_tracking.sql');
   });
 });

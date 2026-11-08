@@ -89,6 +89,10 @@ export function adminErrorMessage(error) {
       /refund the buyer first|closes automatically when the refund succeeds/i.test(serverMessage)) {
     return 'Refund the buyer first; this exception closes automatically when the refund succeeds.'
   }
+  if (status === 409 && typeof serverMessage === 'string' &&
+      /not failed|no longer failed|cannot be retried|after payout release/i.test(serverMessage)) {
+    return serverMessage
+  }
   if ([400, 403, 404, 409, 422].includes(status) &&
       typeof serverMessage === 'string' && serverMessage.trim()) {
     return serverMessage

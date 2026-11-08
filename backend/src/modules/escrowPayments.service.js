@@ -33,6 +33,35 @@ const MANUAL_REFUND_EXPIRY_PREDICATE =
   `requested_at <= now() - INTERVAL '${MANUAL_REFUND_EXPIRY_WINDOW}'`;
 const MANUAL_REFUND_EXPIRY_REASON =
   `Expired automatically after ${MANUAL_REFUND_EXPIRY_WINDOW} without a decision.`;
+const REFUND_ERROR_CODES = new Set([
+  'gateway_unavailable',
+  'gateway_rejected',
+  'gateway_invalid_response',
+  'configuration',
+  'unknown',
+]);
+
+function getRefundMaxAutoAttempts(env = process.env) {
+  const raw = env.REFUND_MAX_AUTO_ATTEMPTS;
+  const value = raw === undefined || raw === '' ? 6 : Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ValidationError('REFUND_MAX_AUTO_ATTEMPTS must be a positive integer.');
+  }
+  return value;
+}
+
+function classifyRefundFailureCode(error) {
+  if (!error || typeof error !== 'object') return 'unknown';
+  if (typeof error.code === 'string' && REFUND_ERROR_CODES.has(error.code)) return error.code;
+  if (error.name === 'PaymentGatewayConfigurationError') return 'configuration';
+  if (error.name === 'PaymentGatewayUnavailableError') return 'gateway_unavailable';
+  const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
+  if (/reject|decline|denied|declined|not allowed|not accepted/i.test(message)) return 'gateway_rejected';
+  if (/invalid.*response|malformed|unexpected.*(body|payload)|missing.*provider/i.test(message)) {
+    return 'gateway_invalid_response';
+  }
+  return 'unknown';
+}
 
 function emitRefundStatusChange(refund) {
   eventBus.emit(events.REFUND_STATUS_CHANGED, {
@@ -75,13 +104,13 @@ const WEBHOOK_AMOUNT = /^\d{1,10}(?:\.\d{1,2})?$/;
 const SUPPORTED_PAYMENT_EVENTS = new Set(['payment.succeeded', 'payment.failed']);
 
 /** FR-69: enqueue one refund job in the caller's transaction for system and manual refund creators. */
-async function enqueueRefundJob(transaction, refundId) {
+async function enqueueRefundJob(transaction, refundId, jobKey = null) {
   if (typeof refundId !== 'string' || !UUID.test(refundId)) {
     throw new ValidationError('refundId must be a UUID.');
   }
   if (!transaction) throw new TypeError('Refund jobs must be enqueued in the refund transaction.');
   queue.asQueueDatabase(transaction);
-  const key = `refund:${refundId}`;
+  const key = typeof jobKey === 'string' && jobKey.trim() ? jobKey : `refund:${refundId}`;
   return queue.enqueue(queue.QUEUES.REFUNDS, { refundId }, {
     idempotencyKey: key,
     orderingKey: key,
@@ -663,6 +692,122 @@ function notifyRefundStatusChanges(refunds) {
   for (const refund of refunds) emitRefundStatusChange(refund);
 }
 
+function validateFailedRefundAttentionQuery(query = {}) {
+  if (!query || typeof query !== 'object' || Array.isArray(query)) {
+    throw new ValidationError('Refund attention query must be an object.');
+  }
+  const rawLimit = query.limit === undefined ? '20' : query.limit;
+  if (typeof rawLimit !== 'string' && typeof rawLimit !== 'number' || !Number.isFinite(Number(rawLimit)) || Number(rawLimit) < 1) {
+    throw new ValidationError('limit must be a positive integer.');
+  }
+  const before = query.before === undefined ? null : query.before;
+  if (before !== null && (typeof before !== 'string' || !UUID.test(before))) {
+    throw new ValidationError('before must be a refund UUID.');
+  }
+  const includeUnflagged = query.includeUnflagged === true || query.includeUnflagged === 'true';
+  return { limit: Math.min(Number(rawLimit), 50), before, includeUnflagged };
+}
+
+/** FR-69: return failed refunds that need admin attention. */
+async function listFailedRefundsNeedingAttention(query = {}) {
+  const { limit, before, includeUnflagged } = validateFailedRefundAttentionQuery(query);
+  if (before) {
+    const { rows } = await db.read(
+      `SELECT id
+       FROM refunds
+       WHERE id = $1 AND status = 'failed'`,
+      [before]
+    );
+    if (!rows[0]) throw new ValidationError('before must identify a failed refund.');
+  }
+  const cursorValue = before
+    ? `SELECT COALESCE(c.needs_attention_at, TIMESTAMPTZ '1970-01-01T00:00:00Z'), c.id
+       FROM refunds c WHERE c.id = $1`
+    : null;
+  const { rows } = await db.read(
+    `SELECT id AS "refundId",
+            order_id AS "orderId",
+            trigger,
+            amount::text AS amount,
+            currency,
+            attempt_count AS "attemptCount",
+            last_error_code AS "lastErrorCode",
+            last_attempt_at AS "lastAttemptAt",
+            needs_attention_at AS "needsAttentionAt",
+            requested_at AS "requestedAt"
+     FROM refunds
+     WHERE status = 'failed'
+       AND (
+         needs_attention_at IS NOT NULL
+         OR $3 = TRUE
+       )
+       AND ($1::uuid IS NULL OR (
+         COALESCE(needs_attention_at, TIMESTAMPTZ '1970-01-01T00:00:00Z'), id
+       ) < (
+         ${cursorValue || "TIMESTAMPTZ '1970-01-01T00:00:00Z', NULL::uuid"}
+       ))
+     ORDER BY needs_attention_at DESC NULLS LAST, id DESC
+     LIMIT $2`,
+    [before, limit + 1, includeUnflagged]
+  );
+  const hasMore = rows.length > limit;
+  const refunds = rows.slice(0, limit);
+  return {
+    refunds,
+    nextBefore: hasMore ? refunds[refunds.length - 1].refundId : null,
+  };
+}
+
+/** FR-69: retry a failed refund with the same money intent and a distinct retry job key. */
+async function retryFailedRefund(refundId, adminId, { isOrderPayoutReleased } = {}) {
+  if (typeof refundId !== 'string' || !UUID.test(refundId)) {
+    throw new ValidationError('refundId must be a UUID.');
+  }
+  if (typeof isOrderPayoutReleased !== 'function') {
+    throw new TypeError('Payout-state owner is required.');
+  }
+  const result = await db.withTransaction(async (client) => {
+    const { rows: initialRows } = await client.query(
+      `SELECT order_id, payment_id
+       FROM refunds
+       WHERE id = $1
+       FOR UPDATE`,
+      [refundId]
+    );
+    const initial = initialRows[0];
+    if (!initial) throw new NotFoundError('refund');
+
+    const locked = await lockRefundPaymentOrder(client, initial.order_id, initial.payment_id, refundId);
+    if (!locked) throw new NotFoundError('refund');
+    const { order, payment, refund } = locked;
+    if (refund.status !== 'failed') {
+      throw new ConflictError('This refund is no longer failed and cannot be retried.');
+    }
+    if (refund.trigger === 'manual_admin' && await isOrderPayoutReleased(client, order.id)) {
+      throw new ConflictError('A refund cannot be retried after payout release.');
+    }
+
+    await enqueueRefundJob(client, refundId, `refund-retry:${refundId}:${refund.attempt_count || 0}`);
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: adminId,
+      action: 'refund_retry_requested',
+      orderId: order.id,
+      paymentId: payment.id,
+      refundId: refund.id,
+      metadata: {
+        trigger: refund.trigger,
+        attemptCount: refund.attempt_count || 0,
+      },
+    });
+    return {
+      refundId: refund.id,
+      status: refund.status,
+      retryQueued: true,
+    };
+  });
+  return result;
+}
+
 /** FR-69: execute a stored refund intent through the idempotent gateway outside database transactions. */
 async function processRefundJob({ refundId, gateway } = {}) {
   if (typeof refundId !== 'string' || !UUID.test(refundId)) {
@@ -726,7 +871,9 @@ async function processRefundJob({ refundId, gateway } = {}) {
         gatewayResult.status !== 'succeeded') {
       throw new PaymentGatewayUnavailableError();
     }
-  } catch {
+  } catch (error) {
+    const failureCode = classifyRefundFailureCode(error);
+    const maxAttempts = getRefundMaxAutoAttempts();
     const failedRefund = await db.withTransaction(async (client) => {
       const locked = await lockRefundPaymentOrder(
         client,
@@ -734,18 +881,50 @@ async function processRefundJob({ refundId, gateway } = {}) {
         refundIntent.paymentId,
         refundId
       );
-      if (!locked) return;
+      if (!locked) return null;
       const { rows } = await client.query(
         `UPDATE refunds
-         SET status = 'failed', updated_at = now()
+         SET status = 'failed',
+             attempt_count = attempt_count + 1,
+             last_error_code = $2,
+             last_attempt_at = now(),
+             updated_at = now(),
+             needs_attention_at = CASE
+               WHEN attempt_count + 1 >= $3 AND needs_attention_at IS NULL THEN now()
+               ELSE needs_attention_at
+             END
          WHERE id = $1 AND status = 'pending'
-         RETURNING id, order_id, status`,
-        [refundId]
+         RETURNING id, order_id, trigger, status, attempt_count, last_error_code, needs_attention_at`,
+        [refundId, failureCode, maxAttempts]
       );
-      return rows[0] || null;
+      const update = rows[0] || null;
+      if (update && update.attempt_count >= maxAttempts && update.needs_attention_at) {
+        await moneyAudit.recordMoneyAuditEvent(client, {
+          action: 'refund_needs_attention',
+          orderId: update.order_id,
+          paymentId: refundIntent.paymentId,
+          refundId: update.id,
+          metadata: {
+            attemptCount: update.attempt_count,
+            lastErrorCode: update.last_error_code,
+            trigger: update.trigger,
+          },
+        });
+      }
+      return update;
     });
-    if (failedRefund) emitRefundStatusChange(failedRefund);
-    throw new PaymentGatewayUnavailableError();
+    if (failedRefund) {
+      emitRefundStatusChange({ id: failedRefund.id, order_id: failedRefund.order_id, status: failedRefund.status });
+      if (failedRefund.attempt_count >= maxAttempts && failedRefund.needs_attention_at) {
+        console.error(JSON.stringify({
+          refundId,
+          orderId: failedRefund.order_id,
+          trigger: failedRefund.trigger,
+          code: failureCode,
+        }));
+      }
+    }
+    throw new PaymentGatewayUnavailableError(error);
   }
 
   const result = await db.withTransaction(async (client) => {
@@ -1676,6 +1855,7 @@ async function reenqueueOrphanRefund(refundContext) {
       refundContext.id
     );
     if (!locked) return false;
+    const maxAttempts = getRefundMaxAutoAttempts();
     const { rows } = await client.query(
       `SELECT id
        FROM refunds
@@ -1684,9 +1864,15 @@ async function reenqueueOrphanRefund(refundContext) {
            AND requested_at <= now() - INTERVAL '2 minutes')
          OR (trigger = 'manual_admin' AND status = 'approved'
            AND approved_at <= now() - INTERVAL '2 minutes')
-         OR (status IN ('pending', 'failed') AND updated_at <= now() - INTERVAL '10 minutes')
+         OR (status = 'pending' AND updated_at <= now() - INTERVAL '10 minutes')
+         OR (status = 'failed'
+             AND attempt_count < $2
+             AND COALESCE(last_attempt_at, updated_at) <= now() - LEAST(
+               INTERVAL '10 minutes' * POWER(2, attempt_count - 1),
+               INTERVAL '6 hours'
+             ))
        )`,
-      [refundContext.id]
+      [refundContext.id, maxAttempts]
     );
     if (!rows[0]) return false;
     await enqueueRefundJob(client, refundContext.id);
@@ -1780,6 +1966,7 @@ async function reconcileMoneyState({ limit = 100, timeBudgetMs = 20000, logger =
     return true;
   };
 
+  const maxAttempts = getRefundMaxAutoAttempts();
   const { rows: refundRows } = await db.read(
     `SELECT id, order_id, payment_id
      FROM refunds
@@ -1787,10 +1974,16 @@ async function reconcileMoneyState({ limit = 100, timeBudgetMs = 20000, logger =
               AND requested_at <= now() - INTERVAL '2 minutes')
         OR (trigger = 'manual_admin' AND status = 'approved'
               AND approved_at <= now() - INTERVAL '2 minutes')
-        OR (status IN ('pending', 'failed') AND updated_at <= now() - INTERVAL '10 minutes')
-     ORDER BY requested_at, id
+        OR (status = 'pending' AND updated_at <= now() - INTERVAL '10 minutes')
+        OR (status = 'failed'
+              AND attempt_count < $2
+              AND COALESCE(last_attempt_at, updated_at) <= now() - LEAST(
+                INTERVAL '10 minutes' * POWER(2, attempt_count - 1),
+                INTERVAL '6 hours'
+              ))
+     ORDER BY COALESCE(last_attempt_at, updated_at), id
      LIMIT $1`,
-    [limit]
+    [limit, maxAttempts]
   );
   let withinBudget = await processBatch(refundRows, reenqueueOrphanRefund);
 
@@ -1857,6 +2050,8 @@ module.exports = {
   sweepUnhandedOverOrders,
   reconcileMoneyState,
   processRefundJob,
+  listFailedRefundsNeedingAttention,
+  retryFailedRefund,
   receiveVerifiedPaymentWebhook,
   processPaymentWebhookJob,
 };
