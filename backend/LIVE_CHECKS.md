@@ -51,6 +51,22 @@ integration-dependent Phase 3 items. See `PHASE3_GATE_REPORT.md`.
 - [ ] If D2 is confirmed, provision two distinct real Admins with separate
   accounts and enrolled authenticators; verify the enablement gate and recovery
   procedure before `PAYMENTS_ENABLED` can be enabled.
+
+### Provisioning an additional Admin
+
+From `backend/`, run `npm run admin:create:additional` in an interactive terminal
+connected to the intended deployment database. The initiating Admin must enter
+their own login email and current authenticator code. Enter the new Admin's
+identity and password at the prompts, add the displayed authenticator secret to
+that person's authenticator once, and enter its current code to finish enrollment.
+The command refuses non-interactive use and never enables payments.
+
+When `NODE_ENV=production` and `PAYMENTS_ENABLED=1`, both web and worker startup
+require at least two distinct Admin user IDs that are not suspended and each
+have an enabled staff authenticator credential. The gate does not count sessions
+or enrollment attempts. Provisioning a second Admin satisfies only this account
+prerequisite; it does not change `PAYMENTS_ENABLED` or approve live payments.
+
 - [ ] Confirm and document the one-courier launch arrangement, manual pickup and
   handover process, tracking-number handling, delivery-status source, and lost /
   refused-delivery escalation path.
