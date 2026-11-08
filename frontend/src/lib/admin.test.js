@@ -49,6 +49,16 @@ test('FR-72e: exception resolution requires a trimmed 3 to 500 character note', 
   assert.equal(validateExceptionResolutionNote('  Resolved with the courier  '), '')
 })
 
+test('FR-45, FR-69: refund-first exception conflicts map to a plain automatic-resolution message', () => {
+  assert.equal(
+    adminErrorMessage({
+      status: 409,
+      payload: { error: 'Refund the buyer first; this exception closes automatically when the refund succeeds.' },
+    }),
+    'Refund the buyer first; this exception closes automatically when the refund succeeds.'
+  )
+})
+
 test('Admin error mapping covers the API statuses and preserves 409/422 server messages', () => {
   const statuses = [400, 401, 403, 404, 409, 422, 429, 503]
   for (const status of statuses) {

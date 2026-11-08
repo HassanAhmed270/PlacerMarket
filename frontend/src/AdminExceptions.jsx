@@ -119,7 +119,13 @@ function ExceptionRow({ exception, onError, onResolved }) {
       <p><strong>Courier pickup:</strong> {formatAdminDate(exception.courierPickupAt)} · <strong>Status:</strong> {unresolved ? 'Unresolved' : 'Resolved'}</p>
       {exception.note && <p><strong>Original note:</strong> {exception.note}</p>}
       {!unresolved && <p><strong>Resolution:</strong> {exception.resolutionNote || '—'} · {formatAdminDate(exception.resolvedAt)}</p>}
-      {unresolved && (
+      {unresolved && exception.kind === 'dispute_refund_required' && (
+        <p>
+          Resolving the dispute moved no money. Request a refund; this closes automatically when the refund succeeds.{' '}
+          <a href={`/admin/refunds/request?orderId=${encodeURIComponent(exception.orderId)}`}>Request a refund</a>
+        </p>
+      )}
+      {unresolved && exception.kind !== 'dispute_refund_required' && (
         <form className="admin-form admin-inline-confirm" onSubmit={submit}>
           <label>Resolution note<textarea name="resolutionNote" required minLength="3" maxLength="500" /></label>
           <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I confirm this exception is resolved.</label>

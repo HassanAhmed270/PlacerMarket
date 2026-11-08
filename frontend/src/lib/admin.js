@@ -85,6 +85,10 @@ export function validateDisputeResolution({ amount, note }) {
 export function adminErrorMessage(error) {
   const status = Number(error?.status)
   const serverMessage = error?.payload?.error
+  if (status === 409 && typeof serverMessage === 'string' &&
+      /refund the buyer first|closes automatically when the refund succeeds/i.test(serverMessage)) {
+    return 'Refund the buyer first; this exception closes automatically when the refund succeeds.'
+  }
   if ([400, 403, 404, 409, 422].includes(status) &&
       typeof serverMessage === 'string' && serverMessage.trim()) {
     return serverMessage
