@@ -227,7 +227,11 @@ async function cancelExpiredReservationOrders(client, reservationIds) {
 /** FR-69: lock the owning order before an escrow refund locks payment and refund rows. */
 async function lockOrderForRefund(client, orderId) {
   const { rows } = await client.query(
-    'SELECT id, listing_id, buyer_id FROM orders WHERE id = $1 FOR UPDATE',
+    `SELECT id, listing_id, buyer_id, reservation_id, agreed_item_price,
+            delivery_fee, status
+     FROM orders
+     WHERE id = $1
+     FOR UPDATE`,
     [orderId]
   );
   return rows[0] || null;

@@ -351,7 +351,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     const schema = newSchemaName();
     await resetPgBossSchema();
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(23);
+    expect(applied).toHaveLength(24);
 
     const relations = await db.query(
       `SELECT table_name FROM information_schema.tables
@@ -430,7 +430,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     await expect(runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir }))
-      .resolves.toHaveLength(4);
+      .resolves.toHaveLength(5);
     await withSchemaClient(schema, async (client) => {
       const { rows } = await client.query(
         'SELECT title, search_text, is_reserved, reserved_until, is_sold FROM listing_search WHERE listing_id = $1',
@@ -482,7 +482,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(5);
+    expect(applied).toHaveLength(6);
 
     await withSchemaClient(schema, async (client) => {
       const preservedOrders = await client.query(
@@ -784,14 +784,13 @@ describe('FR-79b PostgreSQL migration runner', () => {
          ) VALUES ($1, $2, 'system_cancel', 100, 'PKR', 'failed', $3)`,
         [failedRefund.paymentId, failedRefund.orderId, `refund-${randomUUID()}`]
       );
-      const acceptedAfterFailure = await client.query(
+      await expect(client.query(
         `INSERT INTO refunds (
            payment_id, order_id, trigger, amount, currency, status, idempotency_key
          ) VALUES ($1, $2, 'system_cancel', 100, 'PKR', 'pending', $3)
          RETURNING id`,
         [failedRefund.paymentId, failedRefund.orderId, `refund-${randomUUID()}`]
-      );
-      expect(acceptedAfterFailure.rows[0].id).toBeDefined();
+      )).rejects.toMatchObject({ code: '23514' });
 
       const otherOrder = await insertOrderAndPayment(client, fixture, { paymentAmount: '100.00' });
       await expect(client.query(

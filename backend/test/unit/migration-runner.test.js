@@ -38,9 +38,22 @@ describe('FR-79b migration support', () => {
         '022_order_exceptions.sql',
         '023_order_exception_resolution.sql',
         '024_dispute_refund_exception.sql',
+        '025_manual_two_admin_refunds.sql',
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');
     expect(generateSnapshot()).toBe(fs.readFileSync(path.join(__dirname, '..', '..', 'schema.sql'), 'utf8'));
+  });
+
+  test('FR-69, SEC-39: manual-refund migration adds terminal decisions and refund step-up actions', () => {
+    const migration = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'db', 'migrations', '025_manual_two_admin_refunds.sql'),
+      'utf8'
+    );
+    expect(migration).toContain("'rejected', 'expired'");
+    expect(migration).toContain("'refund.request', 'refund.decide'");
+    expect(migration).toContain('refunds_manual_approval_identity');
+    expect(migration).toContain('decided_at TIMESTAMPTZ');
+    expect(generateSnapshot()).toContain('-- Migration: 025_manual_two_admin_refunds.sql');
   });
 });

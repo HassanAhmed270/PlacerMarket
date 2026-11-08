@@ -25,6 +25,7 @@ const disputes = require('./disputes.service');
 const delivery = require('./delivery.service');
 const settlement = require('./settlement.service');
 const payout = require('./payout.service');
+const escrowPayments = require('./escrowPayments.service');
 const { ValidationError } = require('../lib/errors');
 
 // ---- FR-52: users ----
@@ -59,6 +60,25 @@ async function setSellerPayoutHold(sellerId, { adminId, reason }) {
 /** FR-83l: Admin clears a payout pause with a separate reason. */
 async function clearSellerPayoutHold(sellerId, { adminId, reason }) {
   return users.clearSellerPayoutHold(sellerId, { adminId, reason });
+}
+
+/** FR-69, SEC-39: return the server-calculated refundable balance. */
+async function getRefundableBalance(orderId, actorId) {
+  return escrowPayments.getRefundableBalance(orderId, actorId);
+}
+
+/** FR-69, SEC-39: create a step-up-protected manual refund request. */
+async function requestManualRefund(orderId, actorId, sessionId, input) {
+  return escrowPayments.requestManualRefund(orderId, actorId, sessionId, input, {
+    isOrderPayoutReleased: payout.isOrderPayoutReleased,
+  });
+}
+
+/** FR-69, SEC-39: decide a step-up-protected manual refund request. */
+async function decideManualRefund(refundId, actorId, sessionId, input) {
+  return escrowPayments.decideManualRefund(refundId, actorId, sessionId, input, {
+    isOrderPayoutReleased: payout.isOrderPayoutReleased,
+  });
 }
 
 /** FR-66: Admin-only manual identity check delegates storage to users.service. */
@@ -134,6 +154,9 @@ module.exports = {
   getSellerPayoutQueue,
   setSellerPayoutHold,
   clearSellerPayoutHold,
+  getRefundableBalance,
+  requestManualRefund,
+  decideManualRefund,
   verifySellerIdentity,
   approveListing,
   rejectListing,

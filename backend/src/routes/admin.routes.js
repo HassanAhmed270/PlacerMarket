@@ -17,6 +17,7 @@ function noStoreOrderResponses(_req, res, next) {
 }
 
 router.use('/orders', noStoreOrderResponses);
+router.use('/refunds', noStoreOrderResponses);
 router.use(requireAuth);
 // Permission checks live HERE, per route (rules.md Section 5) — admin.service.js
 // does not check roles. Every route below must carry its own requirePermission();
@@ -29,6 +30,61 @@ function validateSynonymBody(body) {
     throw new ValidationError('sourceTerm and targetTerm are required');
   }
 }
+
+function refundBody(body) {
+  return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+}
+
+router.get(
+  '/orders/:orderId/refundable-balance',
+  noStoreOrderResponses,
+  requirePermission('refund.view_balance'),
+  async (req, res) => {
+    res.json(await admin.getRefundableBalance(req.params.orderId, req.user.id)); // FR-69, SEC-39
+  }
+);
+
+router.post(
+  '/orders/:orderId/refunds',
+  noStoreOrderResponses,
+  requirePermission('refund.request'),
+  async (req, res) => {
+    res.status(201).json(await admin.requestManualRefund(
+      req.params.orderId,
+      req.user.id,
+      req.authSessionId,
+      refundBody(req.body)
+    )); // FR-69, SEC-39
+  }
+);
+
+router.post(
+  '/refunds/:refundId/approve',
+  noStoreOrderResponses,
+  requirePermission('refund.decide'),
+  async (req, res) => {
+    res.json(await admin.decideManualRefund(
+      req.params.refundId,
+      req.user.id,
+      req.authSessionId,
+      { ...refundBody(req.body), decision: 'approved' }
+    )); // FR-69, SEC-39
+  }
+);
+
+router.post(
+  '/refunds/:refundId/reject',
+  noStoreOrderResponses,
+  requirePermission('refund.decide'),
+  async (req, res) => {
+    res.json(await admin.decideManualRefund(
+      req.params.refundId,
+      req.user.id,
+      req.authSessionId,
+      { ...refundBody(req.body), decision: 'rejected' }
+    )); // FR-69, SEC-39
+  }
+);
 
 router.get('/listing-search/synonyms', requirePermission('search.synonyms.manage'), async (_req, res) => {
   res.json(await listingSearch.listSearchSynonyms()); // FR-80a

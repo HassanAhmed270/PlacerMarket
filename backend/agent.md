@@ -267,6 +267,15 @@ purpose so the schema works whichever way this eventually gets decided.
   transaction-aware operations in `orders.service.js`,
   `reservations.service.js`, `listings.service.js` and `users.service.js` for
   those owners' tables and canonical money-row locking.
+- **FR-69 manual two-Admin refunds**: `escrowPayments.service.js` owns manual
+  refund writes, balance aggregation, expiry, audit events and transactional
+  refund-job enqueue. `users.service.js` consumes the request/decision step-up
+  grant in that transaction. `payout.service.js` owns the payout-state lookup;
+  its manual release path checks the escrow owner's open-refund guard after
+  locking the payment row. This guarded transactional check blocks payout while
+  a manual request is requested, approved, pending or retryable-failed; it does
+  not use an order exception. Orphan-job reconciliation retries approved manual
+  refunds only; it never enqueues a still-requested manual refund.
 - **Notifications**: every other service just does
   `eventBus.emit(events.SOMETHING, payload)` and knows nothing about
   `notifications.service.js`. That file is the only listener; it resolves

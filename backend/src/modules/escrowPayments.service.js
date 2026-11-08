@@ -4,6 +4,7 @@
  */
 
 const db = require('../db.service');
+const { randomUUID } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const queue = require('../lib/queue');
 const eventBus = require('../lib/eventBus');
@@ -16,6 +17,7 @@ const users = require('./users.service');
 const moneyAudit = require('./moneyAudit.service');
 const {
   ConflictError,
+  ForbiddenError,
   NotFoundError,
   ValidationError,
 } = require('../lib/errors');
@@ -246,6 +248,258 @@ async function lockRefundPaymentOrder(client, orderId, paymentId, refundId) {
   return { order, payment, refund };
 }
 
+const MANUAL_REFUND_RESERVED_STATUSES = ['requested', 'approved', 'pending', 'failed', 'succeeded'];
+
+function normalizeManualRefundNote(note) {
+  if (typeof note !== 'string') throw new ValidationError('A reason between 20 and 1000 characters is required.');
+  const trimmed = note.trim();
+  if (trimmed.length < 20 || trimmed.length > 1000) {
+    throw new ValidationError('A reason between 20 and 1000 characters is required.');
+  }
+  return trimmed;
+}
+
+async function lockManualRefundContext(client, orderId, expectedPaymentId) {
+  const context = await orders.getMoneyLockContext(client, orderId);
+  if (!context) throw new NotFoundError('order');
+  if (!context.reservation_id) throw new ConflictError('Only captured reservation orders can be refunded manually.');
+  if (!(await listings.lockListingForMoneyAction(client, context.listing_id))) {
+    throw new ConflictError('The order listing is no longer available.');
+  }
+  if (!(await users.lockBuyerForMoneyAction(client, context.buyer_id))) {
+    throw new ConflictError('The order buyer is no longer available.');
+  }
+  const order = await orders.lockOrderForRefund(client, orderId);
+  if (!order || order.listing_id !== context.listing_id || order.buyer_id !== context.buyer_id ||
+      order.reservation_id !== context.reservation_id) {
+    throw new ConflictError('The order changed before the refund action.');
+  }
+
+  const payments = await lockPaymentsForOrder(client, orderId);
+  const capturedPayments = payments.filter((payment) => (
+    ['succeeded', 'partially_refunded', 'refunded'].includes(payment.status)
+  ));
+  const payment = expectedPaymentId
+    ? capturedPayments.find((candidate) => candidate.id === expectedPaymentId)
+    : capturedPayments.length === 1 ? capturedPayments[0] : null;
+  if (!payment || capturedPayments.length !== 1) {
+    throw new ConflictError('The order must have exactly one captured payment.');
+  }
+  return { order, payment };
+}
+
+async function expireManualRefundRequests(client, orderId, paymentId, actorId, refundId) {
+  const values = [orderId, paymentId, actorId];
+  const targetClause = refundId ? 'AND id = $4' : '';
+  if (refundId) values.push(refundId);
+  const { rows } = await client.query(
+    `UPDATE refunds
+     SET status = 'expired',
+         approved_by = $3,
+         decided_at = now(),
+         decision_note = 'Expired automatically after 48 hours without a decision.',
+         updated_at = now()
+     WHERE order_id = $1 AND payment_id = $2 AND trigger = 'manual_admin'
+       AND status = 'requested'
+       AND requested_at <= now() - INTERVAL '48 hours'
+       ${targetClause}
+     RETURNING id, requested_by`,
+    values
+  );
+  for (const refund of rows) {
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId,
+      action: 'manual_refund_expired',
+      orderId,
+      paymentId,
+      refundId: refund.id,
+      requestedBy: refund.requested_by,
+      approvedBy: actorId,
+      reason: 'Expired automatically after 48 hours without a decision.',
+      metadata: { trigger: 'manual_admin', decision: 'expired' },
+    });
+  }
+  return rows;
+}
+
+async function getRefundableAmount(client, order, payment) {
+  const { rows } = await client.query(
+    `WITH reserved AS (
+       SELECT COALESCE(SUM(amount) FILTER (
+                WHERE status = ANY($2::text[])
+              ), 0) AS amount
+       FROM refunds
+       WHERE payment_id = $1
+     ), balance AS (
+       SELECT GREATEST($3::numeric - amount, 0)::numeric(12,2) AS total
+       FROM reserved
+     ), split AS (
+       SELECT total,
+              ROUND(total * $4::numeric / NULLIF($3::numeric, 0), 2)::numeric(12,2) AS item_price
+       FROM balance
+     )
+     SELECT total::text AS total,
+            item_price::text AS item_price,
+            (total - item_price)::numeric(12,2)::text AS delivery_fee
+     FROM split`,
+    [payment.id, MANUAL_REFUND_RESERVED_STATUSES, payment.amount, order.agreed_item_price]
+  );
+  return rows[0];
+}
+
+/** FR-69, SEC-39: calculate the full captured balance and expire stale requests atomically. */
+async function getRefundableBalance(orderId, actorId) {
+  return db.withTransaction(async (client) => {
+    const { order, payment } = await lockManualRefundContext(client, orderId);
+    await expireManualRefundRequests(client, orderId, payment.id, actorId);
+    const balance = await getRefundableAmount(client, order, payment);
+    return {
+      orderId,
+      refundableAmount: {
+        total: balance.total,
+        itemPrice: balance.item_price,
+        deliveryFee: balance.delivery_fee,
+      },
+      currency: payment.currency,
+    };
+  });
+}
+
+/** FR-69, SEC-39: create a full-balance manual request with a one-use request grant. */
+async function requestManualRefund(orderId, actorId, sessionId, input, { isOrderPayoutReleased }) {
+  const reason = normalizeManualRefundNote(input?.reason);
+  if (typeof isOrderPayoutReleased !== 'function') throw new TypeError('Payout-state owner is required.');
+  return db.withTransaction(async (client) => {
+    const { order, payment } = await lockManualRefundContext(client, orderId);
+    await expireManualRefundRequests(client, orderId, payment.id, actorId);
+    if (await isOrderPayoutReleased(client, orderId)) {
+      throw new ConflictError('A refund cannot be requested after payout release.');
+    }
+
+    const { rows: openRows } = await client.query(
+      `SELECT id
+       FROM refunds
+       WHERE order_id = $1 AND trigger = 'manual_admin'
+         AND status IN ('requested', 'approved', 'pending', 'failed')
+       LIMIT 1`,
+      [orderId]
+    );
+    if (openRows[0]) throw new ConflictError('An open manual refund request already exists.');
+
+    const balance = await getRefundableAmount(client, order, payment);
+    if (Number(balance.total) <= 0) throw new ConflictError('No refundable balance remains.');
+
+    await users.consumeStepUpGrantWithClient(client, actorId, sessionId, 'refund.request', input.stepUpGrant);
+    const refundId = randomUUID();
+    const idempotencyKey = `refund:${payment.id}:manual:${refundId}`;
+    await client.query(
+      `INSERT INTO refunds
+         (id, payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+          requested_by, reason)
+       VALUES ($1, $2, $3, 'manual_admin', $4::numeric, $5, 'requested', $6, $7, $8)`,
+      [refundId, payment.id, orderId, balance.total, payment.currency, idempotencyKey, actorId, reason]
+    );
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId,
+      action: 'manual_refund_requested',
+      orderId,
+      paymentId: payment.id,
+      refundId,
+      requestedBy: actorId,
+      reason,
+      metadata: { trigger: 'manual_admin' },
+    });
+    return { refundId, status: 'requested', amount: balance.total, currency: payment.currency };
+  });
+}
+
+/** FR-69, SEC-39: approve or reject a pending manual request with a separate Admin grant. */
+async function decideManualRefund(refundId, actorId, sessionId, input, { isOrderPayoutReleased }) {
+  if (typeof refundId !== 'string' || !UUID.test(refundId)) {
+    throw new ValidationError('refundId must be a UUID.');
+  }
+  if (!['approved', 'rejected'].includes(input?.decision)) {
+    throw new ValidationError('A valid refund decision is required.');
+  }
+  const decisionNote = normalizeManualRefundNote(input?.reason);
+  if (typeof isOrderPayoutReleased !== 'function') throw new TypeError('Payout-state owner is required.');
+  const { rows: initialRows } = await db.read(
+    `SELECT order_id, payment_id
+     FROM refunds
+     WHERE id = $1 AND trigger = 'manual_admin'`,
+    [refundId]
+  );
+  const initial = initialRows[0];
+  if (!initial) throw new NotFoundError('refund');
+
+  const result = await db.withTransaction(async (client) => {
+    const { order, payment } = await lockManualRefundContext(client, initial.order_id, initial.payment_id);
+    await expireManualRefundRequests(client, order.id, payment.id, actorId, refundId);
+    const { rows: refundRows } = await client.query(
+      `SELECT id, order_id, payment_id, requested_by, status
+       FROM refunds
+       WHERE id = $1 AND trigger = 'manual_admin'
+       FOR UPDATE`,
+      [refundId]
+    );
+    const refund = refundRows[0];
+    if (!refund || refund.order_id !== order.id || refund.payment_id !== payment.id) {
+      throw new NotFoundError('refund');
+    }
+    if (refund.status === 'expired') return { conflict: 'expired' };
+    if (refund.status !== 'requested') return { conflict: 'decided' };
+    if (refund.requested_by === actorId) {
+      throw new ForbiddenError('The requester cannot decide their own refund.');
+    }
+    if (input.decision === 'approved' && await isOrderPayoutReleased(client, order.id)) {
+      throw new ConflictError('A refund cannot be approved after payout release.');
+    }
+
+    await users.consumeStepUpGrantWithClient(client, actorId, sessionId, 'refund.decide', input.stepUpGrant);
+    await client.query(
+      `UPDATE refunds
+       SET status = $2,
+           approved_by = $3,
+           approved_at = CASE WHEN $2 = 'approved' THEN now() ELSE approved_at END,
+           decided_at = now(),
+           decision_note = $4,
+           updated_at = now()
+       WHERE id = $1 AND status = 'requested'`,
+      [refundId, input.decision, actorId, decisionNote]
+    );
+    if (input.decision === 'approved') await enqueueRefundJob(client, refundId);
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId,
+      action: input.decision === 'approved' ? 'manual_refund_approved' : 'manual_refund_rejected',
+      orderId: order.id,
+      paymentId: payment.id,
+      refundId,
+      requestedBy: refund.requested_by,
+      approvedBy: actorId,
+      reason: decisionNote,
+      metadata: { trigger: 'manual_admin', decision: input.decision },
+    });
+    return { refundId, status: input.decision, decision: input.decision };
+  });
+
+  if (result.conflict === 'expired') throw new ConflictError('The manual refund request has expired.');
+  if (result.conflict === 'decided') throw new ConflictError('The manual refund request has already been decided.');
+  return result;
+}
+
+/** FR-69: block seller payout while a manual refund is unresolved. */
+async function assertNoOpenManualRefund(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT id
+     FROM refunds
+     WHERE order_id = $1 AND trigger = 'manual_admin'
+       AND status IN ('requested', 'approved', 'pending', 'failed')
+     LIMIT 1`,
+    [orderId]
+  );
+  if (rows[0]) throw new ConflictError('An open manual refund request blocks payout release.');
+}
+
 /** FR-69: execute a stored refund intent through the idempotent gateway outside database transactions. */
 async function processRefundJob({ refundId, gateway } = {}) {
   if (typeof refundId !== 'string' || !UUID.test(refundId)) {
@@ -267,7 +521,7 @@ async function processRefundJob({ refundId, gateway } = {}) {
     );
     if (!locked) return null;
     const { refund, payment } = locked;
-    if (!['requested', 'pending', 'failed'].includes(refund.status)) {
+    if (!['requested', 'approved', 'pending', 'failed'].includes(refund.status)) {
       return { outcome: 'skipped', status: refund.status };
     }
     if (gateway && process.env.NODE_ENV === 'production') {
@@ -337,7 +591,7 @@ async function processRefundJob({ refundId, gateway } = {}) {
     );
     if (!locked) return { outcome: 'missing' };
     const { order, payment, refund } = locked;
-    if (!['requested', 'pending', 'failed'].includes(refund.status)) {
+    if (!['requested', 'approved', 'pending', 'failed'].includes(refund.status)) {
       return { outcome: 'skipped', status: refund.status };
     }
 
@@ -345,7 +599,7 @@ async function processRefundJob({ refundId, gateway } = {}) {
       `UPDATE refunds
        SET status = 'succeeded', provider_refund_id = $2,
            completed_at = COALESCE(completed_at, now()), updated_at = now()
-       WHERE id = $1 AND status IN ('requested', 'pending', 'failed')`,
+       WHERE id = $1 AND status IN ('requested', 'approved', 'pending', 'failed')`,
       [refundId, gatewayResult.providerRefundRef]
     );
     if (!rowCount) return { outcome: 'skipped', status: refund.status };
@@ -1236,7 +1490,10 @@ async function reenqueueOrphanRefund(refundContext) {
       `SELECT id
        FROM refunds
        WHERE id = $1 AND (
-         (status = 'requested' AND requested_at <= now() - INTERVAL '2 minutes')
+         (trigger <> 'manual_admin' AND status = 'requested'
+           AND requested_at <= now() - INTERVAL '2 minutes')
+         OR (trigger = 'manual_admin' AND status = 'approved'
+           AND approved_at <= now() - INTERVAL '2 minutes')
          OR (status IN ('pending', 'failed') AND updated_at <= now() - INTERVAL '10 minutes')
        )`,
       [refundContext.id]
@@ -1336,7 +1593,10 @@ async function reconcileMoneyState({ limit = 100, timeBudgetMs = 20000, logger =
   const { rows: refundRows } = await db.read(
     `SELECT id, order_id, payment_id
      FROM refunds
-     WHERE (status = 'requested' AND requested_at <= now() - INTERVAL '2 minutes')
+     WHERE (trigger <> 'manual_admin' AND status = 'requested'
+              AND requested_at <= now() - INTERVAL '2 minutes')
+        OR (trigger = 'manual_admin' AND status = 'approved'
+              AND approved_at <= now() - INTERVAL '2 minutes')
         OR (status IN ('pending', 'failed') AND updated_at <= now() - INTERVAL '10 minutes')
      ORDER BY requested_at, id
      LIMIT $1`,
@@ -1384,6 +1644,10 @@ listings.setSystemTakedownHandler(handleListingTakedown);
 
 module.exports = {
   getAdminOrderPaymentAndRefunds,
+  getRefundableBalance,
+  requestManualRefund,
+  decideManualRefund,
+  assertNoOpenManualRefund,
   createOrReusePayment,
   getPaymentStatus,
   enqueueRefundJob,

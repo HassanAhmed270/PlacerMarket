@@ -331,6 +331,7 @@ async function releaseReservationPayout(orderId, adminId, input) {
       throw new ConflictError('The order must have exactly one succeeded payment.');
     }
     const payment = succeededPayments[0];
+    await escrowPayments.assertNoOpenManualRefund(client, orderId);
 
     const { rows: holdRows } = await client.query(
       `SELECT order_id, state, hold_started_at, hold_window_days,
@@ -417,6 +418,19 @@ async function releaseReservationPayout(orderId, adminId, input) {
   return result;
 }
 
+/** FR-65: read payout release state through the payout-holds owner in a caller transaction. */
+async function isOrderPayoutReleased(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT state, released_at
+     FROM payout_holds
+     WHERE order_id = $1`,
+    [orderId]
+  );
+  return Boolean(rows[0] && (
+    rows[0].released_at || ['released', 'force_released'].includes(rows[0].state)
+  ));
+}
+
 // ---- FR-45h / FR-44: combined admin view ----
 
 /** FR-45h, FR-44: HELD orders + open dispute status in ONE view, not two separate screens. */
@@ -440,6 +454,7 @@ module.exports = {
   checkAndReleaseDuePayouts,
   forceReleasePayoutEarly,
   releaseReservationPayout,
+  isOrderPayoutReleased,
   handleDisputeResolved,
   getHeldOrdersWithDisputeStatus,
 };

@@ -43,7 +43,10 @@ const {
 } = require('../lib/emailCodeDelivery');
 
 const STAFF_ROLES = new Set(['admin', 'moderator']);
-const STEP_UP_ACTIONS = Object.freeze(['payout.update', 'password.change', 'security.change', 'payout.force_release']);
+const STEP_UP_ACTIONS = Object.freeze([
+  'payout.update', 'password.change', 'security.change', 'payout.force_release',
+  'refund.request', 'refund.decide',
+]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function refreshPolicy(role) {
@@ -695,6 +698,7 @@ async function createStepUpGrant(userId, sessionId, action, code) {
   return { grant: rawGrant, expiresIn: ttl };
 }
 
+/** FR-83f: consume a one-use action-bound grant within the caller's transaction. */
 async function consumeStepUpGrantWithClient(client, userId, sessionId, action, rawGrant) {
   if (typeof rawGrant !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(rawGrant)) throw new ForbiddenError('A valid step-up grant is required.');
   const { rows } = await client.query(
@@ -1236,6 +1240,7 @@ module.exports = {
   confirmSellerAuthenticatorEnrollment,
   createStepUpGrant,
   consumeStepUpGrant,
+  consumeStepUpGrantWithClient,
   disableSellerAuthenticator,
   changePasswordWithStepUp,
   STEP_UP_ACTIONS,
