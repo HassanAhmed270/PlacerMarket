@@ -172,7 +172,7 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
     expect(orderRows).toEqual([{ status: 'completed', hold_state: 'released' }]);
   });
 
-  test('FR-72e: buyer resolution records one manual exception and moves no money', async () => {
+  test('FR-45, FR-72e: buyer resolution records an exception without moving money and requires a refund first', async () => {
     const dispute = await fileBuyerDispute();
     const before = await getMoneyState(scenario.orderId);
 
@@ -207,7 +207,11 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
       .post(`/api/admin/order-exceptions/${listedException.id}/resolve`)
       .set('Authorization', authHeader(harness.adminId))
       .send({ resolutionNote: 'Manual refund completed outside the system.' })
-      .expect(200);
+      .expect(409);
+    expect(await getDisputeExceptionRows(scenario.orderId)).toMatchObject([
+      { resolved_at: null },
+    ]);
+    expect(await getDisputeAuditCount(scenario.orderId)).toBe(1);
   });
 
   test('FR-45g: buyer resolution pauses an unpaused hold and blocks payout release', async () => {

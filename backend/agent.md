@@ -277,7 +277,9 @@ purpose so the schema works whichever way this eventually gets decided.
   locking the payment row. This guarded transactional check blocks payout while
   a manual request is requested, approved, pending or retryable-failed; it does
   not use an order exception. Orphan-job reconciliation retries approved manual
-  refunds only; it never enqueues a still-requested manual refund.
+  refunds only; it never enqueues a still-requested manual refund. The worker
+  also requires `delivery.service.js` so its transaction-aware manual-refund
+  completion listener can resolve `order_exceptions` through the table owner.
 - **Notifications**: every other service just does
   `eventBus.emit(events.SOMETHING, payload)` and knows nothing about
   `notifications.service.js`. That file is the only listener; it resolves

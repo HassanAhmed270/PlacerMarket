@@ -47,6 +47,40 @@ eventBus.on(events.DISPUTE_REFUND_EXCEPTION_REQUIRED, async ({ orderId, resolved
   );
 });
 
+eventBus.on(events.MANUAL_REFUND_SUCCEEDED, async ({
+  orderId, refundId, approvedBy,
+}, context = {}) => {
+  if (!context.transaction) {
+    throw new TypeError('Manual refund exceptions must be resolved in the refund transaction.');
+  }
+  const { rows } = await context.transaction.query(
+    `SELECT id
+     FROM order_exceptions
+     WHERE order_id = $1
+       AND kind = 'dispute_refund_required'
+       AND resolved_at IS NULL
+     FOR UPDATE`,
+    [orderId]
+  );
+  const exception = rows[0];
+  if (!exception) return;
+
+  const resolutionNote = `Manual refund ${refundId} succeeded.`;
+  await context.transaction.query(
+    `UPDATE order_exceptions
+     SET resolved_at = now(), resolved_by = $2, resolution_note = $3
+     WHERE id = $1 AND resolved_at IS NULL`,
+    [exception.id, approvedBy, resolutionNote]
+  );
+  await escrowPayments.recordOrderExceptionResolvedAuditEvent(context.transaction, {
+    orderId,
+    adminId: approvedBy,
+    exceptionId: exception.id,
+    kind: 'dispute_refund_required',
+    resolutionNote,
+  });
+});
+
 /** FR-68: validate and cap Admin order-list query parameters before the database read. */
 function validateAdminOrderListQuery(query) {
   if (!query || typeof query !== 'object' || Array.isArray(query)) {
@@ -543,6 +577,41 @@ async function resolveOrderException(exceptionId, { resolvedBy, resolutionNote }
   }
 
   return db.withTransaction(async (client) => {
+    const { rows: initialRows } = await client.query(
+      `SELECT order_id, kind
+       FROM order_exceptions
+       WHERE id = $1`,
+      [exceptionId]
+    );
+    const initial = initialRows[0];
+    if (!initial) throw new NotFoundError('order exception', exceptionId);
+
+    if (initial.kind === 'dispute_refund_required') {
+      const context = await orders.getMoneyLockContext(client, initial.order_id);
+      if (!context) throw new NotFoundError('order', initial.order_id);
+      if (!context.reservation_id) {
+        throw new ConflictError('Only reservation-backed dispute refunds can be resolved.');
+      }
+      if (!(await listings.lockListingForMoneyAction(client, context.listing_id))) {
+        throw new ConflictError('The order listing is no longer available.');
+      }
+      if (!(await users.lockBuyerForMoneyAction(client, context.buyer_id))) {
+        throw new ConflictError('The order buyer is no longer available.');
+      }
+      const order = await orders.lockOrderForRefund(client, initial.order_id);
+      if (!order || order.listing_id !== context.listing_id ||
+          order.buyer_id !== context.buyer_id || order.reservation_id !== context.reservation_id) {
+        throw new ConflictError('The order changed before the exception could be resolved.');
+      }
+      const reservation = await reservations.lockReservationForPayout(client, order.reservation_id);
+      if (!reservation || reservation.listing_id !== order.listing_id || reservation.status !== 'paid') {
+        throw new ConflictError('The order does not have a paid reservation.');
+      }
+      if (!(await escrowPayments.isCapturedPaymentFullyRefunded(client, order.id))) {
+        throw new ConflictError('Refund the buyer first; this exception closes automatically when the refund succeeds.');
+      }
+    }
+
     const { rows: exceptionRows } = await client.query(
       `SELECT id, order_id, kind, resolved_at
        FROM order_exceptions

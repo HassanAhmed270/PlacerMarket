@@ -228,10 +228,13 @@ async function lockRefundPaymentOrder(client, orderId, paymentId, refundId) {
   if (!buyer) return null;
 
   const order = await orders.lockOrderForRefund(client, orderId);
-  if (!order || order.listing_id !== context.listing_id || order.buyer_id !== context.buyer_id) return null;
+  if (!order || order.listing_id !== context.listing_id || order.buyer_id !== context.buyer_id ||
+      order.reservation_id !== context.reservation_id || !order.reservation_id) return null;
+  const reservation = await reservations.lockReservationForPayout(client, order.reservation_id);
+  if (!reservation || reservation.listing_id !== order.listing_id) return null;
 
   const { rows: paymentRows } = await client.query(
-    `SELECT id, order_id, provider_payment_id, amount
+    `SELECT id, order_id, provider_payment_id, amount, status
      FROM payments
      WHERE id = $1
      FOR UPDATE`,
@@ -242,7 +245,7 @@ async function lockRefundPaymentOrder(client, orderId, paymentId, refundId) {
 
   const { rows: refundRows } = await client.query(
     `SELECT id, order_id, payment_id, amount, currency, status, idempotency_key,
-            trigger, reason
+            trigger, reason, approved_by
      FROM refunds
      WHERE id = $1
      FOR UPDATE`,
@@ -279,6 +282,10 @@ async function lockManualRefundContext(client, orderId, expectedPaymentId) {
       order.reservation_id !== context.reservation_id) {
     throw new ConflictError('The order changed before the refund action.');
   }
+  const reservation = await reservations.lockReservationForPayout(client, order.reservation_id);
+  if (!reservation || reservation.listing_id !== order.listing_id || reservation.status !== 'paid') {
+    throw new ConflictError('Only captured reservation orders can be refunded manually.');
+  }
 
   const payments = await lockPaymentsForOrder(client, orderId);
   const capturedPayments = payments.filter((payment) => (
@@ -291,6 +298,33 @@ async function lockManualRefundContext(client, orderId, expectedPaymentId) {
     throw new ConflictError('The order must have exactly one captured payment.');
   }
   return { order, payment };
+}
+
+/** FR-45, FR-69: lock and read whether an order's captured payment is fully refunded. */
+async function isCapturedPaymentFullyRefunded(client, orderId) {
+  if (!client || typeof client.query !== 'function') {
+    throw new TypeError('The captured payment refund state must be read in its transaction.');
+  }
+  const { rows: paymentRows } = await client.query(
+    `SELECT id, status
+     FROM payments
+     WHERE order_id = $1
+     ORDER BY created_at, id
+     FOR UPDATE`,
+    [orderId]
+  );
+  const capturedPayments = paymentRows.filter((payment) => (
+    ['succeeded', 'partially_refunded', 'refunded'].includes(payment.status)
+  ));
+  await client.query(
+    `SELECT id
+     FROM refunds
+     WHERE order_id = $1
+     ORDER BY id
+     FOR UPDATE`,
+    [orderId]
+  );
+  return capturedPayments.length === 1 && capturedPayments[0].status === 'refunded';
 }
 
 async function expireManualRefundRequests(client, orderId, paymentId, actorId, refundId) {
@@ -733,13 +767,30 @@ async function processRefundJob({ refundId, gateway } = {}) {
        WHERE payment_id = $1 AND status = 'succeeded'`,
       [payment.id, payment.amount]
     );
+    let paymentBecameRefunded = false;
     if (totalRows[0].fully_refunded) {
-      await client.query(
+      const { rowCount } = await client.query(
         `UPDATE payments
          SET status = 'refunded', updated_at = now()
          WHERE id = $1 AND status <> 'refunded'`,
         [payment.id]
       );
+      paymentBecameRefunded = rowCount === 1;
+    }
+    if (refund.trigger === 'manual_admin' && paymentBecameRefunded) {
+      const registered = await eventBus.emitAsync(
+        events.MANUAL_REFUND_SUCCEEDED,
+        {
+          orderId: order.id,
+          paymentId: payment.id,
+          refundId: refund.id,
+          approvedBy: refund.approved_by,
+        },
+        { transaction: client }
+      );
+      if (!registered) {
+        throw new TypeError('The delivery exception owner is not listening for manual refund completion.');
+      }
     }
     return { outcome: 'succeeded', refundId };
   });
@@ -1759,6 +1810,7 @@ module.exports = {
   recordOrderDeliveredAuditEvent,
   recordOrderExceptionResolvedAuditEvent,
   recordDisputeResolutionAuditEvent,
+  isCapturedPaymentFullyRefunded,
   sweepUnhandedOverOrders,
   reconcileMoneyState,
   processRefundJob,

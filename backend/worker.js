@@ -3,6 +3,8 @@
 const { createQueueClient, startProducer, stopProducer, QUEUES, WORKER_CONCURRENCY } = require('./src/lib/queue');
 const { createRedisClient } = require('./src/lib/redis');
 const notifications = require('./src/modules/notifications.service');
+// FR-45, FR-69: register the order-exception owner for refund-worker transactions.
+require('./src/modules/delivery.service');
 const { createEmailSender } = require('./src/lib/adapters/emailSender');
 const { decryptEmailPayload } = require('./src/lib/emailQueuePayload');
 const { createDevEmailOutboxSender } = require('./src/lib/adapters/devEmailOutbox');

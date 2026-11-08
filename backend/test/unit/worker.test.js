@@ -24,6 +24,7 @@ const mockQueue = {
   stopProducer: jest.fn().mockResolvedValue(undefined),
 };
 const mockRedis = { createRedisClient: jest.fn() };
+const mockDeliveryService = {};
 const mockNotifications = { processNotificationJob: jest.fn() };
 const mockListingSearch = { processListingSearchJob: jest.fn() };
 const mockListings = { expireDueReservations: jest.fn() };
@@ -38,6 +39,7 @@ const { encryptEmailPayload } = require('../../src/lib/emailQueuePayload');
 
 jest.mock('../../src/lib/queue', () => mockQueue);
 jest.mock('../../src/lib/redis', () => mockRedis);
+jest.mock('../../src/modules/delivery.service', () => mockDeliveryService);
 jest.mock('../../src/modules/notifications.service', () => mockNotifications);
 jest.mock('../../src/modules/listingSearch.service', () => mockListingSearch);
 jest.mock('../../src/modules/listings.service', () => mockListings);
