@@ -299,11 +299,12 @@ async function expireManualRefundRequests(client, orderId, paymentId, actorId, r
          decided_at = now(),
          decision_note = 'Expired automatically after 48 hours without a decision.',
          updated_at = now()
-     WHERE order_id = $1 AND payment_id = $2 AND trigger = 'manual_admin'
+     WHERE order_id = $1 AND ($2::uuid IS NULL OR payment_id = $2)
+       AND trigger = 'manual_admin'
        AND status = 'requested'
        AND requested_at <= now() - INTERVAL '48 hours'
        ${targetClause}
-     RETURNING id, requested_by`,
+     RETURNING id, payment_id, requested_by`,
     values
   );
   for (const refund of rows) {
@@ -311,7 +312,7 @@ async function expireManualRefundRequests(client, orderId, paymentId, actorId, r
       actorId,
       action: 'manual_refund_expired',
       orderId,
-      paymentId,
+      paymentId: refund.payment_id,
       refundId: refund.id,
       requestedBy: refund.requested_by,
       approvedBy: actorId,
@@ -487,8 +488,9 @@ async function decideManualRefund(refundId, actorId, sessionId, input, { isOrder
   return result;
 }
 
-/** FR-69: block seller payout while a manual refund is unresolved. */
-async function assertNoOpenManualRefund(client, orderId) {
+/** FR-69: expire stale requests and block seller payout while a manual refund is unresolved. */
+async function assertNoOpenManualRefund(client, orderId, actorId) {
+  await expireManualRefundRequests(client, orderId, null, actorId);
   const { rows } = await client.query(
     `SELECT id
      FROM refunds

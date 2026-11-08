@@ -175,6 +175,20 @@ async function createScenario() {
   });
 }
 
+async function preparePayoutRelease() {
+  await db.query(
+    `UPDATE orders SET status = 'held', delivered_at = now() - INTERVAL '1 day'
+     WHERE id = $1`,
+    [scenario.orderId]
+  );
+  await db.query(
+    `INSERT INTO payout_holds
+       (order_id, hold_started_at, hold_window_days, complaint_window_days, state)
+     VALUES ($1, now() - INTERVAL '10 days', 0, 0, 'held')`,
+    [scenario.orderId]
+  );
+}
+
 async function createRequest(user = staff.first, overrides = {}) {
   const stepUpGrant = overrides.stepUpGrant || await createGrant(user, 'refund.request');
   return sendManualRequest(user, {
@@ -586,21 +600,78 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
   });
 
   test('FR-65, FR-69: payout release is blocked while a manual refund request is open', async () => {
-    await db.query(
-      `UPDATE orders SET status = 'held', delivered_at = now() - INTERVAL '1 day'
-       WHERE id = $1`,
-      [scenario.orderId]
-    );
-    await db.query(
-      `INSERT INTO payout_holds
-         (order_id, hold_started_at, hold_window_days, complaint_window_days, state)
-       VALUES ($1, now() - INTERVAL '10 days', 0, 0, 'held')`,
-      [scenario.orderId]
-    );
+    await preparePayoutRelease();
     await createRequest();
     await expect(payout.releaseReservationPayout(scenario.orderId, staff.third.id, {
       payoutReference: 'test-manual-payout-reference',
       note: 'Payout release is blocked by the open refund request.',
+    })).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  test('FR-69: payout release expires a 49-hour-old manual request and audits the releasing Admin', async () => {
+    await preparePayoutRelease();
+    const requested = await createRequest();
+    await db.query(
+      `UPDATE refunds SET requested_at = now() - INTERVAL '49 hours' WHERE id = $1`,
+      [requested.body.refundId]
+    );
+
+    await expect(payout.releaseReservationPayout(scenario.orderId, staff.third.id, {
+      payoutReference: 'test-manual-payout-reference',
+      note: 'Payout release follows the expired refund request.',
+    })).resolves.toMatchObject({ orderId: scenario.orderId });
+
+    const { rows: refundRows } = await db.query(
+      `SELECT status, approved_by, decided_at, decision_note
+       FROM refunds WHERE id = $1`,
+      [requested.body.refundId]
+    );
+    expect(refundRows[0]).toMatchObject({
+      status: 'expired',
+      approved_by: staff.third.id,
+      decision_note: 'Expired automatically after 48 hours without a decision.',
+    });
+    expect(refundRows[0].decided_at).not.toBeNull();
+    const { rows: auditRows } = await db.query(
+      `SELECT action, actor_id, count(*) OVER ()::int AS count
+       FROM money_audit_events
+       WHERE refund_id = $1 AND action = 'manual_refund_expired'`,
+      [requested.body.refundId]
+    );
+    expect(auditRows).toHaveLength(1);
+    expect(auditRows[0]).toMatchObject({ action: 'manual_refund_expired', actor_id: staff.third.id, count: 1 });
+  });
+
+  test('FR-69: a 47-hour-59-minute-old manual request still blocks payout release', async () => {
+    await preparePayoutRelease();
+    const requested = await createRequest();
+    await db.query(
+      `UPDATE refunds SET requested_at = now() - INTERVAL '47 hours 59 minutes' WHERE id = $1`,
+      [requested.body.refundId]
+    );
+
+    await expect(payout.releaseReservationPayout(scenario.orderId, staff.third.id, {
+      payoutReference: 'test-manual-payout-reference',
+      note: 'Payout release remains blocked by a pending refund.',
+    })).rejects.toMatchObject({ statusCode: 409 });
+    const { rows } = await db.query('SELECT status FROM refunds WHERE id = $1', [requested.body.refundId]);
+    expect(rows[0].status).toBe('requested');
+  });
+
+  test.each(['approved', 'pending'])('FR-69: an old %s manual request still blocks payout release', async (status) => {
+    await preparePayoutRelease();
+    const requested = await createRequest();
+    await db.query(
+      `UPDATE refunds
+       SET status = $2, requested_at = now() - INTERVAL '90 days',
+           approved_by = $3, decided_at = now() - INTERVAL '90 days'
+       WHERE id = $1`,
+      [requested.body.refundId, status, staff.third.id]
+    );
+
+    await expect(payout.releaseReservationPayout(scenario.orderId, staff.third.id, {
+      payoutReference: 'test-manual-payout-reference',
+      note: 'Payout release remains blocked by an active refund.',
     })).rejects.toMatchObject({ statusCode: 409 });
   });
 

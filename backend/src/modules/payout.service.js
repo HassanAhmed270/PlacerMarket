@@ -331,7 +331,7 @@ async function releaseReservationPayout(orderId, adminId, input) {
       throw new ConflictError('The order must have exactly one succeeded payment.');
     }
     const payment = succeededPayments[0];
-    await escrowPayments.assertNoOpenManualRefund(client, orderId);
+    await escrowPayments.assertNoOpenManualRefund(client, orderId, adminId);
 
     const { rows: holdRows } = await client.query(
       `SELECT order_id, state, hold_started_at, hold_window_days,
