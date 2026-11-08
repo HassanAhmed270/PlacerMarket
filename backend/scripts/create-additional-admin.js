@@ -33,12 +33,15 @@ async function main() {
     const result = await users.createAdditionalAdmin(
       { initiatorEmail, name, email, phone, password },
       {
-        promptTotpCode: async ({ purpose, email: accountEmail, secret }) => {
+        promptTotpCode: async ({ purpose, email: accountEmail, secret, attempt }) => {
           if (purpose === 'initiator') {
             return questionHidden(terminal, `Current authenticator code for ${accountEmail}: `);
           }
-          stdout.write(`\nAdd this authenticator secret to the new Admin's app once: ${secret}\n`);
-          return questionHidden(terminal, 'New Admin authenticator code: ');
+          if (attempt === 1) {
+            stdout.write(`\nAdd this authenticator secret to the new Admin's app once: ${secret}\n`);
+            return questionHidden(terminal, 'New Admin authenticator code: ');
+          }
+          return questionHidden(terminal, 'New Admin authenticator code (try again): ');
         },
       }
     );

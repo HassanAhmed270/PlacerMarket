@@ -456,10 +456,10 @@ async function createInitialAdmin({ name, email, phone, password, totpSecret, to
 /** FR-69: create an additional Admin only after the initiating Admin and new authenticator verify. */
 async function createAdditionalAdmin({
   initiatorEmail, name, email, phone, password,
-}, { promptTotpCode, totpVerifier = matchingTotpStep } = {}) {
+}, { promptTotpCode } = {}) {
   const normalizedInitiatorEmail = typeof initiatorEmail === 'string' ? initiatorEmail.trim().toLowerCase() : '';
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
-  if (typeof promptTotpCode !== 'function' || typeof totpVerifier !== 'function' ||
+  if (typeof promptTotpCode !== 'function' ||
       typeof name !== 'string' || !name.trim() || typeof email !== 'string' ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof phone !== 'string' ||
       !/^\+?[1-9]\d{7,19}$/.test(phone) || typeof password !== 'string' ||
@@ -469,45 +469,93 @@ async function createAdditionalAdmin({
   }
 
   const passwordHash = await hashPassword(password);
-  try {
-    return await db.withTransaction(async (client) => {
-      await client.query("SELECT pg_advisory_xact_lock(hashtext('poshaak-additional-admin-creation'))");
-      const { rows: initiators } = await client.query(
-        'SELECT id, role, is_suspended FROM users WHERE email = $1 FOR UPDATE',
-        [normalizedInitiatorEmail]
-      );
-      const initiator = initiators[0];
-      if (!initiator || initiator.role !== 'admin' || initiator.is_suspended) {
-        throw new ValidationError('A current TOTP code from an active Admin account is required.');
-      }
+  const { rows: initiators } = await db.query(
+    `SELECT u.id, u.role, u.is_suspended, t.encrypted_secret, t.nonce, t.auth_tag,
+            t.key_version, t.last_used_step
+     FROM users u
+     LEFT JOIN staff_totp_credentials t ON t.user_id = u.id AND t.enabled_at IS NOT NULL
+     WHERE u.email = $1`,
+    [normalizedInitiatorEmail]
+  );
+  const initiator = initiators[0];
+  if (!initiator || initiator.role !== 'admin' || initiator.is_suspended || !initiator.encrypted_secret) {
+    throw new ValidationError('A current TOTP code from an active Admin account is required.');
+  }
 
-      const { rows: credentials } = await client.query(
-        `SELECT encrypted_secret, nonce, auth_tag, key_version, last_used_step
-         FROM staff_totp_credentials WHERE user_id = $1 AND enabled_at IS NOT NULL FOR UPDATE`,
+  const initiatorSecret = decryptStaffTotpSecret(initiator);
+  const initiatorCode = await promptTotpCode({
+    purpose: 'initiator',
+    email: normalizedInitiatorEmail,
+    attempt: 1,
+  });
+  const initiatorStep = matchingTotpStep(initiatorSecret, initiatorCode);
+  if (!Number.isSafeInteger(initiatorStep) ||
+      (initiator.last_used_step !== null && initiator.last_used_step !== undefined &&
+       initiatorStep <= Number(initiator.last_used_step))) {
+    throw new ValidationError('The initiating Admin authenticator code is invalid or has already been used.');
+  }
+
+  try {
+    await db.withTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('poshaak-additional-admin-creation'))");
+      const { rows: currentInitiators } = await client.query(
+        'SELECT id, role, is_suspended FROM users WHERE id = $1 FOR UPDATE',
         [initiator.id]
       );
-      const initiatorCredential = credentials[0];
-      if (!initiatorCredential) {
+      const currentInitiator = currentInitiators[0];
+      if (!currentInitiator || currentInitiator.role !== 'admin' || currentInitiator.is_suspended) {
         throw new ValidationError('A current TOTP code from an active Admin account is required.');
       }
 
-      const initiatorSecret = decryptStaffTotpSecret({
-        encrypted_secret: initiatorCredential.encrypted_secret,
-        nonce: initiatorCredential.nonce,
-        auth_tag: initiatorCredential.auth_tag,
-        key_version: initiatorCredential.key_version,
-      });
-      const initiatorCode = await promptTotpCode({ purpose: 'initiator', email: normalizedInitiatorEmail });
-      const initiatorStep = totpVerifier(initiatorSecret, initiatorCode);
-      if (!Number.isSafeInteger(initiatorStep) ||
-          (initiatorCredential.last_used_step !== null && initiatorCredential.last_used_step !== undefined &&
-           initiatorStep <= Number(initiatorCredential.last_used_step))) {
+      const { rows: currentCredentials } = await client.query(
+        `SELECT last_used_step FROM staff_totp_credentials
+         WHERE user_id = $1 AND enabled_at IS NOT NULL FOR UPDATE`,
+        [initiator.id]
+      );
+      const currentCredential = currentCredentials[0];
+      if (!currentCredential) {
+        throw new ValidationError('A current TOTP code from an active Admin account is required.');
+      }
+      if (currentCredential.last_used_step !== null && currentCredential.last_used_step !== undefined &&
+          initiatorStep <= Number(currentCredential.last_used_step)) {
         throw new ValidationError('The initiating Admin authenticator code is invalid or has already been used.');
       }
       await client.query(
         'UPDATE staff_totp_credentials SET last_used_step = $1, updated_at = now() WHERE user_id = $2',
         [initiatorStep, initiator.id]
       );
+    });
+
+    const secret = generateTotpSecret();
+    let enrollmentStep = null;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const enrollmentCode = await promptTotpCode({
+        purpose: 'new-admin-enrollment',
+        email: normalizedEmail,
+        secret,
+        attempt,
+      });
+      enrollmentStep = matchingTotpStep(secret, enrollmentCode);
+      if (Number.isSafeInteger(enrollmentStep)) break;
+    }
+    if (!Number.isSafeInteger(enrollmentStep)) {
+      throw new ValidationError('The new Admin authenticator code is invalid.');
+    }
+
+    const encrypted = encryptStaffTotpSecret(secret);
+    return await db.withTransaction(async (client) => {
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('poshaak-additional-admin-creation'))");
+      const { rows: currentInitiators } = await client.query(
+        `SELECT u.id, u.role, u.is_suspended
+         FROM users u
+         JOIN staff_totp_credentials t ON t.user_id = u.id AND t.enabled_at IS NOT NULL
+         WHERE u.id = $1 FOR UPDATE OF u, t`,
+        [initiator.id]
+      );
+      const currentInitiator = currentInitiators[0];
+      if (!currentInitiator || currentInitiator.role !== 'admin' || currentInitiator.is_suspended) {
+        throw new ValidationError('A current TOTP code from an active Admin account is required.');
+      }
 
       const { rows: duplicates } = await client.query(
         'SELECT id FROM users WHERE phone = $1 OR email = $2 LIMIT 1',
@@ -515,8 +563,6 @@ async function createAdditionalAdmin({
       );
       if (duplicates.length) throw new ConflictError('An account with that phone or email already exists.');
 
-      const secret = generateTotpSecret();
-      const encrypted = encryptStaffTotpSecret(secret);
       const { rows } = await client.query(
         `INSERT INTO users (full_name, phone, email, password_hash, role)
          VALUES ($1, $2, $3, $4, 'admin') RETURNING id`,
@@ -525,25 +571,9 @@ async function createAdditionalAdmin({
       const newAdmin = rows[0];
       await client.query(
         `INSERT INTO staff_totp_credentials
-           (user_id, encrypted_secret, nonce, auth_tag, key_version)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [newAdmin.id, encrypted.encryptedSecret, encrypted.nonce, encrypted.authTag, encrypted.keyVersion]
-      );
-
-      const enrollmentCode = await promptTotpCode({
-        purpose: 'new-admin-enrollment',
-        email: normalizedEmail,
-        secret,
-      });
-      const enrollmentStep = totpVerifier(secret, enrollmentCode);
-      if (!Number.isSafeInteger(enrollmentStep)) {
-        throw new ValidationError('The new Admin authenticator code is invalid.');
-      }
-      await client.query(
-        `UPDATE staff_totp_credentials
-         SET enabled_at = now(), last_used_step = $1, updated_at = now()
-         WHERE user_id = $2`,
-        [enrollmentStep, newAdmin.id]
+           (user_id, encrypted_secret, nonce, auth_tag, key_version, enabled_at, last_used_step)
+         VALUES ($1, $2, $3, $4, $5, now(), $6)`,
+        [newAdmin.id, encrypted.encryptedSecret, encrypted.nonce, encrypted.authTag, encrypted.keyVersion, enrollmentStep]
       );
       await moneyAudit.recordMoneyAuditEvent(client, {
         actorId: initiator.id,
