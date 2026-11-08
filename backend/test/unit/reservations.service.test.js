@@ -84,6 +84,68 @@ describe('FR-32a reservation input validation', () => {
   });
 });
 
+describe('FR-86 Admin delivery-city management', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('FR-86: lists all cities and defaults missing supported rows to inactive', async () => {
+    const rows = [{ cityId: 'city-1', name: 'Inactive city', active: false }];
+    const read = jest.spyOn(db, 'read').mockResolvedValue({ rows });
+
+    await expect(reservations.listAdminSupportedDeliveryCities()).resolves.toEqual(rows);
+    expect(read).toHaveBeenCalledWith(expect.stringContaining('LEFT JOIN supported_delivery_cities'));
+    expect(read.mock.calls[0][0]).toContain('COALESCE(supported.active, false)');
+    expect(read.mock.calls[0][0]).toContain('ORDER BY city.name, city.id');
+  });
+
+  test('FR-86: validates and upserts city support in the owning transaction', async () => {
+    const cityId = '123e4567-e89b-42d3-a456-426614174000';
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ id: cityId }] })
+        .mockResolvedValueOnce({ rows: [{ city_id: cityId, active: true }] }),
+    };
+    const transaction = jest.spyOn(db, 'withTransaction').mockImplementation((callback) => callback(client));
+
+    await expect(reservations.setSupportedDeliveryCity(cityId, true)).resolves.toEqual({
+      cityId,
+      active: true,
+    });
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(client.query).toHaveBeenNthCalledWith(1, expect.stringContaining('FOR KEY SHARE'), [cityId]);
+    expect(client.query).toHaveBeenNthCalledWith(2, expect.stringContaining('ON CONFLICT (city_id)'), [cityId, true]);
+  });
+
+  test('FR-86: repeated city support updates return the idempotent setting', async () => {
+    const cityId = '123e4567-e89b-42d3-a456-426614174000';
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ id: cityId }] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    jest.spyOn(db, 'withTransaction').mockImplementation((callback) => callback(client));
+
+    await expect(reservations.setSupportedDeliveryCity(cityId, true)).resolves.toEqual({
+      cityId,
+      active: true,
+    });
+  });
+
+  test('FR-86: rejects an unknown city and invalid city settings', async () => {
+    const client = { query: jest.fn().mockResolvedValue({ rows: [] }) };
+    jest.spyOn(db, 'withTransaction').mockImplementation((callback) => callback(client));
+
+    await expect(reservations.setSupportedDeliveryCity(
+      '123e4567-e89b-42d3-a456-426614174000', true
+    )).rejects.toThrow(/city/);
+    await expect(reservations.setSupportedDeliveryCity('not-a-uuid', true)).rejects.toThrow(/UUID/);
+    await expect(reservations.setSupportedDeliveryCity(
+      '123e4567-e89b-42d3-a456-426614174000', 'true'
+    )).rejects.toThrow(/boolean/);
+  });
+});
+
 describe('FR-63 reservation setting parsing', () => {
   test('FR-63: valid fee settings remain exact decimal strings', () => {
     expect(parseReservationSettings({

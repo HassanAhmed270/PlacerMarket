@@ -243,6 +243,49 @@ async function listActiveSupportedDeliveryCities() {
   return rows;
 }
 
+/** FR-86: list all cities with their supported-delivery setting for Admin management. */
+async function listAdminSupportedDeliveryCities() {
+  const { rows } = await db.read(
+    `SELECT city.id AS "cityId", city.name,
+            COALESCE(supported.active, false) AS active
+     FROM cities city
+     LEFT JOIN supported_delivery_cities supported ON supported.city_id = city.id
+     ORDER BY city.name, city.id`
+  );
+  return rows;
+}
+
+/** FR-86: upsert whether a city is available for new delivery addresses. */
+async function setSupportedDeliveryCity(cityId, active) {
+  if (typeof cityId !== 'string' || !UUID.test(cityId)) {
+    throw new ValidationError('cityId must be a UUID.');
+  }
+  if (typeof active !== 'boolean') {
+    throw new ValidationError('active must be a boolean.');
+  }
+
+  return db.withTransaction(async (client) => {
+    const { rows: cityRows } = await client.query(
+      'SELECT id FROM cities WHERE id = $1 FOR KEY SHARE',
+      [cityId]
+    );
+    if (!cityRows[0]) throw new NotFoundError('city', cityId);
+
+    const { rows } = await client.query(
+      `INSERT INTO supported_delivery_cities (city_id, active)
+       VALUES ($1, $2)
+       ON CONFLICT (city_id) DO UPDATE
+       SET active = EXCLUDED.active, updated_at = now()
+       WHERE supported_delivery_cities.active IS DISTINCT FROM EXCLUDED.active
+       RETURNING city_id, active`,
+      [cityId, active]
+    );
+    return rows[0]
+      ? { cityId: rows[0].city_id, active: rows[0].active }
+      : { cityId, active };
+  });
+}
+
 /** FR-61, FR-62: return a buyer's reservation snapshot without seller or provider data. */
 async function getBuyerReservationSnapshot(reservationId, buyerId) {
   if (typeof reservationId !== 'string' || !UUID.test(reservationId)
@@ -492,6 +535,8 @@ module.exports = {
   lockReservationForPayout,
   endReservationForSystemAction,
   listActiveSupportedDeliveryCities,
+  listAdminSupportedDeliveryCities,
+  setSupportedDeliveryCity,
   getBuyerReservationSnapshot,
   getSellerOrderDeliveryCities,
   getAdminOrderReservationSnapshot,

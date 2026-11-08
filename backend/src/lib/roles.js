@@ -45,6 +45,7 @@ const ADMIN_ONLY_ACTIONS = new Set([
   'payout.review', // FR-09a / SEC-35
   'payout.hold', // FR-83l
   'delivery_partner.configure', // FR-57
+  'delivery_city.configure', // FR-86
   'order.mark_handover', // FR-72
   'order.mark_delivered', // FR-68
   'order.view_admin', // FR-68

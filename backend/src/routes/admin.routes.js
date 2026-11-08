@@ -2,6 +2,7 @@ const { Router } = require('express');
 const admin = require('../modules/admin.service');
 const listingSearch = require('../modules/listingSearch.service');
 const payout = require('../modules/payout.service');
+const reservations = require('../modules/reservations.service');
 const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ValidationError } = require('../lib/errors');
@@ -89,6 +90,31 @@ router.post(
 router.get('/listing-search/synonyms', requirePermission('search.synonyms.manage'), async (_req, res) => {
   res.json(await listingSearch.listSearchSynonyms()); // FR-80a
 });
+
+router.get(
+  '/delivery-cities',
+  noStoreOrderResponses,
+  requirePermission('delivery_city.configure'),
+  limiters.adminOps,
+  async (_req, res) => {
+    res.json(await reservations.listAdminSupportedDeliveryCities()); // FR-86
+  }
+);
+
+router.put(
+  '/delivery-cities/:cityId',
+  noStoreOrderResponses,
+  requirePermission('delivery_city.configure'),
+  limiters.adminOps,
+  async (req, res) => {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) ||
+        Object.keys(req.body).some((key) => key !== 'active') ||
+        typeof req.body.active !== 'boolean') {
+      throw new ValidationError('active must be a boolean.');
+    }
+    res.json(await reservations.setSupportedDeliveryCity(req.params.cityId, req.body.active)); // FR-86
+  }
+);
 
 router.post('/listing-search/synonyms', requirePermission('search.synonyms.manage'), async (req, res) => {
   validateSynonymBody(req.body);

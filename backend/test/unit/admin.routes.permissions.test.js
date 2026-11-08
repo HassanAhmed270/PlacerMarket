@@ -47,6 +47,8 @@ const ADMIN_ONLY_PATHS = [
   '/api/admin/payouts/x/hold/clear',
   '/api/admin/operations-overview',
   '/api/admin/delivery-partners',
+  '/api/admin/delivery-cities',
+  '/api/admin/delivery-cities/x',
   '/api/admin/fees/commission',
   '/api/admin/advertising-overview',
   '/api/admin/listing-search/synonyms',

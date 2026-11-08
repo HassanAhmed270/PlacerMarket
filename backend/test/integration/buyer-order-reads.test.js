@@ -131,7 +131,7 @@ describe('FR-60a public delivery cities', () => {
     );
     const response = await request(mountedApiApp()).get('/api/delivery-cities').expect(200);
 
-    expect(response.headers['cache-control']).toBe('public, max-age=60');
+    expect(response.headers['cache-control']).toBe('no-store');
     expect(response.body).toEqual(expected);
     expect(response.body.some((city) => city.id === extraCityId)).toBe(false);
     expect(response.body.every((city) => Object.keys(city).sort().join(',') === 'id,name')).toBe(true);

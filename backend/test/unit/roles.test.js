@@ -10,6 +10,7 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.ADMIN, 'search.synonyms.manage')).toBe(true);
     expect(hasPermission(ROLES.ADMIN, 'payout.force_release')).toBe(true);
     expect(hasPermission(ROLES.ADMIN, 'order.release_payout')).toBe(true);
+    expect(hasPermission(ROLES.ADMIN, 'delivery_city.configure')).toBe(true);
   });
 
   test('Moderator/Ops CAN review disputes and approve listings and seller applications', () => {
@@ -27,6 +28,7 @@ describe('lib/roles FR-05a permission matrix', () => {
     expect(hasPermission(ROLES.MODERATOR, 'operations.view')).toBe(false);
     expect(hasPermission(ROLES.MODERATOR, 'conversation.read')).toBe(false);
     expect(hasPermission(ROLES.MODERATOR, 'payout.force_release')).toBe(false);
+    expect(hasPermission(ROLES.MODERATOR, 'delivery_city.configure')).toBe(false);
   });
 
   test('Buyer/Seller have no admin permissions', () => {
