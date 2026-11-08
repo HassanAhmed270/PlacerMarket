@@ -1,4 +1,4 @@
-const { DEFAULTS, getRuntimeConfig } = require('../../src/config');
+const { DEFAULTS, getRuntimeConfig, validatePaymentsAdminCount } = require('../../src/config');
 
 function validProductionEnv(overrides = {}) {
   return {
@@ -22,6 +22,18 @@ function validProductionEnv(overrides = {}) {
 }
 
 describe('FR-84c: production configuration validation', () => {
+  test('FR-69: payment config requires two distinct enrolled, non-suspended Admins only for enabled production', () => {
+    const enabledProduction = { NODE_ENV: 'production', PAYMENTS_ENABLED: '1' };
+    for (const count of [0, 1, null, undefined]) {
+      expect(() => validatePaymentsAdminCount(enabledProduction, count))
+        .toThrow('at least two distinct, enrolled, non-suspended Admins');
+    }
+    expect(() => validatePaymentsAdminCount(enabledProduction, 2)).not.toThrow();
+    expect(() => validatePaymentsAdminCount({ NODE_ENV: 'production', PAYMENTS_ENABLED: '0' }, 0)).not.toThrow();
+    expect(() => validatePaymentsAdminCount({ NODE_ENV: 'production' }, 0)).not.toThrow();
+    expect(() => validatePaymentsAdminCount({ NODE_ENV: 'test', PAYMENTS_ENABLED: '1' }, 0)).not.toThrow();
+  });
+
   test('refuses missing production credentials with a clear key-specific message', () => {
     const env = validProductionEnv();
     delete env.DATABASE_URL;

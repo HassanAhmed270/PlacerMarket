@@ -53,6 +53,7 @@ describe('server startup diagnostics', () => {
         queueClient: { startProducer: jest.fn(), stopProducer: jest.fn() },
         redisFactory: jest.fn(() => redis),
         loadApp: jest.fn(() => ({})),
+        validatePaymentsGate: jest.fn().mockResolvedValue(undefined),
         ...overrides,
       },
     };
@@ -104,6 +105,18 @@ describe('server startup diagnostics', () => {
     await expect(startServer(deps.options)).rejects.toThrow('CORS_ORIGINS must contain exact HTTP(S) origins');
 
     expect(deps.logger.error).toHaveBeenCalledWith('CORS_ORIGINS must contain exact HTTP(S) origins without paths or wildcards.');
+  });
+
+  test('FR-69: refuses startup when the production payments Admin gate fails', async () => {
+    const gateError = new Error('Configuration error: PAYMENTS_ENABLED=1 requires at least two distinct, enrolled, non-suspended Admins.');
+    const deps = dependencies({
+      validatePaymentsGate: jest.fn().mockRejectedValue(gateError),
+    });
+
+    await expect(startServer(deps.options)).rejects.toBe(gateError);
+    expect(deps.options.validatePaymentsGate).toHaveBeenCalledTimes(1);
+    expect(deps.redis.start).not.toHaveBeenCalled();
+    expect(deps.logger.error).toHaveBeenCalledWith(gateError.message);
   });
 
   test('logs only the Redis error code when the Redis connection is unavailable', async () => {

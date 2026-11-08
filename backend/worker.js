@@ -13,6 +13,7 @@ const listingSearch = require('./src/modules/listingSearch.service');
 const pageSnapshots = require('./src/modules/pageSnapshots.service');
 const escrowPayments = require('./src/modules/escrowPayments.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
+const { assertPaymentsAdminGate } = require('./src/lib/paymentsAdminGate');
 
 async function registerMoneyMaintenanceSchedules(boss) {
   await boss.schedule(
@@ -48,7 +49,13 @@ async function processMoneyMaintenanceJob(job) {
   throw new Error('Unsupported money maintenance task.');
 }
 
-async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
+async function startWorker({
+  emailSender,
+  cdnPurger,
+  logger = console,
+  validatePaymentsGate = assertPaymentsAdminGate,
+} = {}) {
+  await validatePaymentsGate();
   if (process.env.NODE_ENV === 'production') keyProviderFromEnv(process.env);
   const selectedCdnPurger = cdnPurger || createCdnPurger({
     adapter: process.env.CDN_PURGE_ADAPTER || (process.env.NODE_ENV === 'production' ? undefined : 'fake'),
@@ -159,7 +166,9 @@ async function startWorker({ emailSender, cdnPurger, logger = console } = {}) {
 
 if (require.main === module) {
   startWorker().catch((error) => {
-    if (process.env.NODE_ENV === 'production' && /^PAYOUT_ENCRYPTION_(?:KEYS_JSON|ACTIVE_KEY_ID)/.test(error?.message || '')) {
+    if (/^Configuration error: PAYMENTS_ENABLED=/.test(error?.message || '')) {
+      console.error(error.message);
+    } else if (process.env.NODE_ENV === 'production' && /^PAYOUT_ENCRYPTION_(?:KEYS_JSON|ACTIVE_KEY_ID)/.test(error?.message || '')) {
       console.error(error.message);
     } else console.error('Worker startup failed', { code: error?.code || 'unknown' });
     process.exitCode = 1;

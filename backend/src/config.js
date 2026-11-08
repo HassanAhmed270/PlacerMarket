@@ -83,6 +83,13 @@ function assertUrl(env, key, protocols) {
   return parsed;
 }
 
+function validatePaymentsAdminCount(env, enrolledAdminCount) {
+  if (env.NODE_ENV !== 'production' || env.PAYMENTS_ENABLED !== '1') return;
+  if (!Number.isSafeInteger(enrolledAdminCount) || enrolledAdminCount < 2) {
+    throw new Error('Configuration error: PAYMENTS_ENABLED=1 requires at least two distinct, enrolled, non-suspended Admins.');
+  }
+}
+
 function getSecurityLimits(env = process.env) {
   const limits = {};
   for (const key of Object.keys(DEFAULTS)) limits[key] = positiveInteger(env, key);
@@ -149,4 +156,9 @@ function getRuntimeConfig(env = process.env) {
   });
 }
 
-module.exports = { DEFAULTS, getSecurityLimits, getRuntimeConfig };
+module.exports = {
+  DEFAULTS,
+  getSecurityLimits,
+  getRuntimeConfig,
+  validatePaymentsAdminCount,
+};

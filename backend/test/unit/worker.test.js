@@ -61,7 +61,8 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
     process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID = 'missing';
     process.env.PAYOUT_ENCRYPTION_KEYS_JSON = JSON.stringify({ key: Buffer.alloc(32).toString('base64') });
     try {
-      await expect(startWorker()).rejects.toThrow('PAYOUT_ENCRYPTION_ACTIVE_KEY_ID');
+      await expect(startWorker({ validatePaymentsGate: jest.fn().mockResolvedValue(undefined) }))
+        .rejects.toThrow('PAYOUT_ENCRYPTION_ACTIVE_KEY_ID');
       expect(mockRedis.createRedisClient).not.toHaveBeenCalled();
       expect(mockQueue.createQueueClient).not.toHaveBeenCalled();
     } finally {
@@ -72,6 +73,15 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
       if (previous.keys === undefined) delete process.env.PAYOUT_ENCRYPTION_KEYS_JSON;
       else process.env.PAYOUT_ENCRYPTION_KEYS_JSON = previous.keys;
     }
+  });
+
+  test('FR-69: refuses worker startup when the production payments Admin gate fails', async () => {
+    const gateError = new Error('Configuration error: PAYMENTS_ENABLED=1 requires at least two distinct, enrolled, non-suspended Admins.');
+    const validatePaymentsGate = jest.fn().mockRejectedValue(gateError);
+    await expect(startWorker({ validatePaymentsGate })).rejects.toBe(gateError);
+    expect(validatePaymentsGate).toHaveBeenCalledTimes(1);
+    expect(mockRedis.createRedisClient).not.toHaveBeenCalled();
+    expect(mockQueue.createQueueClient).not.toHaveBeenCalled();
   });
 
   test('FR-69, FR-77d: starts the worker and registers refund and notification consumers', async () => {
@@ -96,7 +106,11 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
       const emailSender = { send: jest.fn().mockResolvedValue({ accepted: true }) };
       const purger = { kind: 'live', purge: jest.fn().mockResolvedValue({ purged: 1 }) };
       mockPageSnapshots.processSnapshotJob.mockResolvedValue({ outcome: 'regenerated', paths: ['/'] });
-      const worker = await startWorker({ emailSender, cdnPurger: purger });
+      const worker = await startWorker({
+        emailSender,
+        cdnPurger: purger,
+        validatePaymentsGate: jest.fn().mockResolvedValue(undefined),
+      });
       expect(redis.start).toHaveBeenCalledTimes(1);
       expect(queue.start).toHaveBeenCalledTimes(1);
       expect(mockQueue.startProducer).toHaveBeenCalledTimes(1);

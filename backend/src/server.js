@@ -4,6 +4,7 @@ const { createRedisClient } = require('./lib/redis');
 const { getJwtConfig } = require('./lib/jwt');
 const { getRuntimeConfig } = require('./config');
 const { passwordHashPool } = require('./lib/passwordHashPool');
+const { assertPaymentsAdminGate } = require('./lib/paymentsAdminGate');
 
 function safeConfigurationMessage(error) {
   const message = error?.message;
@@ -21,6 +22,7 @@ async function startServer({
   redisFactory = createRedisClient,
   validateJwt = getJwtConfig,
   validateConfiguration = getRuntimeConfig,
+  validatePaymentsGate = assertPaymentsAdminGate,
   hashPool = passwordHashPool,
   logger = console,
 } = {}) {
@@ -30,6 +32,7 @@ async function startServer({
   try {
     validateJwt();
     validateConfiguration();
+    await validatePaymentsGate();
     redis = redisFactory();
     const app = loadApp(); // CORS configuration is validated while app is loaded.
 
