@@ -374,3 +374,17 @@ review and resolve an unresolved delivery exception. Use **Disputes** to review
 the case and evidence, then record a supported full-release or full-refund
 resolution. Dispute resolution records the decision; it does not itself issue a
 refund or external payout.
+
+### Completing a dispute refund
+
+For a buyer-favour resolution, the Admin decision moves no money and records a
+`dispute_refund_required` exception. The first Admin requests the full
+refundable balance from the exception's **Request a refund** link, and a
+different Admin approves it with a fresh authenticator step-up. After the
+gateway refund succeeds, the worker marks the payment refunded and closes the
+exception automatically with an audit note naming the refund; the payout hold
+is unchanged and payout release remains blocked. A resolution note alone
+cannot close this exception.
+
+All six manual-refund Admin routes apply the `adminOps` limiter after their
+permission check.
