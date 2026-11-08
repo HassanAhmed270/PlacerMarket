@@ -48,6 +48,7 @@ test('API client reports non-success responses without exposing response content
     assert.equal(error.status, 503)
     assert.equal(error.message, 'The API request failed with status 503.')
     assert.equal(error.message.includes('database details'), false)
+    assert.deepEqual(error.payload, { error: 'database details' })
     return true
   })
 })
@@ -162,6 +163,11 @@ test('Admin APIs call the existing protected routes with their exact methods and
   client.setAccessToken('short-lived-memory-token')
   await client.getAdminOrders({ limit: 20, status: 'funded', before: 'cursor-id' })
   await client.getAdminOrder('order-1')
+  await client.getAdminManualRefunds({ limit: 20, before: 'refund-cursor' })
+  await client.getAdminManualRefund('refund-1')
+  await client.getAdminRefundableBalance('order-1')
+  await client.requestAdminManualRefund('order-1', { reason: 'Reviewed customer delivery concern.', stepUpGrant: 'request-grant' })
+  await client.decideAdminManualRefund('refund-1', 'approve', { reason: 'Second Admin approved the request.', stepUpGrant: 'decision-grant' })
   await client.recordAdminHandover('order-1', { status: 'handed_to_delivery', courierPickupAt: '2026-11-07T10:00:00+00:00', handoverConfirmationNote: 'Courier picked up' })
   await client.markAdminOrderDelivered('order-1', { note: 'Delivery confirmed' })
   await client.releaseAdminOrderPayout('order-1', { payoutReference: 'ref-123', note: 'Manual transfer recorded' })
@@ -175,6 +181,11 @@ test('Admin APIs call the existing protected routes with their exact methods and
   assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
     ['https://api.example.test/api/admin/orders?limit=20&status=funded&before=cursor-id', 'GET'],
     ['https://api.example.test/api/admin/orders/order-1', 'GET'],
+    ['https://api.example.test/api/admin/refunds?limit=20&before=refund-cursor', 'GET'],
+    ['https://api.example.test/api/admin/refunds/refund-1', 'GET'],
+    ['https://api.example.test/api/admin/orders/order-1/refundable-balance', 'GET'],
+    ['https://api.example.test/api/admin/orders/order-1/refunds', 'POST'],
+    ['https://api.example.test/api/admin/refunds/refund-1/approve', 'POST'],
     ['https://api.example.test/api/admin/orders/order-1/delivery', 'PATCH'],
     ['https://api.example.test/api/admin/orders/order-1/delivered', 'POST'],
     ['https://api.example.test/api/admin/orders/order-1/payout/release', 'POST'],
@@ -184,12 +195,20 @@ test('Admin APIs call the existing protected routes with their exact methods and
     ['https://api.example.test/api/disputes/dispute-1/evidence', 'GET'],
     ['https://api.example.test/api/disputes/dispute-1/resolve', 'POST'],
   ])
-  assert.deepEqual(JSON.parse(calls[2].options.body), {
+  assert.deepEqual(JSON.parse(calls[7].options.body), {
     status: 'handed_to_delivery',
     courierPickupAt: '2026-11-07T10:00:00+00:00',
     handoverConfirmationNote: 'Courier picked up',
   })
-  assert.deepEqual(JSON.parse(calls[4].options.body), { payoutReference: 'ref-123', note: 'Manual transfer recorded' })
+  assert.deepEqual(JSON.parse(calls[9].options.body), { payoutReference: 'ref-123', note: 'Manual transfer recorded' })
+  assert.deepEqual(JSON.parse(calls[5].options.body), {
+    reason: 'Reviewed customer delivery concern.',
+    stepUpGrant: 'request-grant',
+  })
+  assert.deepEqual(JSON.parse(calls[6].options.body), {
+    reason: 'Second Admin approved the request.',
+    stepUpGrant: 'decision-grant',
+  })
   assert.ok(calls.every(({ options }) => options.headers.Authorization?.startsWith('Bearer ')))
 })
 

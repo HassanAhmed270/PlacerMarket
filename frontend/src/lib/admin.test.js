@@ -6,9 +6,13 @@ import {
   adminLoginErrorMessage,
   adminStatusLabel,
   buildAdminOrderQuery,
+  buildManualRefundRequestPayload,
+  canDecideManualRefund,
   deliveryCityActionLabel,
   formatAdminAmount,
   formatAdminDate,
+  manualRefundAgeLabel,
+  manualRefundExpiryLabel,
   localDateTimeToIsoWithOffset,
   orderActionEligibility,
   payoutReleaseMessage,
@@ -16,6 +20,7 @@ import {
   validateDisputeResolution,
   validateExceptionResolutionNote,
   validateHandoverForm,
+  validateManualRefundReason,
   validatePayoutForm,
 } from './admin.js'
 
@@ -50,6 +55,8 @@ test('Admin error mapping covers the API statuses and preserves 409/422 server m
     assert.ok(adminErrorMessage({ status }).length > 0)
   }
   assert.equal(adminErrorMessage({ status: 409, payload: { error: 'Order changed on the server.' } }), 'Order changed on the server.')
+  assert.equal(adminErrorMessage({ status: 400, payload: { error: 'A reason between 20 and 1000 characters is required.' } }), 'A reason between 20 and 1000 characters is required.')
+  assert.equal(adminErrorMessage({ status: 403, payload: { error: 'Authenticator verification failed.' } }), 'Authenticator verification failed.')
   assert.equal(adminErrorMessage({ status: 422, payload: { error: 'The note is invalid.' } }), 'The note is invalid.')
   assert.equal(adminErrorMessage({ status: 429 }), 'Too many requests, wait a moment.')
   assert.equal(adminLoginErrorMessage({ status: 401, payload: { error: 'Email or password is incorrect.' } }), 'Email or password is incorrect.')
@@ -81,6 +88,30 @@ test('Admin helpers format server decimal strings and dates without money arithm
 test('FR-86: delivery city toggle labels describe the next action', () => {
   assert.equal(deliveryCityActionLabel(true), 'Deactivate')
   assert.equal(deliveryCityActionLabel(false), 'Activate')
+})
+
+test('FR-69: manual refund helpers keep the request full-balance and prevent requester decisions', () => {
+  const reason = 'Customer service reviewed the delivery issue.'
+  assert.equal(validateManualRefundReason('too short'), 'A reason between 20 and 1000 characters is required.')
+  assert.equal(validateManualRefundReason(reason), '')
+  assert.deepEqual(buildManualRefundRequestPayload(` ${reason} `, 'one-use-grant'), {
+    reason,
+    stepUpGrant: 'one-use-grant',
+  })
+  assert.equal(Object.hasOwn(buildManualRefundRequestPayload(reason, 'grant'), 'amount'), false)
+  const now = Date.parse('2026-11-08T12:00:00.000Z')
+  const pending = { status: 'requested', requestedByMe: false, expiresAt: '2026-11-10T12:00:00.000Z' }
+  assert.equal(canDecideManualRefund({ ...pending, requestedByMe: true }, now), false)
+  assert.equal(canDecideManualRefund(pending, now), true)
+  assert.equal(canDecideManualRefund({ ...pending, expiresAt: '2026-11-08T11:59:00.000Z' }, now), false)
+  assert.equal(canDecideManualRefund({ ...pending, status: 'approved' }, now), false)
+})
+
+test('FR-69: manual refund age and expiry labels follow the 48-hour request window', () => {
+  const now = Date.parse('2026-11-08T12:00:00.000Z')
+  assert.equal(manualRefundAgeLabel('2026-11-08T10:55:00.000Z', now), '1h 5m ago')
+  assert.equal(manualRefundExpiryLabel('2026-11-08T13:30:00.000Z', now), 'Expires in 1h 30m')
+  assert.equal(manualRefundExpiryLabel('2026-11-08T11:59:00.000Z', now), 'Expired')
 })
 
 test('Admin order eligibility hints follow the order state and available permissions', () => {

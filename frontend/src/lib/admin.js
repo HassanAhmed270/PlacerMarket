@@ -85,7 +85,8 @@ export function validateDisputeResolution({ amount, note }) {
 export function adminErrorMessage(error) {
   const status = Number(error?.status)
   const serverMessage = error?.payload?.error
-  if ((status === 409 || status === 422) && typeof serverMessage === 'string' && serverMessage.trim()) {
+  if ([400, 403, 404, 409, 422].includes(status) &&
+      typeof serverMessage === 'string' && serverMessage.trim()) {
     return serverMessage
   }
   return ERROR_MESSAGES[status] || 'The request could not be completed. Please try again.'
@@ -144,6 +145,44 @@ export function adminStatusLabel(status) {
 
 export function deliveryCityActionLabel(active) {
   return active ? 'Deactivate' : 'Activate'
+}
+
+export function validateManualRefundReason(reason) {
+  if (typeof reason !== 'string' || reason.trim().length < 20 || reason.trim().length > 1000) {
+    return 'A reason between 20 and 1000 characters is required.'
+  }
+  return ''
+}
+
+export function buildManualRefundRequestPayload(reason, stepUpGrant) {
+  return { reason: reason.trim(), stepUpGrant }
+}
+
+export function manualRefundAgeLabel(requestedAt, now = Date.now()) {
+  const timestamp = Date.parse(requestedAt)
+  if (!Number.isFinite(timestamp)) return '—'
+  const elapsedMinutes = Math.max(0, Math.floor((now - timestamp) / 60000))
+  const hours = Math.floor(elapsedMinutes / 60)
+  if (hours >= 24) return `${Math.floor(hours / 24)}d ${hours % 24}h ago`
+  if (hours > 0) return `${hours}h ${elapsedMinutes % 60}m ago`
+  return `${elapsedMinutes}m ago`
+}
+
+export function manualRefundExpiryLabel(expiresAt, now = Date.now()) {
+  const timestamp = Date.parse(expiresAt)
+  if (!Number.isFinite(timestamp)) return 'Expiry unavailable'
+  const remainingMinutes = Math.ceil((timestamp - now) / 60000)
+  if (remainingMinutes <= 0) return 'Expired'
+  const hours = Math.floor(remainingMinutes / 60)
+  return hours > 0
+    ? `Expires in ${hours}h ${remainingMinutes % 60}m`
+    : `Expires in ${remainingMinutes}m`
+}
+
+export function canDecideManualRefund(refund, now = Date.now()) {
+  const expiresAt = Date.parse(refund?.expiresAt)
+  return refund?.status === 'requested' && refund.requestedByMe !== true &&
+    Number.isFinite(expiresAt) && expiresAt > now
 }
 
 export function orderActionEligibility(order, permissions = {}, now = Date.now()) {

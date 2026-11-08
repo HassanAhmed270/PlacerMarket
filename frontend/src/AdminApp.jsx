@@ -7,6 +7,9 @@ import AdminOrders from './AdminOrders.jsx'
 import AdminExceptions from './AdminExceptions.jsx'
 import AdminDisputes from './AdminDisputes.jsx'
 import AdminDeliveryCities from './AdminDeliveryCities.jsx'
+import AdminRefunds from './AdminRefunds.jsx'
+import AdminRefundRequest from './AdminRefundRequest.jsx'
+import AdminRefundDecision from './AdminRefundDecision.jsx'
 import './AdminWorkspace.css'
 
 function isAdminOrderAccessError(error) {
@@ -16,6 +19,11 @@ function isAdminOrderAccessError(error) {
 function orderIdFromPath(path) {
   const match = /^\/admin\/orders\/([^/]+)$/.exec(path)
   return match ? match[1] : ''
+}
+
+function refundIdFromPath(path) {
+  const match = /^\/admin\/refunds\/([^/]+)$/.exec(path)
+  return match && match[1] !== 'request' ? match[1] : ''
 }
 
 export default function AdminApp({ path }) {
@@ -115,8 +123,12 @@ export default function AdminApp({ path }) {
   }
 
   const orderId = orderIdFromPath(path)
+  const refundId = refundIdFromPath(path)
   let page
   if (orderId) page = <AdminOrders orderId={orderId} />
+  else if (path === '/admin/refunds/request') page = <AdminRefundRequest />
+  else if (refundId) page = <AdminRefundDecision refundId={refundId} />
+  else if (path === '/admin/refunds') page = <AdminRefunds />
   else if (path === '/admin/exceptions') page = <AdminExceptions />
   else if (path === '/admin/disputes') page = <AdminDisputes />
   else if (path === '/admin/delivery-cities') page = <AdminDeliveryCities />

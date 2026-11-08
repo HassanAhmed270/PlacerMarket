@@ -28,6 +28,9 @@ const nonPublicRoutes = new Set([
   '/admin/orders/:orderId',
   '/admin/exceptions',
   '/admin/disputes',
+  '/admin/refunds',
+  '/admin/refunds/request',
+  '/admin/refunds/:refundId',
   '/admin/delivery-cities',
 ])
 const privateModules = new Set([
@@ -49,6 +52,9 @@ const privateModules = new Set([
   'src/AdminExceptions.jsx',
   'src/AdminDisputes.jsx',
   'src/AdminDeliveryCities.jsx',
+  'src/AdminRefunds.jsx',
+  'src/AdminRefundRequest.jsx',
+  'src/AdminRefundDecision.jsx',
   'src/lib/admin.js',
 ])
 const maxBytes = 200 * 1024

@@ -23,7 +23,11 @@ export function createApiClient({
       signal,
     })
 
-    if (!response.ok) throw new ApiError(response.status)
+    if (!response.ok) {
+      let payload = null
+      try { payload = await response.json() } catch { /* Non-JSON error response. */ }
+      throw Object.assign(new ApiError(response.status), { payload })
+    }
     if (response.status === 204) return null
 
     try {
@@ -171,6 +175,11 @@ export function createApiClient({
     clearPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold/clear`, { reason }, { authenticated: true }),
     getAdminOrders: (filters = {}) => get(`admin/orders${queryString(filters)}`, { authenticated: true }),
     getAdminOrder: (id) => get(`admin/orders/${encodeURIComponent(id)}`, { authenticated: true }),
+    getAdminManualRefunds: (filters = {}) => get(`admin/refunds${queryString(filters)}`, { authenticated: true }),
+    getAdminManualRefund: (id) => get(`admin/refunds/${encodeURIComponent(id)}`, { authenticated: true }),
+    getAdminRefundableBalance: (orderId) => get(`admin/orders/${encodeURIComponent(orderId)}/refundable-balance`, { authenticated: true }),
+    requestAdminManualRefund: (orderId, input) => post(`admin/orders/${encodeURIComponent(orderId)}/refunds`, input, { authenticated: true }),
+    decideAdminManualRefund: (id, decision, input) => post(`admin/refunds/${encodeURIComponent(id)}/${decision}`, input, { authenticated: true }),
     recordAdminHandover: (id, input) => send('PATCH', `admin/orders/${encodeURIComponent(id)}/delivery`, input, { authenticated: true }),
     markAdminOrderDelivered: (id, input) => post(`admin/orders/${encodeURIComponent(id)}/delivered`, input, { authenticated: true }),
     releaseAdminOrderPayout: (id, input) => post(`admin/orders/${encodeURIComponent(id)}/payout/release`, input, { authenticated: true }),
