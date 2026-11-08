@@ -21,6 +21,7 @@ const {
 const eventBus = require('../../src/lib/eventBus');
 const events = require('../../src/lib/events');
 const notifications = require('../../src/modules/notifications.service');
+const moneyAudit = require('../../src/modules/moneyAudit.service');
 const payout = require('../../src/modules/payout.service');
 const disputes = require('../../src/modules/disputes.service');
 const listings = require('../../src/modules/listings.service');
@@ -123,7 +124,7 @@ async function processQueuedNotification(eventName, eventPayload, recipientId, e
     await notifications.processNotificationJob(job, transactionDb);
   });
 
-  const dedupeId = eventPayload.disputeId || eventPayload.orderId;
+  const dedupeId = eventPayload.refundId || eventPayload.disputeId || eventPayload.orderId;
   const dedupeKey = `${eventType}:${dedupeId}`;
   const { rows } = await db.query(
     `SELECT user_id, event_type, payload, dedupe_key
@@ -149,6 +150,136 @@ async function processQueuedNotification(eventName, eventPayload, recipientId, e
 function orderPath(role, orderId) {
   return `${role === 'seller' ? '/seller/orders' : '/orders'}/${orderId}`;
 }
+
+async function createRefundIntent(orderScenario, trigger) {
+  const { rows: paymentRows } = await db.query(
+    'SELECT amount::text AS amount, currency FROM payments WHERE id = $1',
+    [orderScenario.paymentId]
+  );
+  const manual = trigger === 'manual_admin';
+  const { rows } = await db.query(
+    `INSERT INTO refunds
+       (payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+      requested_by, approved_by, reason)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+     RETURNING id`,
+    [
+      orderScenario.paymentId,
+      orderScenario.orderId,
+      trigger,
+      paymentRows[0].amount,
+      paymentRows[0].currency,
+      manual ? 'approved' : 'requested',
+      `notification-refund:${crypto.randomUUID()}`,
+      manual ? orderScenario.sellerId : null,
+      manual ? harness.adminId : null,
+      trigger === 'system_expiry' ? 'Late payment after reservation ended' : null,
+    ]
+  );
+  return rows[0].id;
+}
+
+async function completeRefund(refundId) {
+  return escrowPayments.processRefundJob({
+    refundId,
+    gateway: {
+      createRefund: async ({ amount, providerPaymentRef }) => ({
+        providerRefundRef: `notification-provider-ref-${crypto.randomUUID()}`,
+        providerPaymentRef,
+        amount,
+        status: 'succeeded',
+      }),
+    },
+  });
+}
+
+test.each([
+  ['manual_admin', 'buyer', 'Your refund was processed: PKR 1550.50.'],
+  ['manual_admin', 'seller', 'A refund was issued for your sale: PKR 1550.50.'],
+  ['system_expiry', 'buyer', 'Your late payment was refunded: PKR 1550.50.'],
+  ['system_expiry', 'seller', 'A late payment for your sale was refunded: PKR 1550.50.'],
+  ['system_handover_timeout', 'buyer', 'Your order missed the handover deadline and was refunded: PKR 1550.50.'],
+  ['system_handover_timeout', 'seller', 'Your sale missed the handover deadline and was refunded: PKR 1550.50.'],
+  ['system_cancel', 'buyer', 'Your order was cancelled and refunded: PKR 1550.50.'],
+  ['system_cancel', 'seller', 'Your sale was cancelled and refunded: PKR 1550.50.'],
+])('FR-51: %s refund success notifies the %s once with the stored amount', async (trigger, role, message) => {
+  scenario = await createScenario(harness);
+  const refundId = await createRefundIntent(scenario, trigger);
+  await expect(completeRefund(refundId)).resolves.toMatchObject({ outcome: 'succeeded' });
+  const recipientId = role === 'seller' ? scenario.sellerId : scenario.buyerId;
+  await processQueuedNotification(
+    events.REFUND_STATUS_CHANGED,
+    { refundId, orderId: scenario.orderId, status: 'succeeded' },
+    recipientId,
+    'refund_succeeded',
+    { orderId: scenario.orderId, message, href: orderPath(role, scenario.orderId) }
+  );
+});
+
+test('FR-51: a late payment auto-refund notifies the buyer and seller with its stored amount', async () => {
+  scenario = await createUnfundedScenario(harness);
+  await db.query(
+    `UPDATE reservations SET expires_at = now() - INTERVAL '1 minute' WHERE id = $1`,
+    [scenario.reservationId]
+  );
+  await fundThroughWebhook(scenario);
+  const { rows } = await db.query(
+    `SELECT id, trigger, amount::text AS amount
+     FROM refunds WHERE order_id = $1`,
+    [scenario.orderId]
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({
+    trigger: 'system_expiry',
+    amount: '1550.50',
+  });
+  await expect(completeRefund(rows[0].id)).resolves.toMatchObject({ outcome: 'succeeded' });
+
+  await processQueuedNotification(
+    events.REFUND_STATUS_CHANGED,
+    { refundId: rows[0].id, orderId: scenario.orderId, status: 'succeeded' },
+    scenario.buyerId,
+    'refund_succeeded',
+    {
+      orderId: scenario.orderId,
+      message: 'Your late payment was refunded: PKR 1550.50.',
+      href: orderPath('buyer', scenario.orderId),
+    }
+  );
+  await processQueuedNotification(
+    events.REFUND_STATUS_CHANGED,
+    { refundId: rows[0].id, orderId: scenario.orderId, status: 'succeeded' },
+    scenario.sellerId,
+    'refund_succeeded',
+    {
+      orderId: scenario.orderId,
+      message: 'A late payment for your sale was refunded: PKR 1550.50.',
+      href: orderPath('seller', scenario.orderId),
+    }
+  );
+});
+
+test('FR-51: a refund notification is not queued when its status transaction rolls back', async () => {
+  scenario = await createScenario(harness);
+  const refundId = await createRefundIntent(scenario, 'system_cancel');
+  const auditSpy = jest.spyOn(moneyAudit, 'recordMoneyAuditEvent')
+    .mockRejectedValueOnce(new Error('integration rollback'));
+  try {
+    await expect(completeRefund(refundId)).rejects.toThrow('integration rollback');
+  } finally {
+    auditSpy.mockRestore();
+  }
+  await global.drainIntegrationListeners(5000);
+  const { rows: refunds } = await db.query('SELECT status FROM refunds WHERE id = $1', [refundId]);
+  expect(refunds[0].status).toBe('pending');
+  const { rows: jobs } = await db.query(
+    `SELECT id FROM pgboss.job
+     WHERE name = $1 AND data->>'eventName' = $2
+       AND data->'payload'->>'refundId' = $3`,
+    [queue.QUEUES.NOTIFICATIONS, events.REFUND_STATUS_CHANGED, refundId]
+  );
+  expect(jobs).toHaveLength(0);
+});
 
 test.each([
   ['seller', 'new_sale', 'You have a new sale; handover is recorded by our team after courier pickup.'],

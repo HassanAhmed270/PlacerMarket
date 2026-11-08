@@ -286,6 +286,10 @@ purpose so the schema works whichever way this eventually gets decided.
   the recipient user id(s) itself (see its `registerListeners()`). Its
   listeners are registered as a **require-time side effect** — `app.js`
   requires it explicitly so this isn't hidden.
+- **FR-51 refund notifications**: `escrowPayments.service.js` emits committed
+  manual and system refund status changes through the event bus. The
+  notification listener reads the owning refund/order rows for the stored
+  amount and buyer/seller recipients; refund/status keys deduplicate retries.
 - **Availability projections (FR-63, FR-73, FR-80a)**:
   `availability.service.js` is the shared source for active-reservation,
   paid-reservation and legacy-order SQL predicates. `discovery.service.js`,

@@ -34,6 +34,14 @@ const MANUAL_REFUND_EXPIRY_PREDICATE =
 const MANUAL_REFUND_EXPIRY_REASON =
   `Expired automatically after ${MANUAL_REFUND_EXPIRY_WINDOW} without a decision.`;
 
+function emitRefundStatusChange(refund) {
+  eventBus.emit(events.REFUND_STATUS_CHANGED, {
+    refundId: refund.id,
+    orderId: refund.order_id,
+    status: refund.status,
+  });
+}
+
 /** FR-68: return safe payment and refund summaries for an Admin reservation-order read. */
 async function getAdminOrderPaymentAndRefunds(orderId) {
   const { rows } = await db.read(
@@ -343,7 +351,7 @@ async function expireManualRefundRequests(client, orderId, paymentId, actorId, r
        AND status = 'requested'
        AND ${MANUAL_REFUND_EXPIRY_PREDICATE}
        ${targetClause}
-     RETURNING id, payment_id, requested_by`,
+     RETURNING id, order_id, payment_id, requested_by, status`,
     values
   );
   for (const refund of rows) {
@@ -389,20 +397,25 @@ async function getRefundableAmount(client, order, payment) {
 
 /** FR-69, SEC-39: calculate the full captured balance and expire stale requests atomically. */
 async function getRefundableBalance(orderId, actorId) {
-  return db.withTransaction(async (client) => {
+  const result = await db.withTransaction(async (client) => {
     const { order, payment } = await lockManualRefundContext(client, orderId);
-    await expireManualRefundRequests(client, orderId, payment.id, actorId);
+    const expiredRefunds = await expireManualRefundRequests(client, orderId, payment.id, actorId);
     const balance = await getRefundableAmount(client, order, payment);
     return {
-      orderId,
-      refundableAmount: {
-        total: balance.total,
-        itemPrice: balance.item_price,
-        deliveryFee: balance.delivery_fee,
+      expiredRefunds,
+      response: {
+        orderId,
+        refundableAmount: {
+          total: balance.total,
+          itemPrice: balance.item_price,
+          deliveryFee: balance.delivery_fee,
+        },
+        currency: payment.currency,
       },
-      currency: payment.currency,
     };
   });
+  notifyRefundStatusChanges(result.expiredRefunds);
+  return result.response;
 }
 
 function validateAdminManualRefundListQuery(query) {
@@ -499,9 +512,9 @@ async function getAdminManualRefund(refundId, actorId) {
 async function requestManualRefund(orderId, actorId, sessionId, input, { isOrderPayoutReleased }) {
   const reason = normalizeManualRefundNote(input?.reason);
   if (typeof isOrderPayoutReleased !== 'function') throw new TypeError('Payout-state owner is required.');
-  return db.withTransaction(async (client) => {
+  const result = await db.withTransaction(async (client) => {
     const { order, payment } = await lockManualRefundContext(client, orderId);
-    await expireManualRefundRequests(client, orderId, payment.id, actorId);
+    const expiredRefunds = await expireManualRefundRequests(client, orderId, payment.id, actorId);
     if (await isOrderPayoutReleased(client, orderId)) {
       throw new ConflictError('A refund cannot be requested after payout release.');
     }
@@ -539,8 +552,13 @@ async function requestManualRefund(orderId, actorId, sessionId, input, { isOrder
       reason,
       metadata: { trigger: 'manual_admin' },
     });
-    return { refundId, status: 'requested', amount: balance.total, currency: payment.currency };
+    return {
+      expiredRefunds,
+      response: { refundId, status: 'requested', amount: balance.total, currency: payment.currency },
+    };
   });
+  notifyRefundStatusChanges(result.expiredRefunds);
+  return result.response;
 }
 
 /** FR-69, SEC-39: approve or reject a pending manual request with a separate Admin grant. */
@@ -564,7 +582,7 @@ async function decideManualRefund(refundId, actorId, sessionId, input, { isOrder
 
   const result = await db.withTransaction(async (client) => {
     const { order, payment } = await lockManualRefundContext(client, initial.order_id, initial.payment_id);
-    await expireManualRefundRequests(client, order.id, payment.id, actorId, refundId);
+    const expiredRefunds = await expireManualRefundRequests(client, order.id, payment.id, actorId, refundId);
     const { rows: refundRows } = await client.query(
       `SELECT id, order_id, payment_id, requested_by, status
        FROM refunds
@@ -576,8 +594,8 @@ async function decideManualRefund(refundId, actorId, sessionId, input, { isOrder
     if (!refund || refund.order_id !== order.id || refund.payment_id !== payment.id) {
       throw new NotFoundError('refund');
     }
-    if (refund.status === 'expired') return { conflict: 'expired' };
-    if (refund.status !== 'requested') return { conflict: 'decided' };
+    if (refund.status === 'expired') return { conflict: 'expired', expiredRefunds };
+    if (refund.status !== 'requested') return { conflict: 'decided', expiredRefunds };
     if (refund.requested_by === actorId) {
       throw new ForbiddenError('The requester cannot decide their own refund.');
     }
@@ -609,17 +627,25 @@ async function decideManualRefund(refundId, actorId, sessionId, input, { isOrder
       reason: decisionNote,
       metadata: { trigger: 'manual_admin', decision: input.decision },
     });
-    return { refundId, status: input.decision, decision: input.decision };
+    return {
+      expiredRefunds,
+      refund: input.decision === 'rejected'
+        ? { id: refundId, order_id: order.id, status: 'rejected' }
+        : null,
+      response: { refundId, status: input.decision, decision: input.decision },
+    };
   });
 
+  notifyRefundStatusChanges(result.expiredRefunds);
+  if (result.refund) emitRefundStatusChange(result.refund);
   if (result.conflict === 'expired') throw new ConflictError('The manual refund request has expired.');
   if (result.conflict === 'decided') throw new ConflictError('The manual refund request has already been decided.');
-  return result;
+  return result.response;
 }
 
 /** FR-69: expire stale requests and block seller payout while a manual refund is unresolved. */
 async function assertNoOpenManualRefund(client, orderId, actorId) {
-  await expireManualRefundRequests(client, orderId, null, actorId);
+  const expiredRefunds = await expireManualRefundRequests(client, orderId, null, actorId);
   const { rows } = await client.query(
     `SELECT id
      FROM refunds
@@ -629,6 +655,12 @@ async function assertNoOpenManualRefund(client, orderId, actorId) {
     [orderId]
   );
   if (rows[0]) throw new ConflictError('An open manual refund request blocks payout release.');
+  return expiredRefunds;
+}
+
+/** FR-69: publish committed refund status changes through the notification event path. */
+function notifyRefundStatusChanges(refunds) {
+  for (const refund of refunds) emitRefundStatusChange(refund);
 }
 
 /** FR-69: execute a stored refund intent through the idempotent gateway outside database transactions. */
@@ -695,7 +727,7 @@ async function processRefundJob({ refundId, gateway } = {}) {
       throw new PaymentGatewayUnavailableError();
     }
   } catch {
-    await db.withTransaction(async (client) => {
+    const failedRefund = await db.withTransaction(async (client) => {
       const locked = await lockRefundPaymentOrder(
         client,
         refundIntent.orderId,
@@ -703,17 +735,20 @@ async function processRefundJob({ refundId, gateway } = {}) {
         refundId
       );
       if (!locked) return;
-      await client.query(
+      const { rows } = await client.query(
         `UPDATE refunds
          SET status = 'failed', updated_at = now()
-         WHERE id = $1 AND status = 'pending'`,
+         WHERE id = $1 AND status = 'pending'
+         RETURNING id, order_id, status`,
         [refundId]
       );
+      return rows[0] || null;
     });
+    if (failedRefund) emitRefundStatusChange(failedRefund);
     throw new PaymentGatewayUnavailableError();
   }
 
-  return db.withTransaction(async (client) => {
+  const result = await db.withTransaction(async (client) => {
     const locked = await lockRefundPaymentOrder(
       client,
       refundIntent.orderId,
@@ -792,8 +827,15 @@ async function processRefundJob({ refundId, gateway } = {}) {
         throw new TypeError('The delivery exception owner is not listening for manual refund completion.');
       }
     }
-    return { outcome: 'succeeded', refundId };
+    return {
+      outcome: 'succeeded',
+      refundId,
+      refundStatusChange: { id: refund.id, order_id: order.id, status: 'succeeded' },
+    };
   });
+  if (result.refundStatusChange) emitRefundStatusChange(result.refundStatusChange);
+  const { refundStatusChange, ...publicResult } = result;
+  return publicResult;
 }
 
 /** FR-65, FR-72: lock an order's payment rows after its reservation is locked. */
@@ -1798,6 +1840,7 @@ module.exports = {
   requestManualRefund,
   decideManualRefund,
   assertNoOpenManualRefund,
+  notifyRefundStatusChanges,
   createOrReusePayment,
   getPaymentStatus,
   enqueueRefundJob,

@@ -19,6 +19,7 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.ORDER_FUNDED,
   events.ORDER_CANCELLED,
   events.ORDER_AUTO_CANCELLED,
+  events.REFUND_STATUS_CHANGED,
   events.ORDER_HANDED_OVER,
   events.ORDER_DELIVERED,
   events.DELIVERY_STATUS_CHANGED,
@@ -31,6 +32,15 @@ const NOTIFICATION_EVENTS = Object.freeze([
 ]);
 
 function jobKeys(eventName, payload) {
+  if (eventName === events.REFUND_STATUS_CHANGED) {
+    if (!payload.refundId || !payload.orderId || !payload.status) {
+      throw new TypeError('Refund notification event is missing its refund, order, or status.');
+    }
+    return {
+      idempotencyKey: `refund:${payload.refundId}:${payload.status}`,
+      orderingKey: `order:${payload.orderId}`,
+    };
+  }
   if (eventName === events.MESSAGE_SENT) {
     if (!payload.messageId || !payload.conversationId) {
       throw new TypeError('Message notification event is missing its message or conversation ID.');
@@ -202,6 +212,83 @@ async function processNotificationJob(job, transactionDb) {
   let eventType;
   let notificationContent;
   switch (job.eventName) {
+    case events.REFUND_STATUS_CHANGED: {
+      // cross-module read: refunds (owned by escrowPayments.service.js), orders (owned by orders.service.js)
+      const { rows } = await transactionDb.executeSql(
+        `SELECT r.order_id, r.trigger, r.status, r.amount::text AS amount, r.currency, r.reason,
+                o.buyer_id, o.seller_id
+         FROM refunds r
+         JOIN orders o ON o.id = r.order_id
+         WHERE r.id = $1 AND r.order_id = $2 AND r.status = $3`,
+        [job.payload.refundId, job.payload.orderId, job.payload.status]
+      );
+      const refund = rows[0];
+      if (!refund) return;
+
+      const manualStatusTypes = {
+        succeeded: 'refund_succeeded',
+        failed: 'refund_failed',
+        expired: 'refund_request_expired',
+        rejected: 'refund_request_rejected',
+      };
+      if (refund.trigger === 'manual_admin') {
+        eventType = manualStatusTypes[refund.status];
+        if (!eventType) return;
+      } else if (refund.status !== 'succeeded' ||
+          !['system_expiry', 'system_handover_timeout', 'system_cancel'].includes(refund.trigger)) {
+        return;
+      } else {
+        eventType = 'refund_succeeded';
+      }
+
+      recipients = [
+        { userId: refund.buyer_id, role: 'buyer' },
+        { userId: refund.seller_id, role: 'seller' },
+      ];
+      notificationContent = (role) => {
+        const amount = `${refund.currency} ${refund.amount}`;
+        let message;
+        if (refund.status === 'succeeded') {
+          if (refund.trigger === 'system_expiry' &&
+              refund.reason === 'Late payment after reservation ended') {
+            message = role === 'seller'
+              ? `A late payment for your sale was refunded: ${amount}.`
+              : `Your late payment was refunded: ${amount}.`;
+          } else if (refund.trigger === 'system_handover_timeout') {
+            message = role === 'seller'
+              ? `Your sale missed the handover deadline and was refunded: ${amount}.`
+              : `Your order missed the handover deadline and was refunded: ${amount}.`;
+          } else if (refund.trigger === 'system_cancel') {
+            message = role === 'seller'
+              ? `Your sale was cancelled and refunded: ${amount}.`
+              : `Your order was cancelled and refunded: ${amount}.`;
+          } else {
+            message = role === 'seller'
+              ? `A refund was issued for your sale: ${amount}.`
+              : `Your refund was processed: ${amount}.`;
+          }
+        } else if (refund.status === 'failed') {
+          message = role === 'seller'
+            ? `A refund for your sale could not be processed: ${amount}.`
+            : `Your refund could not be processed: ${amount}.`;
+        } else if (refund.status === 'expired') {
+          message = role === 'seller'
+            ? `A refund request for your sale expired: ${amount}.`
+            : `Your refund request expired: ${amount}.`;
+        } else {
+          message = role === 'seller'
+            ? `A refund request for your sale was declined: ${amount}.`
+            : `Your refund request was declined: ${amount}.`;
+        }
+        const isSeller = role === 'seller';
+        return {
+          orderId: job.payload.orderId,
+          message,
+          href: `${isSeller ? '/seller/orders' : '/orders'}/${encodeURIComponent(job.payload.orderId)}`,
+        };
+      };
+      break;
+    }
     case events.SELLER_APPLICATION_STATUS_CHANGED: {
       // cross-module notification-recipient read: seller_applications (owned by users.service.js)
       const result = await transactionDb.executeSql(
@@ -379,7 +466,7 @@ async function processNotificationJob(job, transactionDb) {
       );
     } else if (notificationContent) {
       const recipientEventType = recipient.eventType || eventType;
-      const dedupeId = job.payload.disputeId || job.payload.orderId;
+      const dedupeId = job.payload.refundId || job.payload.disputeId || job.payload.orderId;
       const dedupeKey = `${recipientEventType}:${dedupeId}`;
       await transactionDb.executeSql(
         `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)

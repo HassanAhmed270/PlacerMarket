@@ -331,7 +331,7 @@ async function releaseReservationPayout(orderId, adminId, input) {
       throw new ConflictError('The order must have exactly one succeeded payment.');
     }
     const payment = succeededPayments[0];
-    await escrowPayments.assertNoOpenManualRefund(client, orderId, adminId);
+    const expiredRefunds = await escrowPayments.assertNoOpenManualRefund(client, orderId, adminId);
 
     const { rows: holdRows } = await client.query(
       `SELECT order_id, state, hold_started_at, hold_window_days,
@@ -412,10 +412,13 @@ async function releaseReservationPayout(orderId, adminId, input) {
       },
       releasedAt: releasedRows[0].released_at,
       payoutReference,
+      expiredRefunds,
     };
   });
+  escrowPayments.notifyRefundStatusChanges(result.expiredRefunds);
+  const { expiredRefunds, ...response } = result;
   eventBus.emit(events.PAYOUT_RELEASED, { orderId });
-  return result;
+  return response;
 }
 
 /** FR-65: read payout release state through the payout-holds owner in a caller transaction. */

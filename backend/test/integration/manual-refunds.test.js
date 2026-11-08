@@ -24,6 +24,10 @@ const payout = require('../../src/modules/payout.service');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { generateTotpSecret, generateTotpCode, encryptStaffTotpSecret } = require('../../src/lib/totp');
 const { createFixture } = require('./fixtures');
+const eventBus = require('../../src/lib/eventBus');
+const events = require('../../src/lib/events');
+const notifications = require('../../src/modules/notifications.service');
+const moneyAudit = require('../../src/modules/moneyAudit.service');
 
 const JWT_SECRET = 'manual-refunds-integration-access-secret';
 const STAFF_TOTP_KEY = 'manual-refunds-integration-staff-totp-key';
@@ -221,6 +225,78 @@ async function createRequest(user = staff.first, overrides = {}) {
   });
 }
 
+async function processRefundNotification(refundId, status, eventType, buyerMessage, sellerMessage) {
+  await global.drainIntegrationListeners(5000);
+  const eventPayload = { refundId, orderId: scenario.orderId, status };
+  let { rows: jobs } = await db.query(
+    `SELECT data FROM pgboss.job
+     WHERE name = $1 AND data->>'eventName' = $2
+       AND data->'payload'->>'refundId' = $3`,
+    [queue.QUEUES.NOTIFICATIONS, events.REFUND_STATUS_CHANGED, refundId]
+  );
+  expect(jobs).toHaveLength(1);
+
+  eventBus.emit(events.REFUND_STATUS_CHANGED, eventPayload);
+  await global.drainIntegrationListeners(5000);
+  ({ rows: jobs } = await db.query(
+    `SELECT data FROM pgboss.job
+     WHERE name = $1 AND data->>'eventName' = $2
+       AND data->'payload'->>'refundId' = $3`,
+    [queue.QUEUES.NOTIFICATIONS, events.REFUND_STATUS_CHANGED, refundId]
+  ));
+  expect(jobs).toHaveLength(1);
+
+  const transactionDb = {
+    executeSql: (text, values = []) => transactionDb.client.query(text, values),
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await db.withTransaction(async (client) => {
+      transactionDb.client = client;
+      await notifications.processNotificationJob(jobs[0].data, transactionDb);
+    });
+  }
+
+  const { rows } = await db.query(
+    `SELECT user_id, event_type, payload, dedupe_key
+     FROM notifications
+     WHERE user_id = ANY($1::uuid[]) AND dedupe_key = $2`,
+    [[buyerId, fixture.userId], `${eventType}:${refundId}`]
+  );
+  expect(rows).toHaveLength(2);
+  const byUser = new Map(rows.map((row) => [row.user_id, row]));
+  expect(byUser.get(buyerId)).toMatchObject({
+    event_type: eventType,
+    dedupe_key: `${eventType}:${refundId}`,
+    payload: {
+      orderId: scenario.orderId,
+      message: buyerMessage,
+      href: `/orders/${scenario.orderId}`,
+    },
+  });
+  expect(byUser.get(fixture.userId)).toMatchObject({
+    event_type: eventType,
+    dedupe_key: `${eventType}:${refundId}`,
+    payload: {
+      orderId: scenario.orderId,
+      message: sellerMessage,
+      href: `/seller/orders/${scenario.orderId}`,
+    },
+  });
+  expect(JSON.stringify(rows)).not.toContain('approvedBy');
+  expect(JSON.stringify(rows)).not.toContain('provider');
+}
+
+async function expectNoRefundNotificationJob(refundId) {
+  await global.drainIntegrationListeners(5000);
+  const { rows } = await db.query(
+    `SELECT id FROM pgboss.job
+     WHERE name = $1 AND data->>'eventName' = $2
+       AND data->'payload'->>'refundId' = $3`,
+    [queue.QUEUES.NOTIFICATIONS, events.REFUND_STATUS_CHANGED, refundId]
+  );
+  expect(rows).toHaveLength(0);
+}
+
 beforeEach(async () => {
   originalEnvironment = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
   process.env.NODE_ENV = 'test';
@@ -356,6 +432,111 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     expect(JSON.stringify(auditRows)).not.toContain(requestGrant);
     expect(JSON.stringify(auditRows)).not.toContain(decisionGrant);
     expect(JSON.stringify(auditRows)).not.toMatch(/"amount"\s*:/);
+    await processRefundNotification(
+      requested.body.refundId,
+      'succeeded',
+      'refund_succeeded',
+      'Your refund was processed: PKR 1550.50.',
+      'A refund was issued for your sale: PKR 1550.50.'
+    );
+  });
+
+  test('FR-51: a failed manual refund notifies the buyer and seller once with the stored amount', async () => {
+    const requested = await createRequest();
+    await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'Second administrator approved this refund.',
+      stepUpGrant: await createGrant(staff.second, 'refund.decide'),
+    }).expect(200);
+    await expect(escrowPayments.processRefundJob({
+      refundId: requested.body.refundId,
+      gateway: { createRefund: jest.fn().mockRejectedValue(new Error('gateway unavailable')) },
+    })).rejects.toMatchObject({ statusCode: 503 });
+
+    await processRefundNotification(
+      requested.body.refundId,
+      'failed',
+      'refund_failed',
+      'Your refund could not be processed: PKR 1550.50.',
+      'A refund for your sale could not be processed: PKR 1550.50.'
+    );
+  });
+
+  test('FR-51: a rejected manual refund request notifies the buyer and seller once with the stored amount', async () => {
+    const requested = await createRequest();
+    await sendDecision(staff.second, requested.body.refundId, 'reject', {
+      reason: 'Second administrator declined this refund.',
+      stepUpGrant: await createGrant(staff.second, 'refund.decide'),
+    }).expect(200);
+
+    await processRefundNotification(
+      requested.body.refundId,
+      'rejected',
+      'refund_request_rejected',
+      'Your refund request was declined: PKR 1550.50.',
+      'A refund request for your sale was declined: PKR 1550.50.'
+    );
+  });
+
+  test('FR-51: a rejected refund notification is not queued when its transaction rolls back', async () => {
+    const requested = await createRequest();
+    const auditSpy = jest.spyOn(moneyAudit, 'recordMoneyAuditEvent')
+      .mockRejectedValueOnce(new Error('integration rollback'));
+    try {
+      await expect(escrowPayments.decideManualRefund(
+        requested.body.refundId,
+        staff.second.id,
+        staff.second.sessionId,
+        {
+          decision: 'rejected',
+          reason: 'Second administrator declined this refund.',
+          stepUpGrant: await createGrant(staff.second, 'refund.decide'),
+        },
+        { isOrderPayoutReleased: async () => false }
+      )).rejects.toThrow('integration rollback');
+    } finally {
+      auditSpy.mockRestore();
+    }
+
+    const { rows } = await db.query('SELECT status FROM refunds WHERE id = $1', [requested.body.refundId]);
+    expect(rows[0].status).toBe('requested');
+    await expectNoRefundNotificationJob(requested.body.refundId);
+  });
+
+  test('FR-51: an expired manual refund request notifies the buyer and seller once with the stored amount', async () => {
+    const requested = await createRequest();
+    await db.query(
+      `UPDATE refunds SET requested_at = now() - INTERVAL '49 hours' WHERE id = $1`,
+      [requested.body.refundId]
+    );
+    await escrowPayments.getRefundableBalance(scenario.orderId, staff.second.id);
+
+    await processRefundNotification(
+      requested.body.refundId,
+      'expired',
+      'refund_request_expired',
+      'Your refund request expired: PKR 1550.50.',
+      'A refund request for your sale expired: PKR 1550.50.'
+    );
+  });
+
+  test('FR-51: an expired refund notification is not queued when its transaction rolls back', async () => {
+    const requested = await createRequest();
+    await db.query(
+      `UPDATE refunds SET requested_at = now() - INTERVAL '49 hours' WHERE id = $1`,
+      [requested.body.refundId]
+    );
+    const auditSpy = jest.spyOn(moneyAudit, 'recordMoneyAuditEvent')
+      .mockRejectedValueOnce(new Error('integration rollback'));
+    try {
+      await expect(escrowPayments.getRefundableBalance(scenario.orderId, staff.second.id))
+        .rejects.toThrow('integration rollback');
+    } finally {
+      auditSpy.mockRestore();
+    }
+
+    const { rows } = await db.query('SELECT status FROM refunds WHERE id = $1', [requested.body.refundId]);
+    expect(rows[0].status).toBe('requested');
+    await expectNoRefundNotificationJob(requested.body.refundId);
   });
 
   test('FR-69: Admin refund reads expose queue and detail metadata without provider data', async () => {
@@ -805,6 +986,13 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     );
     expect(auditRows).toHaveLength(1);
     expect(auditRows[0]).toMatchObject({ action: 'manual_refund_expired', actor_id: staff.third.id, count: 1 });
+    await processRefundNotification(
+      requested.body.refundId,
+      'expired',
+      'refund_request_expired',
+      'Your refund request expired: PKR 1550.50.',
+      'A refund request for your sale expired: PKR 1550.50.'
+    );
   });
 
   test('FR-69: a 47-hour-59-minute-old manual request still blocks payout release', async () => {
