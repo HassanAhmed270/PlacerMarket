@@ -129,7 +129,7 @@ describe('delivery.service order exceptions — FR-72e', () => {
     });
   });
 
-  test('FR-45, FR-69: dispute refund exception resolution requires the captured payment to be fully refunded', async () => {
+  test('FR-69: dispute refund exception resolution requires the captured payment to be fully refunded', async () => {
     client.query.mockResolvedValueOnce({
       rows: [{ order_id: orderId, kind: 'dispute_refund_required' }],
     });
@@ -167,8 +167,8 @@ describe('delivery.service order exceptions — FR-72e', () => {
   });
 });
 
-describe('manual refund completion event — FR-45, FR-69', () => {
-  test('FR-45, FR-69: listener requires the refund transaction', async () => {
+describe('manual refund completion event — FR-69', () => {
+  test('FR-69: listener requires the refund transaction', async () => {
     await expect(eventBus.emitAsync(events.MANUAL_REFUND_SUCCEEDED, {
       orderId,
       paymentId: '77777777-7777-4777-8777-777777777777',
@@ -177,7 +177,7 @@ describe('manual refund completion event — FR-45, FR-69', () => {
     })).rejects.toThrow(TypeError);
   });
 
-  test('FR-45, FR-69: listener is a no-op when no unresolved dispute refund exception exists', async () => {
+  test('FR-69: listener is a no-op when no unresolved dispute refund exception exists', async () => {
     const transaction = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     await expect(eventBus.emitAsync(events.MANUAL_REFUND_SUCCEEDED, {
       orderId,

@@ -172,7 +172,7 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
     expect(orderRows).toEqual([{ status: 'completed', hold_state: 'released' }]);
   });
 
-  test('FR-45, FR-72e: buyer resolution records an exception without moving money and requires a refund first', async () => {
+  test('FR-69: buyer resolution records an exception without moving money and requires a refund first', async () => {
     const dispute = await fileBuyerDispute();
     const before = await getMoneyState(scenario.orderId);
 

@@ -268,8 +268,8 @@ afterAll(async () => {
   else process.env.STAFF_TOTP_ENCRYPTION_SECRET = originalStaffTotpKey;
 });
 
-describe('FR-45, FR-69 dispute refund completion', () => {
-  test('FR-45, FR-69: full manual refund closes the buyer-favour exception in the refund transaction', async () => {
+describe('FR-69 dispute refund completion', () => {
+  test('FR-69: full manual refund closes the buyer-favour exception in the refund transaction', async () => {
     const { rows: before } = await db.query(
       'SELECT state FROM payout_holds WHERE order_id = $1',
       [scenario.orderId]
@@ -318,7 +318,7 @@ describe('FR-45, FR-69 dispute refund completion', () => {
     await resolveException(scenario.disputeExceptionId).expect(409);
   });
 
-  test('FR-45, FR-69: manual exception resolution refuses an unrefunded order and changes nothing', async () => {
+  test('FR-69: manual exception resolution refuses an unrefunded order and changes nothing', async () => {
     await resolveException(scenario.disputeExceptionId)
       .expect(409)
       .expect(({ body }) => expect(body.error).toMatch(/refund the buyer first/i));
@@ -345,7 +345,7 @@ describe('FR-45, FR-69 dispute refund completion', () => {
     expect(await exceptionResolutionAuditCount(scenario)).toBe(1);
   });
 
-  test('FR-45, FR-69: rejected and expired refunds leave the exception open for a new full request', async () => {
+  test('FR-69: rejected and expired refunds leave the exception open for a new full request', async () => {
     const rejected = await requestRefund(scenario);
     expect(rejected.status).toBe(201);
     const rejectionGrant = await createStoredStepUpGrant(admins.second, 'refund.decide');
@@ -387,7 +387,7 @@ describe('FR-45, FR-69 dispute refund completion', () => {
     expect((await getExceptionState(scenario)).resolved_at).toBeNull();
   });
 
-  test('FR-45, FR-69: approval and manual exception resolution serialize safely across ten orders', async () => {
+  test('FR-69: approval and manual exception resolution serialize safely across ten orders', async () => {
     const targets = [scenario];
     for (let index = 1; index < 10; index += 1) {
       const target = await createScenario(harness);
@@ -431,7 +431,7 @@ describe('FR-45, FR-69 dispute refund completion', () => {
     }
   });
 
-  test('FR-45, FR-69: a refund-completion listener failure rolls back refund and exception updates', async () => {
+  test('FR-69: a refund-completion listener failure rolls back refund and exception updates', async () => {
     const requested = await requestRefund(scenario);
     expect(requested.status).toBe(201);
     const approved = await approveRefund(requested.body.refundId);
