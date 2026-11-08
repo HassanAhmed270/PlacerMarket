@@ -225,7 +225,7 @@ async function createRequest(user = staff.first, overrides = {}) {
   });
 }
 
-async function processRefundNotification(refundId, status, eventType, buyerMessage, sellerMessage) {
+async function processRefundNotification(refundId, status, eventType, expectedNotifications) {
   await global.drainIntegrationListeners(5000);
   const eventPayload = { refundId, orderId: scenario.orderId, status };
   let { rows: jobs } = await db.query(
@@ -262,26 +262,20 @@ async function processRefundNotification(refundId, status, eventType, buyerMessa
      WHERE user_id = ANY($1::uuid[]) AND dedupe_key = $2`,
     [[buyerId, fixture.userId], `${eventType}:${refundId}`]
   );
-  expect(rows).toHaveLength(2);
+  expect(rows).toHaveLength(expectedNotifications.length);
   const byUser = new Map(rows.map((row) => [row.user_id, row]));
-  expect(byUser.get(buyerId)).toMatchObject({
-    event_type: eventType,
-    dedupe_key: `${eventType}:${refundId}`,
-    payload: {
-      orderId: scenario.orderId,
-      message: buyerMessage,
-      href: `/orders/${scenario.orderId}`,
-    },
-  });
-  expect(byUser.get(fixture.userId)).toMatchObject({
-    event_type: eventType,
-    dedupe_key: `${eventType}:${refundId}`,
-    payload: {
-      orderId: scenario.orderId,
-      message: sellerMessage,
-      href: `/seller/orders/${scenario.orderId}`,
-    },
-  });
+  for (const { role, message } of expectedNotifications) {
+    const userId = role === 'buyer' ? buyerId : fixture.userId;
+    expect(byUser.get(userId)).toMatchObject({
+      event_type: eventType,
+      dedupe_key: `${eventType}:${refundId}`,
+      payload: {
+        orderId: scenario.orderId,
+        message,
+        href: `${role === 'buyer' ? '/orders' : '/seller/orders'}/${scenario.orderId}`,
+      },
+    });
+  }
   expect(JSON.stringify(rows)).not.toContain('approvedBy');
   expect(JSON.stringify(rows)).not.toContain('provider');
 }
@@ -436,12 +430,14 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       requested.body.refundId,
       'succeeded',
       'refund_succeeded',
-      'Your refund was processed: PKR 1550.50.',
-      'A refund was issued for your sale: PKR 1550.50.'
+      [
+        { role: 'buyer', message: 'Your refund was processed: PKR 1550.50.' },
+        { role: 'seller', message: 'A refund was issued for your sale: PKR 1550.50.' },
+      ]
     );
   });
 
-  test('FR-51: a failed manual refund notifies the buyer and seller once with the stored amount', async () => {
+  test('FR-51: a failed manual refund creates no notifications', async () => {
     const requested = await createRequest();
     await sendDecision(staff.second, requested.body.refundId, 'approve', {
       reason: 'Second administrator approved this refund.',
@@ -456,12 +452,11 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       requested.body.refundId,
       'failed',
       'refund_failed',
-      'Your refund could not be processed: PKR 1550.50.',
-      'A refund for your sale could not be processed: PKR 1550.50.'
+      []
     );
   });
 
-  test('FR-51: a rejected manual refund request notifies the buyer and seller once with the stored amount', async () => {
+  test('FR-51: a rejected manual refund request notifies only the buyer without an amount', async () => {
     const requested = await createRequest();
     await sendDecision(staff.second, requested.body.refundId, 'reject', {
       reason: 'Second administrator declined this refund.',
@@ -472,8 +467,10 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       requested.body.refundId,
       'rejected',
       'refund_request_rejected',
-      'Your refund request was declined: PKR 1550.50.',
-      'A refund request for your sale was declined: PKR 1550.50.'
+      [{
+        role: 'buyer',
+        message: 'We reviewed your refund request and could not approve it.',
+      }]
     );
   });
 
@@ -502,7 +499,7 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     await expectNoRefundNotificationJob(requested.body.refundId);
   });
 
-  test('FR-51: an expired manual refund request notifies the buyer and seller once with the stored amount', async () => {
+  test('FR-51: an expired manual refund request creates no notifications', async () => {
     const requested = await createRequest();
     await db.query(
       `UPDATE refunds SET requested_at = now() - INTERVAL '49 hours' WHERE id = $1`,
@@ -514,8 +511,7 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       requested.body.refundId,
       'expired',
       'refund_request_expired',
-      'Your refund request expired: PKR 1550.50.',
-      'A refund request for your sale expired: PKR 1550.50.'
+      []
     );
   });
 
@@ -990,8 +986,7 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       requested.body.refundId,
       'expired',
       'refund_request_expired',
-      'Your refund request expired: PKR 1550.50.',
-      'A refund request for your sale expired: PKR 1550.50.'
+      []
     );
   });
 

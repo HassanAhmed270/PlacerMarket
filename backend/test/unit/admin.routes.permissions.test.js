@@ -15,6 +15,8 @@ jest.mock('../../src/modules/disputes.service', () => ({
 
 const express = require('express');
 const request = require('supertest');
+const { setSharedRedisClient } = require('../../src/lib/redis');
+setSharedRedisClient({ isOpen: true, eval: async () => [1, 1] });
 const adminRouter = require('../../src/routes/admin.routes');
 const disputesRouter = require('../../src/routes/disputes.routes');
 const errorHandler = require('../../src/middleware/errorHandler');

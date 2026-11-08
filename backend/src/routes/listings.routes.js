@@ -2,8 +2,10 @@ const { Router } = require('express');
 const listings = require('../modules/listings.service');
 const listingRevisions = require('../modules/listingRevisions.service');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
 const router = Router();
+const limiters = createConfiguredRateLimiters();
 
 router.post('/seo-recommendation', requireAuth, async (req, res) => {
   res.json(await listings.getSeoRecommendation(req.user.id, req.body)); // FR-82
@@ -72,31 +74,31 @@ router.get('/revisions/:revisionId', requireAuth, requirePermission('listing.rev
   res.json(await listingRevisions.getListingRevision(req.params.revisionId)); // FR-73
 });
 
-router.post('/revisions/:revisionId/approve', requireAuth, requirePermission('listing.approve'), async (req, res) => {
+router.post('/revisions/:revisionId/approve', requireAuth, requirePermission('listing.approve'), limiters.adminOps, async (req, res) => {
   res.json(await listingRevisions.approveListingRevision(req.params.revisionId, req.user.id)); // FR-73
 });
 
-router.post('/revisions/:revisionId/reject', requireAuth, requirePermission('listing.reject'), async (req, res) => {
+router.post('/revisions/:revisionId/reject', requireAuth, requirePermission('listing.reject'), limiters.adminOps, async (req, res) => {
   res.json(await listingRevisions.rejectListingRevision(req.params.revisionId, req.user.id, req.body.reason)); // FR-73
 });
 
-router.post('/photos/:imageId/confirm', requireAuth, requirePermission('listing.review'), async (req, res) => {
+router.post('/photos/:imageId/confirm', requireAuth, requirePermission('listing.review'), limiters.adminOps, async (req, res) => {
   res.json(await listings.confirmListingPhoto(req.params.imageId, req.user.id)); // FR-74a
 });
 
-router.post('/photos/:imageId/reject', requireAuth, requirePermission('listing.review'), async (req, res) => {
+router.post('/photos/:imageId/reject', requireAuth, requirePermission('listing.review'), limiters.adminOps, async (req, res) => {
   res.json(await listings.rejectListingPhoto(req.params.imageId, req.user.id, req.body.reason)); // FR-74a
 });
 
-router.post('/:id/approve', requireAuth, requirePermission('listing.approve'), async (req, res) => {
+router.post('/:id/approve', requireAuth, requirePermission('listing.approve'), limiters.adminOps, async (req, res) => {
   res.json(await listings.approveListing(req.params.id, req.user.id)); // FR-19a
 });
 
-router.post('/:id/reject', requireAuth, requirePermission('listing.reject'), async (req, res) => {
+router.post('/:id/reject', requireAuth, requirePermission('listing.reject'), limiters.adminOps, async (req, res) => {
   res.json(await listings.rejectOrUnpublishListing(req.params.id, { reviewerId: req.user.id, reason: req.body.reason })); // FR-21
 });
 
-router.post('/:id/verified-badge', requireAuth, requirePermission('listing.grant_verified_badge'), async (req, res) => {
+router.post('/:id/verified-badge', requireAuth, requirePermission('listing.grant_verified_badge'), limiters.adminOps, async (req, res) => {
   res.json(await listings.setVerifiedBadge(req.params.id, { granted: req.body.granted, reviewerId: req.user.id })); // FR-18
 });
 

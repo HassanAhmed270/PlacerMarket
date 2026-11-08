@@ -2,8 +2,10 @@ const { Router } = require('express');
 const settlement = require('../modules/settlement.service');
 const users = require('../modules/users.service');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
 const router = Router();
+const limiters = createConfiguredRateLimiters();
 
 router.get('/orders/:id', requirePermission('user.suspend'), async (req, res) => {
   // Admin-only stand-in gate again (see payout.routes.js note) — settlement
@@ -14,11 +16,11 @@ router.get('/orders/:id', requirePermission('user.suspend'), async (req, res) =>
   res.json(record);
 });
 
-router.post('/orders/:id/initiate-payout', requireAuth, requirePermission('user.suspend'), async (req, res) => {
+router.post('/orders/:id/initiate-payout', requireAuth, requirePermission('user.suspend'), limiters.adminOps, async (req, res) => {
   res.json(await settlement.initiateSellerPayout(req.params.id, req.user.id, users.assertPayoutAllowed)); // FR-48 / FR-66 / FR-83l
 });
 
-router.patch('/commission', requirePermission('fee.configure'), async (req, res) => {
+router.patch('/commission', requirePermission('fee.configure'), limiters.adminOps, async (req, res) => {
   res.json(await settlement.adjustCommissionPercent(req.body.percent, req.user.id)); // FR-50, Admin-only
 });
 

@@ -140,21 +140,21 @@ router.put(
   }
 );
 
-router.post('/listing-search/synonyms', requirePermission('search.synonyms.manage'), async (req, res) => {
+router.post('/listing-search/synonyms', requirePermission('search.synonyms.manage'), limiters.adminOps, async (req, res) => {
   validateSynonymBody(req.body);
   res.status(201).json(await listingSearch.createSearchSynonym(req.body, req.user.id)); // FR-80a
 });
 
-router.patch('/listing-search/synonyms/:id', requirePermission('search.synonyms.manage'), async (req, res) => {
+router.patch('/listing-search/synonyms/:id', requirePermission('search.synonyms.manage'), limiters.adminOps, async (req, res) => {
   validateSynonymBody(req.body);
   res.json(await listingSearch.updateSearchSynonym(req.params.id, req.body, req.user.id)); // FR-80a
 });
 
-router.delete('/listing-search/synonyms/:id', requirePermission('search.synonyms.manage'), async (req, res) => {
+router.delete('/listing-search/synonyms/:id', requirePermission('search.synonyms.manage'), limiters.adminOps, async (req, res) => {
   res.json(await listingSearch.deleteSearchSynonym(req.params.id)); // FR-80a
 });
 
-router.post('/users/:id/suspend', requirePermission('user.suspend'), async (req, res) => {
+router.post('/users/:id/suspend', requirePermission('user.suspend'), limiters.adminOps, async (req, res) => {
   res.json(await admin.suspendUser(req.params.id, { adminId: req.user.id, reason: req.body.reason })); // FR-52
 });
 
@@ -195,7 +195,7 @@ router.post('/payouts/:sellerId/hold/clear', requirePermission('payout.hold'), l
   res.set('Cache-Control', 'private, no-store').json(await admin.clearSellerPayoutHold(req.params.sellerId, { adminId: req.user.id, reason: req.body.reason.trim() })); // FR-83l
 });
 
-router.post('/sellers/:id/identity-verification', requirePermission('seller_identity.verify'), async (req, res) => {
+router.post('/sellers/:id/identity-verification', requirePermission('seller_identity.verify'), limiters.adminOps, async (req, res) => {
   const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
   if (Object.keys(body).some((key) => key !== 'note') || typeof body.note !== 'string' || !body.note.trim() || body.note.trim().length > 500) {
     throw new ValidationError('A short verification note is required. Identity documents and numbers are not accepted.');
@@ -206,20 +206,21 @@ router.post('/sellers/:id/identity-verification', requirePermission('seller_iden
 router.post(
   '/seller-applications/:id/review',
   requirePermission((req) => (req.body.decision === 'approved' ? 'seller_application.approve' : 'seller_application.reject')),
+  limiters.adminOps,
   async (req, res) => {
     res.json(await admin.reviewSellerApplication(req.params.id, { ...req.body, reviewerId: req.user.id })); // FR-53
   }
 );
 
-router.post('/listings/:id/approve', requirePermission('listing.approve'), async (req, res) => {
+router.post('/listings/:id/approve', requirePermission('listing.approve'), limiters.adminOps, async (req, res) => {
   res.json(await admin.approveListing(req.params.id, req.user.id)); // FR-54
 });
 
-router.post('/listings/:id/reject', requirePermission('listing.reject'), async (req, res) => {
+router.post('/listings/:id/reject', requirePermission('listing.reject'), limiters.adminOps, async (req, res) => {
   res.json(await admin.rejectListing(req.params.id, { reviewerId: req.user.id, reason: req.body.reason })); // FR-54
 });
 
-router.post('/listings/:id/verified-badge', requirePermission('listing.grant_verified_badge'), async (req, res) => {
+router.post('/listings/:id/verified-badge', requirePermission('listing.grant_verified_badge'), limiters.adminOps, async (req, res) => {
   res.json(await admin.grantVerifiedBadge(req.params.id, { granted: req.body.granted, reviewerId: req.user.id })); // FR-54
 });
 
@@ -239,15 +240,15 @@ router.get('/queue/health', requirePermission('operations.view'), async (_req, r
   res.json(await queue.getQueueHealth()); // FR-77c
 });
 
-router.post('/disputes/:id/resolve', requirePermission('dispute.resolve'), async (req, res) => {
+router.post('/disputes/:id/resolve', requirePermission('dispute.resolve'), limiters.adminOps, async (req, res) => {
   res.json(await admin.resolveDispute(req.params.id, { ...req.body, resolvedBy: req.user.id })); // FR-56
 });
 
-router.post('/delivery-partners', requirePermission('delivery_partner.configure'), async (req, res) => {
+router.post('/delivery-partners', requirePermission('delivery_partner.configure'), limiters.adminOps, async (req, res) => {
   res.json(await admin.manageDeliveryPartner('create', req.body, req.user.id)); // FR-57
 });
 
-router.patch('/fees/commission', requirePermission('fee.configure'), async (req, res) => {
+router.patch('/fees/commission', requirePermission('fee.configure'), limiters.adminOps, async (req, res) => {
   res.json(await admin.configureFees(req.body.percent, req.user.id)); // FR-58
 });
 

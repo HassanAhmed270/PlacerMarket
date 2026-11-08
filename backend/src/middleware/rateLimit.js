@@ -49,7 +49,7 @@ function createRateLimiter({ category, ipMax, accountMax, windowSeconds, clientP
   if (!category || !Number.isSafeInteger(ipMax) || !Number.isSafeInteger(accountMax) || !Number.isSafeInteger(windowSeconds)) {
     throw new TypeError('Rate limiter requires a category and positive integer limits.');
   }
-  return async function rateLimit(req, res, next) {
+  const middleware = async function rateLimit(req, res, next) {
     const client = clientProvider();
     if (!client?.isOpen || typeof client.eval !== 'function') {
       return next(new ServiceUnavailableError('Request protection is temporarily unavailable.'));
@@ -67,6 +67,8 @@ function createRateLimiter({ category, ipMax, accountMax, windowSeconds, clientP
       return next(new ServiceUnavailableError('Request protection is temporarily unavailable.'));
     }
   };
+  middleware.rateLimitCategory = category;
+  return middleware;
 }
 
 function createSoftChallengeSignal({ threshold, windowSeconds, clientProvider = getSharedRedisClient }) {

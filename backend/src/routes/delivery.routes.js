@@ -18,16 +18,16 @@ router.get('/partners', async (req, res) => {
   res.json(await delivery.listDeliveryPartners()); // FR-40
 });
 
-router.post('/partners', requirePermission('delivery_partner.configure'), async (req, res) => {
+router.post('/partners', requirePermission('delivery_partner.configure'), limiters.adminOps, async (req, res) => {
   res.status(201).json(await delivery.createDeliveryPartner(req.body, req.user.id)); // FR-40a
 });
 
-router.patch('/partners/:id/active', requirePermission('delivery_partner.configure'), async (req, res) => {
+router.patch('/partners/:id/active', requirePermission('delivery_partner.configure'), limiters.adminOps, async (req, res) => {
   res.json(await delivery.setDeliveryPartnerActive(req.params.id, req.body.isActive, req.user.id));
 });
 
 // FR-41: legacy manual status entry is Admin-only.
-router.post('/orders/:id/status', requireAuth, requirePermission('order.log_delivery_status'), async (req, res) => {
+router.post('/orders/:id/status', requireAuth, requirePermission('order.log_delivery_status'), limiters.adminOps, async (req, res) => {
   res.status(201).json(await delivery.logDeliveryStatus(req.params.id, { ...req.body, enteredBy: req.user.id }));
 });
 

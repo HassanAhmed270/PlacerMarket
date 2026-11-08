@@ -227,11 +227,10 @@ async function processNotificationJob(job, transactionDb) {
 
       const manualStatusTypes = {
         succeeded: 'refund_succeeded',
-        failed: 'refund_failed',
-        expired: 'refund_request_expired',
         rejected: 'refund_request_rejected',
       };
       if (refund.trigger === 'manual_admin') {
+        if (refund.status === 'failed' || refund.status === 'expired') return;
         eventType = manualStatusTypes[refund.status];
         if (!eventType) return;
       } else if (refund.status !== 'succeeded' ||
@@ -241,11 +240,20 @@ async function processNotificationJob(job, transactionDb) {
         eventType = 'refund_succeeded';
       }
 
-      recipients = [
-        { userId: refund.buyer_id, role: 'buyer' },
-        { userId: refund.seller_id, role: 'seller' },
-      ];
+      recipients = refund.trigger === 'manual_admin' && refund.status === 'rejected'
+        ? [{ userId: refund.buyer_id, role: 'buyer' }]
+        : [
+          { userId: refund.buyer_id, role: 'buyer' },
+          { userId: refund.seller_id, role: 'seller' },
+        ];
       notificationContent = (role) => {
+        if (refund.trigger === 'manual_admin' && refund.status === 'rejected') {
+          return {
+            orderId: job.payload.orderId,
+            message: 'We reviewed your refund request and could not approve it.',
+            href: `/orders/${encodeURIComponent(job.payload.orderId)}`,
+          };
+        }
         const amount = `${refund.currency} ${refund.amount}`;
         let message;
         if (refund.status === 'succeeded') {
@@ -267,14 +275,6 @@ async function processNotificationJob(job, transactionDb) {
               ? `A refund was issued for your sale: ${amount}.`
               : `Your refund was processed: ${amount}.`;
           }
-        } else if (refund.status === 'failed') {
-          message = role === 'seller'
-            ? `A refund for your sale could not be processed: ${amount}.`
-            : `Your refund could not be processed: ${amount}.`;
-        } else if (refund.status === 'expired') {
-          message = role === 'seller'
-            ? `A refund request for your sale expired: ${amount}.`
-            : `Your refund request expired: ${amount}.`;
         } else {
           message = role === 'seller'
             ? `A refund request for your sale was declined: ${amount}.`

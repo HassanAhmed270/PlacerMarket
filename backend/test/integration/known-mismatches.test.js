@@ -992,7 +992,9 @@ describe('known schema and service mismatches', () => {
 
   test('FR-74a, SEC-12: photo moderation confirms labels, records reviewer, and denies seller BOLA', async () => {
     const previousSecret = process.env.JWT_ACCESS_SECRET;
+    const previousRedis = getSharedRedisClient();
     process.env.JWT_ACCESS_SECRET = 'integration-photo-moderation-jwt-secret-at-least-32-bytes';
+    setSharedRedisClient({ isOpen: true, eval: async () => [1, 1] });
     try {
       await addListingPhotos(fixture, 3);
       await listings.submitListingForReview(fixture.listingId, fixture.userId);
@@ -1019,6 +1021,7 @@ describe('known schema and service mismatches', () => {
       await listings.confirmListingPhoto(photos[2].id, fixture.otherUserId);
       await expect(listings.approveListing(fixture.listingId, fixture.otherUserId)).resolves.toMatchObject({ status: 'published' });
     } finally {
+      setSharedRedisClient(previousRedis);
       if (previousSecret === undefined) delete process.env.JWT_ACCESS_SECRET;
       else process.env.JWT_ACCESS_SECRET = previousSecret;
     }

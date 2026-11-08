@@ -11,6 +11,11 @@ const discovery = require('../../src/modules/discovery.service');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { upSection } = require('../../db/generate-schema-snapshot');
 const { createFixture } = require('./fixtures');
+const { getSharedRedisClient, setSharedRedisClient } = require('../../src/lib/redis');
+const originalRedisClient = getSharedRedisClient();
+setSharedRedisClient({ isOpen: true, eval: async () => [1, 1] });
+
+afterAll(() => setSharedRedisClient(originalRedisClient));
 
 describe('FR-15b managed listing attributes on PostgreSQL', () => {
   let fixture;

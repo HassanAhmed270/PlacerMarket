@@ -288,8 +288,11 @@ purpose so the schema works whichever way this eventually gets decided.
   requires it explicitly so this isn't hidden.
 - **FR-51 refund notifications**: `escrowPayments.service.js` emits committed
   manual and system refund status changes through the event bus. The
-  notification listener reads the owning refund/order rows for the stored
-  amount and buyer/seller recipients; refund/status keys deduplicate retries.
+  notification listener reads the owning refund/order rows; successful manual
+  and system refunds notify buyer and seller with the stored amount, rejected
+  manual requests notify only the buyer with amount-free wording, and failed or
+  expired manual refunds create no notifications. Refund/status keys deduplicate
+  retries.
 - **Availability projections (FR-63, FR-73, FR-80a)**:
   `availability.service.js` is the shared source for active-reservation,
   paid-reservation and legacy-order SQL predicates. `discovery.service.js`,

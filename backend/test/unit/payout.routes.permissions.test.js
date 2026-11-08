@@ -7,6 +7,8 @@ jest.mock('../../src/middleware/auth', () => ({
 
 const express = require('express');
 const request = require('supertest');
+const { setSharedRedisClient } = require('../../src/lib/redis');
+setSharedRedisClient({ isOpen: true, eval: async () => [1, 1] });
 const payout = require('../../src/modules/payout.service');
 const users = require('../../src/modules/users.service');
 const router = require('../../src/routes/payout.routes');

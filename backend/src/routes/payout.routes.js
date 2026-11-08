@@ -3,8 +3,10 @@ const payout = require('../modules/payout.service');
 const users = require('../modules/users.service');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ValidationError } = require('../lib/errors');
+const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
 const router = Router();
+const limiters = createConfiguredRateLimiters();
 
 // FR-45h/FR-44: combined HELD + dispute view. No specific 'payout.review'
 // permission defined yet in lib/roles.js — using 'dispute.review' as the
@@ -15,7 +17,7 @@ router.get('/held-orders', requirePermission('dispute.review'), async (req, res)
 
 // FR-45e / FR-83f: force-release needs its own Admin-only permission and a
 // session-bound authenticator step-up grant.
-router.post('/orders/:id/force-release', requireAuth, requirePermission('payout.force_release'), async (req, res) => {
+router.post('/orders/:id/force-release', requireAuth, requirePermission('payout.force_release'), limiters.adminOps, async (req, res) => {
   const grant = req.get('x-step-up-grant');
   if (!grant || Object.keys(req.body).some((key) => key !== 'reasonNote') ||
       typeof req.body.reasonNote !== 'string' || !req.body.reasonNote.trim() || req.body.reasonNote.trim().length > 500) {
@@ -27,7 +29,7 @@ router.post('/orders/:id/force-release', requireAuth, requirePermission('payout.
 
 // FR-45d: intended to be triggered by a cron/worker, not a public route.
 // Exposed here ONLY for manual/admin-triggered testing during development.
-router.post('/run-scheduled-release', requirePermission('user.suspend'), async (req, res) => {
+router.post('/run-scheduled-release', requirePermission('user.suspend'), limiters.adminOps, async (req, res) => {
   res.json(await payout.checkAndReleaseDuePayouts());
 });
 

@@ -60,13 +60,15 @@ const requireAuth = authenticateRequest;
  * where the needed permission depends on the body, e.g. approve vs reject).
  */
 function requirePermission(actionOrFn) {
-  return (req, res, next) => {
+  const middleware = (req, res, next) => {
     const action = typeof actionOrFn === 'function' ? actionOrFn(req) : actionOrFn;
     if (!req.user || !hasPermission(req.user.role, action)) {
       return next(new ForbiddenError(`Not permitted: ${action}`));
     }
     next();
   };
+  middleware.requiredPermission = actionOrFn;
+  return middleware;
 }
 
 module.exports = { requireAuth, requirePermission, authenticateRequest };
