@@ -76,7 +76,11 @@ export default function AdminRefundRequest() {
           <button className="admin-button" type="button" onClick={loadBalance} disabled={pending}>
             {pending ? 'Checking…' : 'Check refundable balance'}
           </button>
-          {balance && <p><strong>Full refundable balance:</strong> {formatAdminAmount(balance.refundableAmount.total, balance.currency)}</p>}
+          {balance && <>
+            <p><strong>Full refundable balance:</strong> {formatAdminAmount(balance.refundableAmount.total, balance.currency)}</p>
+            <p><strong>Item price:</strong> {formatAdminAmount(balance.refundableAmount.itemPrice, balance.currency)}</p>
+            <p><strong>Delivery fee:</strong> {formatAdminAmount(balance.refundableAmount.deliveryFee, balance.currency)}</p>
+          </>}
           {balance && <form className="admin-form" onSubmit={submit}>
             <label>Reason (20–1000 characters)
               <textarea value={reason} onChange={(event) => setReason(event.target.value)} minLength={20} maxLength={1000} required />

@@ -28,6 +28,11 @@ const {
 } = paymentGateway;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MANUAL_REFUND_EXPIRY_WINDOW = '48 hours';
+const MANUAL_REFUND_EXPIRY_PREDICATE =
+  `requested_at <= now() - INTERVAL '${MANUAL_REFUND_EXPIRY_WINDOW}'`;
+const MANUAL_REFUND_EXPIRY_REASON =
+  `Expired automatically after ${MANUAL_REFUND_EXPIRY_WINDOW} without a decision.`;
 
 /** FR-68: return safe payment and refund summaries for an Admin reservation-order read. */
 async function getAdminOrderPaymentAndRefunds(orderId) {
@@ -297,12 +302,12 @@ async function expireManualRefundRequests(client, orderId, paymentId, actorId, r
      SET status = 'expired',
          approved_by = $3,
          decided_at = now(),
-         decision_note = 'Expired automatically after 48 hours without a decision.',
+         decision_note = '${MANUAL_REFUND_EXPIRY_REASON}',
          updated_at = now()
      WHERE order_id = $1 AND ($2::uuid IS NULL OR payment_id = $2)
        AND trigger = 'manual_admin'
        AND status = 'requested'
-       AND requested_at <= now() - INTERVAL '48 hours'
+       AND ${MANUAL_REFUND_EXPIRY_PREDICATE}
        ${targetClause}
      RETURNING id, payment_id, requested_by`,
     values
@@ -316,7 +321,7 @@ async function expireManualRefundRequests(client, orderId, paymentId, actorId, r
       refundId: refund.id,
       requestedBy: refund.requested_by,
       approvedBy: actorId,
-      reason: 'Expired automatically after 48 hours without a decision.',
+      reason: MANUAL_REFUND_EXPIRY_REASON,
       metadata: { trigger: 'manual_admin', decision: 'expired' },
     });
   }
@@ -385,16 +390,14 @@ function validateAdminManualRefundListQuery(query) {
 /** FR-69, SEC-39: return a bounded, keyset-paginated Admin manual-refund queue. */
 async function listAdminManualRefunds(query = {}, actorId) {
   const { limit, before } = validateAdminManualRefundListQuery(query);
-  let cursor = null;
   if (before) {
     const result = await db.read(
-      `SELECT requested_at, id
+      `SELECT id
        FROM refunds
        WHERE id = $1 AND trigger = 'manual_admin'`,
       [before]
     );
-    cursor = result.rows[0];
-    if (!cursor) throw new ValidationError('before must identify a manual refund.');
+    if (!result.rows[0]) throw new ValidationError('before must identify a manual refund.');
   }
 
   const { rows } = await db.read(
@@ -402,16 +405,21 @@ async function listAdminManualRefunds(query = {}, actorId) {
             order_id AS "orderId",
             amount::text AS amount,
             currency,
-            status,
+            CASE WHEN status = 'requested' AND ${MANUAL_REFUND_EXPIRY_PREDICATE}
+                 THEN 'expired' ELSE status END AS status,
             requested_by AS "requestedBy",
             requested_at AS "requestedAt",
-            requested_at + INTERVAL '48 hours' AS "expiresAt"
+            requested_at + INTERVAL '${MANUAL_REFUND_EXPIRY_WINDOW}' AS "expiresAt"
      FROM refunds
      WHERE trigger = 'manual_admin'
-       AND ($1::timestamptz IS NULL OR (requested_at, id) < ($1::timestamptz, $2::uuid))
+       AND ($1::uuid IS NULL OR (requested_at, id) < (
+         SELECT c.requested_at, c.id
+         FROM refunds c
+         WHERE c.id = $1 AND c.trigger = 'manual_admin'
+       ))
      ORDER BY requested_at DESC, id DESC
-     LIMIT $3`,
-    [cursor?.requested_at || null, cursor?.id || null, limit + 1]
+     LIMIT $2`,
+    [before, limit + 1]
   );
   const hasMore = rows.length > limit;
   const refunds = rows.slice(0, limit).map((row) => ({
@@ -434,11 +442,12 @@ async function getAdminManualRefund(refundId, actorId) {
             order_id AS "orderId",
             amount::text AS amount,
             currency,
-            status,
+            CASE WHEN status = 'requested' AND ${MANUAL_REFUND_EXPIRY_PREDICATE}
+                 THEN 'expired' ELSE status END AS status,
             requested_by AS "requestedBy",
             approved_by AS "approvedBy",
             requested_at AS "requestedAt",
-            requested_at + INTERVAL '48 hours' AS "expiresAt",
+            requested_at + INTERVAL '${MANUAL_REFUND_EXPIRY_WINDOW}' AS "expiresAt",
             approved_at AS "approvedAt",
             decided_at AS "decidedAt",
             reason,

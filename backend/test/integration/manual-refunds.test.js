@@ -371,6 +371,112 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     expect(detail.body).not.toHaveProperty('idempotencyKey');
   });
 
+  test('FR-69: queue and detail reads expose expiry without changing refund rows', async () => {
+    const agesInMinutes = [2879, 2880, 2940];
+    const idempotencyPrefix = `manual-refund-read-expiry:${crypto.randomUUID()}`;
+    const { rows: insertedRows } = await db.query(
+      `INSERT INTO refunds
+         (payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+          reason, requested_by, requested_at)
+       SELECT $1, $2, 'manual_admin', '1.00', 'PKR', 'requested',
+              $3 || '-' || sample.age_minutes::text,
+              'Read-only expiry status test', $4,
+              now() - sample.age_minutes * INTERVAL '1 minute'
+       FROM unnest($5::int[]) AS sample(age_minutes)
+       RETURNING id, idempotency_key`,
+      [scenario.paymentId, scenario.orderId, idempotencyPrefix, staff.first.id, agesInMinutes]
+    );
+    expect(insertedRows).toHaveLength(3);
+    const idByAge = new Map(agesInMinutes.map((age) => [
+      age,
+      insertedRows.find((row) => row.idempotency_key === `${idempotencyPrefix}-${age}`).id,
+    ]));
+    const refundIds = [...idByAge.values()];
+    const { rows: beforeReads } = await db.query(
+      `SELECT id, status, approved_by, decided_at, requested_at, updated_at
+       FROM refunds
+       WHERE id = ANY($1::uuid[])
+       ORDER BY id`,
+      [refundIds]
+    );
+
+    const list = await request(app)
+      .get('/api/admin/refunds?limit=50')
+      .set('Authorization', authHeader(staff.second.id, staff.second.sessionId))
+      .expect(200);
+    const listById = new Map(list.body.refunds.map((refund) => [refund.refundId, refund]));
+    const expectedStatuses = new Map([
+      [2879, 'requested'],
+      [2880, 'expired'],
+      [2940, 'expired'],
+    ]);
+    for (const [age, refundId] of idByAge) {
+      expect(listById.get(refundId).status).toBe(expectedStatuses.get(age));
+      const detail = await request(app)
+        .get(`/api/admin/refunds/${refundId}`)
+        .set('Authorization', authHeader(staff.second.id, staff.second.sessionId))
+        .expect(200);
+      expect(detail.body.status).toBe(expectedStatuses.get(age));
+    }
+
+    const { rows: afterReads } = await db.query(
+      `SELECT id, status, approved_by, decided_at, requested_at, updated_at
+       FROM refunds
+       WHERE id = ANY($1::uuid[])
+       ORDER BY id`,
+      [refundIds]
+    );
+    expect(afterReads).toEqual(beforeReads);
+  });
+
+  test('FR-69: keyset pagination includes every manual refund when requested times differ by microseconds', async () => {
+    const { rows: insertedRows } = await db.query(
+      `INSERT INTO refunds
+         (payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+          reason, requested_by, approved_by, requested_at, decided_at)
+       SELECT $1, $2, 'manual_admin', '1.00', 'PKR', 'rejected',
+              $3 || '-' || sample.ordinality::text,
+              'Pagination microsecond cursor test', $4, $5,
+              date_trunc('second', now()) - INTERVAL '1 hour'
+                + sample.microseconds * INTERVAL '1 microsecond',
+              now()
+       FROM unnest($6::int[]) WITH ORDINALITY AS sample(microseconds, ordinality)
+       RETURNING id`,
+      [
+        scenario.paymentId,
+        scenario.orderId,
+        `manual-refund-pagination:${crypto.randomUUID()}`,
+        staff.first.id,
+        staff.second.id,
+        [123100, 123200, 123300, 123400, 500000],
+      ]
+    );
+    expect(insertedRows).toHaveLength(5);
+
+    const { rows: expectedRows } = await db.query(
+      `SELECT id
+       FROM refunds
+       WHERE trigger = 'manual_admin'
+       ORDER BY requested_at DESC, id DESC`
+    );
+    const actualIds = [];
+    let before = null;
+    do {
+      const query = new URLSearchParams({ limit: '2' });
+      if (before) query.set('before', before);
+      const page = await request(app)
+        .get(`/api/admin/refunds?${query}`)
+        .set('Authorization', authHeader(staff.second.id, staff.second.sessionId))
+        .expect(200);
+      actualIds.push(...page.body.refunds.map((refund) => refund.refundId));
+      before = page.body.nextBefore;
+    } while (before);
+
+    expect(new Set(actualIds).size).toBe(actualIds.length);
+    expect(actualIds).toEqual(expectedRows.map((row) => row.id));
+    expect(actualIds).toEqual(expect.arrayContaining(insertedRows.map((row) => row.id)));
+  });
+
   test('FR-69, SEC-39: rejection is final and a new request creates a different refund idempotency key', async () => {
     const requested = await createRequest();
     await sendDecision(staff.second, requested.body.refundId, 'reject', {

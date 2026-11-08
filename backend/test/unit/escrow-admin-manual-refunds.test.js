@@ -64,19 +64,20 @@ describe('FR-69 Admin manual refund reads', () => {
     const [sql, values] = db.read.mock.calls[0];
     expect(sql).toContain("trigger = 'manual_admin'");
     expect(sql).toContain("requested_at + INTERVAL '48 hours'");
+    expect(sql).toContain("CASE WHEN status = 'requested'");
     expect(sql).toContain('ORDER BY requested_at DESC, id DESC');
+    expect(sql).toContain('SELECT c.requested_at, c.id');
     expect(sql).not.toMatch(/provider_refund_id|idempotency_key/i);
-    expect(values).toEqual([null, null, 2]);
+    expect(values).toEqual([null, 2]);
   });
 
   test('FR-69: queue cursor is validated and page size is capped at 50', async () => {
-    const requestedAt = new Date('2026-11-08T10:00:00.000Z');
-    db.read.mockResolvedValueOnce({ rows: [{ id: refundId, requested_at: requestedAt }] });
+    db.read.mockResolvedValueOnce({ rows: [{ id: refundId }] });
     db.read.mockResolvedValueOnce({ rows: [] });
 
     await expect(escrowPayments.listAdminManualRefunds({ limit: '500', before: refundId }, requesterId))
       .resolves.toEqual({ refunds: [], nextBefore: null });
-    expect(db.read.mock.calls[1][1]).toEqual([requestedAt, refundId, 51]);
+    expect(db.read.mock.calls[1][1]).toEqual([refundId, 51]);
     await expect(escrowPayments.listAdminManualRefunds({ before: 'invalid' }, requesterId))
       .rejects.toThrow('before must be a manual refund UUID.');
 
