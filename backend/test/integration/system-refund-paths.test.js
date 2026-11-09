@@ -678,7 +678,7 @@ describe('FR-72 handover timeout', () => {
     expect(await refundRows(trackedFixtures[0])).toEqual([]);
   });
 
-  test('FR-72: the due timeout requests one full refund and ten parallel calls remain idempotent', async () => {
+  test('FR-72, SEC-40: the due timeout requests one full refund and ten parallel calls remain idempotent', async () => {
     const scenario = trackedFixtures[0];
     await fundOrder(scenario);
     await db.query(
@@ -711,6 +711,32 @@ describe('FR-72 handover timeout', () => {
       reservation_status: 'released',
       end_reason: 'handover_timeout',
     });
+    const { rows: [refund] } = await db.query(
+      `SELECT id, payment_id, order_id, trigger, idempotency_key
+       FROM refunds WHERE order_id = $1`,
+      [orderId]
+    );
+    expect(refund).toMatchObject({
+      payment_id: paymentId,
+      order_id: orderId,
+      trigger: 'system_handover_timeout',
+      idempotency_key: `refund:${paymentId}:handover_timeout`,
+    });
+    const gateway = {
+      createRefund: jest.fn(async ({ amount, idempotencyKey, providerPaymentRef }) => ({
+        providerRefundRef: `system-provider-ref-${crypto.randomUUID()}`,
+        providerPaymentRef,
+        amount,
+        status: 'succeeded',
+        receivedIdempotencyKey: idempotencyKey,
+      })),
+    };
+    const firstJob = await escrowPayments.processRefundJob({ refundId: refund.id, gateway });
+    const repeatedJob = await escrowPayments.processRefundJob({ refundId: refund.id, gateway });
+    expect(firstJob).toMatchObject({ outcome: 'succeeded', refundId: refund.id });
+    expect(repeatedJob).toMatchObject({ outcome: 'skipped', status: 'succeeded' });
+    expect(gateway.createRefund).toHaveBeenCalledTimes(1);
+    expect(gateway.createRefund.mock.calls[0][0].idempotencyKey).toBe(refund.idempotency_key);
   });
 
   test('FR-72: the handover sweep refunds only due, unhanded-over funded orders once', async () => {

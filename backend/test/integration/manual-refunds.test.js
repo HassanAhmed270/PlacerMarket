@@ -342,7 +342,7 @@ afterEach(async () => {
 });
 
 describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
-  test('FR-69, SEC-39: request then approve enqueues one refund and calls the gateway once with its idempotency key', async () => {
+  test('FR-69, SEC-39, SEC-40: request then approve enqueues one refund and calls the gateway once with its idempotency key', async () => {
     const requestGrant = await createGrant(staff.first, 'refund.request');
     const requested = await sendManualRequest(staff.first, {
       reason: '  Customer service reviewed the delivery issue.  ',
@@ -371,10 +371,16 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       }));
 
     const { rows: refundRows } = await db.query(
-      `SELECT idempotency_key, status
+      `SELECT payment_id, order_id, trigger, idempotency_key, status
        FROM refunds WHERE id = $1`,
       [requested.body.refundId]
     );
+    expect(refundRows[0]).toMatchObject({
+      payment_id: scenario.paymentId,
+      order_id: scenario.orderId,
+      trigger: 'manual_admin',
+      status: 'approved',
+    });
     const gateway = {
       createRefund: jest.fn(async ({ amount, idempotencyKey, providerPaymentRef }) => ({
         providerRefundRef: `manual-provider-ref-${crypto.randomUUID()}`,
@@ -407,7 +413,7 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     });
 
     const { rows: auditRows } = await db.query(
-      `SELECT action, actor_id, order_id, refund_id, requested_by, approved_by, reason, metadata
+      `SELECT action, actor_id, order_id, refund_id, requested_by, approved_by, reason, metadata, created_at
        FROM money_audit_events
        WHERE refund_id = $1 AND action IN ('manual_refund_requested', 'manual_refund_approved')
        ORDER BY created_at`,
@@ -423,6 +429,17 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       refund_id: requested.body.refundId,
       requested_by: staff.first.id,
     });
+    expect(auditRows[1]).toMatchObject({
+      action: 'manual_refund_approved',
+      actor_id: staff.second.id,
+      order_id: scenario.orderId,
+      refund_id: requested.body.refundId,
+      requested_by: staff.first.id,
+      approved_by: staff.second.id,
+    });
+    for (const auditRow of auditRows) {
+      expect(auditRow.created_at).toEqual(expect.any(Date));
+    }
     expect(JSON.stringify(auditRows)).not.toContain(requestGrant);
     expect(JSON.stringify(auditRows)).not.toContain(decisionGrant);
     expect(JSON.stringify(auditRows)).not.toMatch(/"amount"\s*:/);

@@ -950,7 +950,7 @@ describe('FR-61, FR-62 payment webhook worker', () => {
     expect(unchangedRows).toEqual([{ status: 'requested' }]);
   });
 
-  test('FR-69, FR-61, FR-62: a duplicate capture refund executes without changing the funded order', async () => {
+  test('FR-69, FR-61, FR-62, SEC-40: a duplicate capture refund executes without changing the funded order', async () => {
     const firstInboxId = await receiveSignedEvent(await createSignedEvent());
     await escrowPayments.processPaymentWebhookJob({ webhookInboxId: firstInboxId });
 
