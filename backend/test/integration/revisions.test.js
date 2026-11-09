@@ -165,7 +165,7 @@ describe('FR-73 moderated listing revisions', () => {
     await expect(revisions.approveListingRevision(revision.id, fixture.otherUserId)).rejects.toThrow('already been decided');
   });
 
-  test('FR-73: active reservations keep revisions pending, notify once, and expose the seller dashboard signal', async () => {
+  test('FR-63a, FR-73: active reservations keep revisions pending, notify once, and expose the seller dashboard signal', async () => {
     const revision = await revisions.submitListingRevision(fixture.listingId, fixture.userId, {
       askingPrice: 120,
     });

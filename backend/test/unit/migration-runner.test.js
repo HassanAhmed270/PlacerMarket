@@ -1,7 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 const { parseInitialSchema } = require('../../db/migrate');
-const { migrationFiles, upSection, generateSnapshot } = require('../../db/generate-schema-snapshot');
+const {
+  migrationFiles, upSection, generateSnapshot, normalizeLineEndings,
+} = require('../../db/generate-schema-snapshot');
 
 describe('FR-79b migration support', () => {
   test('schema compatibility parser identifies tables, columns, and enum labels without treating constraints as columns', () => {
@@ -44,7 +46,12 @@ describe('FR-79b migration support', () => {
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');
-    expect(generateSnapshot()).toBe(fs.readFileSync(path.join(__dirname, '..', '..', 'schema.sql'), 'utf8'));
+    expect(normalizeLineEndings(generateSnapshot())).toBe(
+      normalizeLineEndings(fs.readFileSync(path.join(__dirname, '..', '..', 'schema.sql'), 'utf8'))
+    );
+    // FR-79b: a CRLF checkout of the same SQL still produces the same up section.
+    expect(upSection('-- Up Migration\r\nCREATE TABLE x (id int);\r\n-- Down Migration\r\nDROP TABLE x;', 'crlf.sql'))
+      .toBe('CREATE TABLE x (id int);');
   });
 
   test('FR-69, SEC-39: manual-refund migration adds terminal decisions and refund step-up actions', () => {

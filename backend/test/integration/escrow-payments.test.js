@@ -194,7 +194,7 @@ describe('FR-60a hosted checkout intent', () => {
     expect(paymentGateway.getPaymentGateway().getSessionCount()).toBe(1);
   });
 
-  test('FR-60a: route ignores client amount and currency, and keeps checkout responses private', async () => {
+  test('FR-60a, FR-61: route ignores client amount and currency, and keeps checkout responses private', async () => {
     await createPaymentIntent();
     const response = await request(routeApp())
       .post(`/api/orders/${orderId}/payment`)

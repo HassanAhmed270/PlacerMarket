@@ -5,13 +5,19 @@ const path = require('path');
 const migrationsDir = path.join(__dirname, 'migrations');
 const snapshotPath = path.join(__dirname, '..', 'schema.sql');
 
+/** FR-79b: compare and generate on LF so a Windows (CRLF) checkout gives the same result. */
+function normalizeLineEndings(text) {
+  return text.replace(/\r\n?/g, '\n');
+}
+
 function migrationFiles() {
   return fs.readdirSync(migrationsDir)
     .filter((file) => /^\d+_[a-z0-9_-]+\.sql$/i.test(file))
     .sort((left, right) => left.localeCompare(right, 'en'));
 }
 
-function upSection(sql, file) {
+function upSection(rawSql, file) {
+  const sql = normalizeLineEndings(rawSql);
   const up = /^\s*--[\s-]*up\s+migration\s*$/im;
   const down = /^\s*--[\s-]*down\s+migration\s*$/im;
   const upMatch = up.exec(sql);
@@ -29,7 +35,7 @@ function generateSnapshot() {
   const files = migrationFiles();
   if (files.length === 0) throw new Error('No numbered SQL migrations found');
   const body = files.map((file) => {
-    const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+    const sql = normalizeLineEndings(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
     return `-- Migration: ${file}\n${upSection(sql, file)}`;
   }).join('\n\n');
   return `-- Generated from db/migrations by db:generate-schema. Do not edit directly.\n${body}\n`;
@@ -39,7 +45,7 @@ if (require.main === module) {
   const generated = generateSnapshot();
   const check = process.argv.includes('--check');
   if (check) {
-    if (!fs.existsSync(snapshotPath) || fs.readFileSync(snapshotPath, 'utf8') !== generated) {
+    if (!fs.existsSync(snapshotPath) || normalizeLineEndings(fs.readFileSync(snapshotPath, 'utf8')) !== generated) {
       console.error('schema.sql is not up to date; run npm run db:generate-schema');
       process.exitCode = 1;
     }
@@ -49,4 +55,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { migrationFiles, upSection, generateSnapshot };
+module.exports = { migrationFiles, upSection, generateSnapshot, normalizeLineEndings };

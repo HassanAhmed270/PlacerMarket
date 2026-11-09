@@ -313,7 +313,7 @@ describe('FR-77b, SEC-33 verified payment webhook inbox', () => {
       });
       return stale;
     }],
-  ])('SEC-33: rejects a %s signature without an inbox row or job', async (_label, mutate) => {
+  ])('FR-77b, SEC-33: rejects a %s signature without an inbox row or job', async (_label, mutate) => {
     const signed = await createSignedEvent();
     const requestBody = mutate(signed);
 
@@ -360,7 +360,7 @@ describe('FR-77b, SEC-33 verified payment webhook inbox', () => {
     expect(await webhookCounts(id)).toEqual({ inbox: 0, jobs: 0 });
   });
 
-  test('SEC-33: a valid signature is verified before malformed JSON receives 400', async () => {
+  test('FR-77b, SEC-33: a valid signature is verified before malformed JSON receives 400', async () => {
     const rawBody = Buffer.from('{not-json');
     const headers = signPayload(rawBody, process.env.FAKE_GATEWAY_WEBHOOK_SECRET);
     const { rows: previousInboxRows } = await db.query(

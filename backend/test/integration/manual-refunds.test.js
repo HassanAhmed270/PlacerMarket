@@ -342,7 +342,7 @@ afterEach(async () => {
 });
 
 describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
-  test('FR-69, SEC-39, SEC-40: request then approve enqueues one refund and calls the gateway once with its idempotency key', async () => {
+  test('FR-69, SEC-39, SEC-40: request then approve enqueues one refund, calls the gateway once with its idempotency key and audits both Admins', async () => {
     const requestGrant = await createGrant(staff.first, 'refund.request');
     const requested = await sendManualRequest(staff.first, {
       reason: '  Customer service reviewed the delivery issue.  ',

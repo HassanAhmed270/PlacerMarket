@@ -469,7 +469,7 @@ describe('FR-33a buyer cancellation', () => {
     });
   });
 
-  test('FR-33a: cancelling a funded order requests the full item-plus-delivery refund once and the job succeeds', async () => {
+  test('FR-33a: cancelling a funded order before courier handover requests the full item-plus-delivery refund once and the job succeeds', async () => {
     const scenario = trackedFixtures[0];
     await fundOrder(scenario);
     const response = await cancelThroughApi(scenario).expect(200);
@@ -737,6 +737,47 @@ describe('FR-72 handover timeout', () => {
     expect(repeatedJob).toMatchObject({ outcome: 'skipped', status: 'succeeded' });
     expect(gateway.createRefund).toHaveBeenCalledTimes(1);
     expect(gateway.createRefund.mock.calls[0][0].idempotencyKey).toBe(refund.idempotency_key);
+  });
+
+  test('FR-72: funding sets a 3-day handover deadline, and the timeout keeps that missed deadline with its cancellation and refund record', async () => {
+    const scenario = trackedFixtures[0];
+    await fundOrder(scenario);
+    const { rows: [funded] } = await db.query(
+      `SELECT extract(epoch FROM (handover_deadline_at - funded_at)) AS seconds
+       FROM orders WHERE id = $1`,
+      [orderId]
+    );
+    expect(Number(funded.seconds)).toBeCloseTo(3 * 24 * 3600, 0);
+    await db.query(
+      `UPDATE orders
+       SET funded_at = funded_at - INTERVAL '73 hours',
+           handover_deadline_at = handover_deadline_at - INTERVAL '73 hours'
+       WHERE id = $1`,
+      [orderId]
+    );
+    await expect(escrowPayments.refundUnhandedOverOrder({ orderId }))
+      .resolves.toMatchObject({ outcome: 'refunded' });
+
+    const { rows: [recorded] } = await db.query(
+      `SELECT o.status AS order_status, o.handed_over_at, (o.handover_deadline_at < now()) AS deadline_missed,
+              r.status AS reservation_status, r.end_reason,
+              f.trigger, f.amount, f.reason
+       FROM orders o
+       JOIN reservations r ON r.id = o.reservation_id
+       JOIN refunds f ON f.order_id = o.id
+       WHERE o.id = $1`,
+      [orderId]
+    );
+    expect(recorded).toEqual({
+      order_status: 'cancelled',
+      handed_over_at: null,
+      deadline_missed: true,
+      reservation_status: 'released',
+      end_reason: 'handover_timeout',
+      trigger: 'system_handover_timeout',
+      amount: '1550.50',
+      reason: 'Seller handover deadline exceeded',
+    });
   });
 
   test('FR-72: the handover sweep refunds only due, unhanded-over funded orders once', async () => {

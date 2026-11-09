@@ -235,7 +235,7 @@ afterEach(async () => {
 });
 
 describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
-  test('FR-32, FR-32a, FR-32b, FR-63, FR-86: Buy creates one reservation and locks its item/seller price snapshot', async () => {
+  test('FR-32, FR-32a, FR-63, FR-86: Buy creates one reservation, locks its item/seller price snapshot and snapshots the structured delivery address', async () => {
     const response = await buy(fixture.listingId, buyerId)
       .expect(201)
       .expect('Cache-Control', 'private, no-store');
@@ -324,13 +324,13 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     });
   });
 
-  test('FR-63: an expected price that differs from the locked current price returns 409 without writing', async () => {
+  test('FR-32, FR-63: an expected price that differs from the locked current price returns 409 without writing', async () => {
     const before = await countOrdersAndReservations(fixture.listingId);
     await buy(fixture.listingId, buyerId, { expectedPrice: '1250.49' }).expect(409);
     expect(await countOrdersAndReservations(fixture.listingId)).toEqual(before);
   });
 
-  test('FR-63, FR-87: the listing owner receives 403 when attempting to buy their listing', async () => {
+  test('FR-87: the listing owner receives 403 when attempting to buy their listing, with no order or reservation written', async () => {
     await buy(fixture.listingId, fixture.userId).expect(403);
     expect(await countOrdersAndReservations(fixture.listingId)).toEqual({ orders: 0, reservations: 0 });
   });
@@ -446,7 +446,7 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     await buy(activeListingId, buyerId).expect(409);
   });
 
-  test('FR-20: sellers cannot pause or remove reserved or paid listings; admin take-down remains allowed', async () => {
+  test('FR-20, FR-63a: sellers cannot pause or remove reserved or paid listings; admin take-down remains allowed', async () => {
     await createReservation({ listingId: fixture.listingId });
     await expect(listings.setOwnListingPaused(fixture.listingId, fixture.userId, true))
       .rejects.toMatchObject({ statusCode: 409, code: 'reservation_active' });
@@ -605,6 +605,42 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     await buy(lastListingId, buyerId).expect(409);
   });
 
+  test('FR-63c: cancelled, released and expired reservations do not consume a buyer cap slot', async () => {
+    const endedListings = await Promise.all(Array.from({ length: 3 }, () => createListing()));
+    const statuses = ['cancelled', 'released', 'expired'];
+    for (const [index, status] of statuses.entries()) {
+      await createReservation({ listingId: endedListings[index], status });
+    }
+    const freshListings = await Promise.all(Array.from({ length: 4 }, () => createListing()));
+    const outcomes = [];
+    for (const listingId of freshListings) {
+      outcomes.push((await buy(listingId, buyerId)).status);
+    }
+    expect(outcomes).toEqual([201, 201, 201, 409]);
+  });
+
+  test('FR-32b: each Buy creates one reservation and one order for exactly one listing and its one seller', async () => {
+    const secondListingId = await createListing();
+    const first = await buy(fixture.listingId, buyerId).expect(201);
+    const second = await buy(secondListingId, buyerId).expect(201);
+    const { rows } = await db.query(
+      `SELECT r.id AS reservation_id, r.listing_id, r.seller_id, l.seller_id AS listing_seller_id,
+              (SELECT count(*)::int FROM orders o
+               WHERE o.reservation_id = r.id AND o.listing_id = r.listing_id
+                 AND o.seller_id = r.seller_id) AS matching_orders
+       FROM reservations r JOIN listings l ON l.id = r.listing_id
+       WHERE r.id = ANY($1::uuid[])
+       ORDER BY r.created_at, r.id`,
+      [[first.body.reservationId, second.body.reservationId]]
+    );
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((row) => row.listing_id)).size).toBe(2);
+    for (const row of rows) {
+      expect(row.seller_id).toBe(row.listing_seller_id);
+      expect(row.matching_orders).toBe(1);
+    }
+  });
+
   test('FR-63: missing reservation settings use their documented defaults', async () => {
     await db.query('DELETE FROM platform_settings WHERE key = ANY($1::text[])', [RESERVATION_SETTING_KEYS]);
     const response = await buy(fixture.listingId, buyerId).expect(201);
@@ -614,6 +650,19 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
       [response.body.reservationId]
     );
     expect(Number(rows[0].seconds)).toBeCloseTo(3600, 0);
+  });
+
+  test('FR-63: the administrator-configured reservation window sets the unpaid deadline', async () => {
+    await db.query(
+      `UPDATE platform_settings SET value = '15', updated_at = now()
+       WHERE key = 'reservation_minutes'`
+    );
+    const response = await buy(fixture.listingId, buyerId).expect(201);
+    const { rows } = await db.query(
+      'SELECT extract(epoch FROM (expires_at - created_at)) AS seconds FROM reservations WHERE id = $1',
+      [response.body.reservationId]
+    );
+    expect(Number(rows[0].seconds)).toBeCloseTo(900, 0);
   });
 
   test('FR-85: Buy uses the administrator-configured delivery fee in server-calculated snapshots', async () => {

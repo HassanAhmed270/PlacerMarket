@@ -62,16 +62,12 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - FR-82a alt-text/file-name behavior and the remaining internal-linking/technical-SEO checks in FR-82d need a decision before those details are finalized. The owner-approved SEO titles, descriptions, structured data, URLs, canonical and indexability rules are recorded in the 2026-10-22 decisions and `specs.md`.
 
 ### Needed by Phase 4
-- 2026-10-13 · Payment gateway provider, legal advice on holding customer funds, sandbox account (external).
+- 2026-10-13 · Payment gateway provider, legal advice on holding customer funds, sandbox account (external). **Launch blocker, not a gate blocker (owner, 2026-11-08):** together with the courier arrangement, a real second Admin (D2), provider-specific webhook signature verification and the live-provider capability check for hosted checkout.
 - 2026-10-13 · FR-63 · Reservation duration (will be an admin-configurable `reservation_hours`).
 - 2026-10-14 · FR-63b · What happens to the OTHER open offers when one is accepted. Two unconfirmed options: auto-close them with a notice (and notify favoriters if the item frees up) — recommended in the scale discussion — or freeze them and revive if the reservation lapses — assumed in the Marketplace chat. **Deferred by the human to the end.**
 - 2026-10-13 · FR-72 · Seller no-ship policy (seller never hands the item to the courier after the buyer paid). Policies discussion.
 - 2026-10-13 · FR-40a · Delivery-partner count and city-based assignment.
 - 2026-10-13 · FR-51 · Delivery channel for general notifications (email / SMS / WhatsApp / push). Today the code only writes rows. Decide together with real-time updates (FR-78, deferred) and how offline users are reached.
-- 2026-10-14 · FR-60a, FR-63a, FR-69, FR-70 · Confirm the DISCUSS design rows for escrow (hosted checkout, atomic reservation and auto-refund, gateway refunds, settlement reconciliation).
-- 2026-10-15 · FR-63c, FR-32b · Cap on a buyer's active reservations (value open) and how it fits the single-item checkout rule. Proposed (DISCUSS).
-- 2026-10-25 · FR-60 / FR-65 · **D1 provisional — owner to confirm:** Phase 4 covers buyer payments only, cards first; buyer wallets/bank later through the PaymentGateway adapter. Seller payouts remain manual under FR-65 and are outside Phase 4.
-- 2026-10-25 · FR-69 / FR-84 / FR-83h · **D2 provisional — owner to confirm:** require a second real person with their own Admin account and authenticator; design a controlled command for additional Admin creation; `PAYMENTS_ENABLED` stays disabled until two distinct authenticator-enrolled Admins exist. System-triggered refunds use their own idempotent path and do not need a second Admin.
 
 ### Needed by Phase 5
 - 2026-10-14 · FR-45a, FR-50a, FR-71 · Confirm partial refunds with commission on what the seller receives. Claude's recommendation; the human left the choice to Claude and has not objected — treat as the working decision, not as confirmed.
@@ -113,12 +109,12 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-25 · Q9 / FR-33a · Buyer cancellation before courier handover is free and refunds the full item price plus full delivery fee; the platform absorbs a non-refundable gateway fee. This automatic rule does not extend past handover.
 - 2026-10-25 · Q10 / FR-60 · PaymentGateway/provider abstraction first; fake gateway for development and tests; no live provider selected by this decision.
 - 2026-10-25 · Q11 / FR-60, FR-77b · Keep `PAYMENTS_ENABLED=false` in production until legal, provider, security, and operational prerequisites are reviewed and approved; code or fake-gateway support is not authorization to collect funds.
-- 2026-10-25 · Q12 / FR-60, FR-65 · Buyer payment methods are distinct from payouts: cards first, wallets/bank later; seller payouts remain manual at launch under FR-65. **D1 further narrows Phase 4 scope provisionally; see Open.**
+- 2026-10-25 · Q12 / FR-60, FR-65 · Buyer payment methods are distinct from payouts: cards first, wallets/bank later; seller payouts remain manual at launch under FR-65. **D1 further narrows Phase 4 scope; owner-confirmed 2026-10-29, see Resolved below.**
 - 2026-10-25 · Q13 / FR-39, FR-41 · One manually coordinated courier partner at launch; no courier API is required.
 - 2026-10-25 · Q14 / FR-41, FR-42, FR-68 · Admin-managed delivery status and tracking number; notify buyers on important delivery-status changes. Courier API/webhooks are future enhancements.
 - 2026-10-25 · Q15 / FR-33b, FR-72e · Lost parcels and refused delivery receive manual issue recording and documented administrative resolution in Phase 4; automated handling and policy are deferred to Phase 5.
 - 2026-10-25 · Q16 / FR-51 · Order/delivery notifications use in-app plus rate-limited email through the existing email mechanism; SMS and WhatsApp are deferred. Notification failure does not roll back recorded state.
-- 2026-10-25 · Q17 / FR-69, FR-83h · Manual refunds require distinct initiating and approving Admins, each with authenticator verification; no self-approval; retain the requester/approver/decision audit. System-triggered refunds are separate and idempotent. **D2 adds provisional launch controls; see Open.**
+- 2026-10-25 · Q17 / FR-69, FR-83h · Manual refunds require distinct initiating and approving Admins, each with authenticator verification; no self-approval; retain the requester/approver/decision audit. System-triggered refunds are separate and idempotent. **D2 adds launch controls; owner-confirmed 2026-10-29, see Resolved below.**
 - 2026-10-25 · Q18 / FR-45a, FR-50a, FR-71 · Phase 4 prepares data structures, validation, status handling, and gateway tracking for partial refunds; the complete end-to-end partial-refund workflow is deferred to Phase 5. Any later manual partial refund follows Q17.
 - 2026-10-25 · Q19a / FR-79b · Migrations use expand-first compatibility; destructive/drop steps are separately gated after dependent code, data, deployments, and rollback/recovery are checked.
 - 2026-10-25 · Q19b / FR-32, FR-33, FR-62 · `reserved` is the canonical reservation status; `Bag` is a temporary compatibility alias and must not remain a separate business state.
@@ -184,3 +180,10 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 - 2026-10-13 · Reservation: yes, the listing is reserved for the buyer while payment is pending (duration still open above).
 - 2026-10-15 · FR-68 · When to hand "mark Delivered" (and other routine steps) to an ops role as volume grows; today it is admin-only and every order needs an admin action. A permission, so no code change is needed to delegate it.
 - 2026-10-25 · SEC-31 · **Resolved — owner decision:** accept exact `body-parser` 2.4.0 even though it is less than 14 days old because it fixes a high-severity production advisory. Pin it directly, run `npm audit signatures`, and require zero production audit findings.
+- 2026-11-08 · D1 / FR-60, FR-65 · Confirmed by the owner (2026-10-29, `PHASE4_DESIGN.md`): Phase 4 covers buyer payments only, cards first, buyer wallets and bank later through the PaymentGateway adapter. Seller payouts remain manual under FR-65.
+- 2026-11-08 · D2 / FR-69, FR-83h · Confirmed by the owner (2026-10-29): manual refunds need a real second person with their own Admin account and authenticator, created by the controlled additional-Admin command; production `PAYMENTS_ENABLED` is refused at startup until two distinct enrolled, non-suspended Admins exist.
+- 2026-11-08 · FR-32b, FR-63c · The reservation cap of 3 active unpaid buyer reservations is confirmed (administrator-configurable, server-enforced, concurrent-safe).
+- 2026-11-08 · FR-60a, FR-63a, FR-69, FR-70 · The escrow design rows are approved as built; their DISCUSS status is removed. Row checkboxes follow the evidence in `PHASE4_GATE_REPORT.md`, not this approval.
+- 2026-11-08 · O6 · Dropped by the owner; no decision text was supplied and none is recorded.
+- 2026-11-08 · Phase 4 gate · Closed by owner amendment (Option A, as for Phase 3). Unproven rows, pending frontend click-through items and Phase 5 carry-overs are listed in `PHASE4_GATE_REPORT.md` and carried forward. The payment gateway, legal clearance, courier and second real Admin are launch blockers, not gate blockers.
+- 2026-11-08 · SEC-31 · The `glob`/`minimatch` advisories reached only through `node-pg-migrate` stay an accepted owner exception (see `security.md`); re-check on or after 2026-11-11.

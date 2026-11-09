@@ -383,8 +383,8 @@ alt-text and internal-linking details before those details are finalized.
 architecture to the 2026-10-25 decisions; produce the design review and update
 the implementation plan. Do not write code, migrations, or schema changes in
 Task 0. No live gateway is selected, no legal clearance is claimed, and
-`PAYMENTS_ENABLED` remains false in production. D1/D2 are provisional and must
-be confirmed before implementation depends on them.
+`PAYMENTS_ENABLED` remains false in production. D1/D2 were confirmed by the
+owner on 2026-10-29.
 
 **Stage plan (in order):**
 1. Design review: fixed-price Buy → reservation → payment → Funded → fulfillment;
@@ -404,7 +404,7 @@ be confirmed before implementation depends on them.
   transition.
 6. Refunds: full pre-handover cancellation, expiry/late-payment and missed
   handover paths; trigger attribution, idempotency, audit, and manual two-Admin
-  authenticator approval subject to D2 confirmation.
+  authenticator approval (D2 confirmed 2026-10-29).
 7. Delivery admin: manual courier coordination, tracking/status updates, three-day
   seller handover deadline, and Phase 4 manual issue-resolution stopgap for lost
   parcels/refused delivery.
@@ -427,12 +427,19 @@ arrangement, two-admin enrollment per D2 if confirmed, and all production
 `PAYMENTS_ENABLED` gates. FR-63b is not applicable under fixed-price Buy.
 
 **Gate**
-- [ ] Task 0 design review done (design only; no code or migrations)
-- [ ] Backend FRs above ticked
-- [ ] Frontend items above ticked
-- [ ] SEC rows above ticked
-- [ ] Decisions above resolved
-- [ ] `npm test` green and `npm audit --omit=dev` clean
+- [x] Task 0 design review done (design only; no code or migrations) — `PHASE4_DESIGN.md`
+- [x] Backend FRs above ticked — closed by owner amendment (2026-11-08); 13 rows ticked on named tests, the rest carried forward in `PHASE4_GATE_REPORT.md`
+- [x] Frontend items above ticked — closed by owner amendment; the owner's browser click-through is pending and the items stay unticked in `specs.md`
+- [x] SEC rows above ticked — closed by owner amendment; SEC-39 and SEC-40 ticked, SEC-11/12/27/33/34/36 partial with exact gaps in `PHASE4_GATE_REPORT.md`
+- [x] Decisions above resolved — D1, D2, reservation cap 3, escrow design rows, O6 (dropped) recorded in `open-questions.md`
+- [x] `npm test` green and `npm audit --omit=dev` clean — Linux run green; audit met under the owner exception for `glob`/`minimatch` (re-check on or after 2026-11-11)
+
+**Phase 4 gate amendment (owner-approved 2026-11-08, Option A as for Phase 3):**
+the gate is closed on the evidence in `PHASE4_GATE_REPORT.md`. Rows without whole-row
+passing tests, the frontend click-through, and the Phase 5 carry-overs are carried
+forward, not claimed. The payment gateway, legal clearance, courier and a real
+second Admin are launch blockers, not gate blockers; production `PAYMENTS_ENABLED`
+stays closed until they are met.
 
 ## Phase 5 — Hold, disputes, payout and settlement (money goes out)
 

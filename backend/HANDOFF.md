@@ -5,7 +5,7 @@ instructions: `DEVELOPMENT_HANDOFF.md`. Full state and architecture:
 `MASTER_PROJECT_CONTEXT.md`. Poshaak is the single name of the project (it was
 first called "Marketplace").
 
-Current phase: 4 (Phase 3 gate remains open by owner decision; Phase 5 rows FR-45b-h, FR-65 and dispute ownership pulled forward and accepted by the owner on 2026-11-07)
+Current phase: 4 closed by owner amendment on 2026-11-08 (Option A, as for Phase 3; evidence and carried-forward list in `PHASE4_GATE_REPORT.md`). Phase 5 rows FR-45b-h, FR-65 and dispute ownership were pulled forward and accepted by the owner on 2026-11-07. Launch blockers, not gate blockers: payment gateway, legal clearance, courier, a real second Admin; the owner's browser click-through is still pending.
 
 ## 0. Inspect before you propose anything
 

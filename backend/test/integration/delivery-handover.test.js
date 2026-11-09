@@ -272,7 +272,7 @@ describe('FR-72 Admin courier handover and delivery route access', () => {
     expect(nonexistent.body.error).toMatch(/^order not found:/);
   });
 
-  test('FR-41, FR-72: legacy status logging is Admin-only and rejects reservation-backed orders', async () => {
+  test('FR-41, FR-68, FR-72: legacy status logging is Admin-only and rejects reservation-backed orders', async () => {
     const path = `/api/delivery/orders/${scenario.orderId}/status`;
     await request(getApp()).post(path)
       .set('Authorization', authHeader(scenario.buyerId))

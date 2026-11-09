@@ -216,7 +216,7 @@ test.each([
   );
 });
 
-test('FR-51: a late payment auto-refund notifies the buyer and seller with its stored amount', async () => {
+test('FR-51, FR-63a: a late payment auto-refund notifies the buyer and seller with its stored amount', async () => {
   scenario = await createUnfundedScenario(harness);
   await db.query(
     `UPDATE reservations SET expires_at = now() - INTERVAL '1 minute' WHERE id = $1`,
