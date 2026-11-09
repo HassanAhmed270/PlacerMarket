@@ -235,7 +235,7 @@ afterEach(async () => {
 });
 
 describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
-  test('FR-32a, FR-63: Buy returns exact server snapshots, persists matching rows, and sets no-store', async () => {
+  test('FR-32, FR-32a, FR-32b, FR-63: Buy creates one reservation and locks its item/seller price snapshot', async () => {
     const response = await buy(fixture.listingId, buyerId)
       .expect(201)
       .expect('Cache-Control', 'private, no-store');
@@ -408,7 +408,7 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     expect(await countOrdersAndReservations(fixture.listingId)).toEqual({ orders: 1, reservations: 1 });
   });
 
-  test('FR-63c: five parallel buys by one buyer on different listings respect the cap of three', async () => {
+  test('FR-32b, FR-63c: five parallel buys by one buyer on different listings respect the cap of three', async () => {
     const additionalListings = await Promise.all(
       Array.from({ length: 4 }, () => createListing())
     );
@@ -417,6 +417,21 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     );
     expect(attempts.filter((response) => response.status === 201)).toHaveLength(3);
     expect(attempts.filter((response) => response.status === 409)).toHaveLength(2);
+  });
+
+  test('FR-32b, FR-63c: honors an administrator-configured cap of two active unpaid reservations', async () => {
+    await db.query(
+      `UPDATE platform_settings SET value = '2', updated_at = now()
+       WHERE key = 'max_unpaid_reservations'`
+    );
+    const additionalListings = await Promise.all(
+      Array.from({ length: 3 }, () => createListing())
+    );
+    const attempts = await Promise.all(
+      additionalListings.map((id) => buy(id, buyerId))
+    );
+    expect(attempts.filter((response) => response.status === 201)).toHaveLength(2);
+    expect(attempts.filter((response) => response.status === 409)).toHaveLength(1);
   });
 
   test('FR-63a: a paid or active unexpired reservation blocks a new Buy', async () => {
