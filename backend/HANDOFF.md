@@ -72,6 +72,8 @@ Current phase: 4 (Phase 3 gate remains open by owner decision; Phase 5 rows FR-4
 
 ## 4. Checks completed in this round
 
+- Phase 4 Stage 22 evidence is recorded in [PHASE4_GATE_REPORT.md](./PHASE4_GATE_REPORT.md).
+
 - Every FR and SEC code cited in the nine documents exists (script): **passed**.
 - Search for outdated or conflicting values (old attempt count, old lifetimes, old
   queue/PgBouncer wording, old hosting/email blocker wording): found and fixed two stale
