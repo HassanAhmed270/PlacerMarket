@@ -282,7 +282,7 @@ async function lockRefundPaymentOrder(client, orderId, paymentId, refundId) {
 
   const { rows: refundRows } = await client.query(
     `SELECT id, order_id, payment_id, amount, currency, status, idempotency_key,
-            trigger, reason, approved_by
+            trigger, reason, approved_by, attempt_count, needs_attention_at
      FROM refunds
      WHERE id = $1
      FOR UPDATE`,
@@ -697,15 +697,16 @@ function validateFailedRefundAttentionQuery(query = {}) {
     throw new ValidationError('Refund attention query must be an object.');
   }
   const rawLimit = query.limit === undefined ? '20' : query.limit;
-  if (typeof rawLimit !== 'string' && typeof rawLimit !== 'number' || !Number.isFinite(Number(rawLimit)) || Number(rawLimit) < 1) {
-    throw new ValidationError('limit must be a positive integer.');
+  if (typeof rawLimit !== 'string' || !/^\d+$/.test(rawLimit) ||
+      !Number.isSafeInteger(Number(rawLimit)) || Number(rawLimit) < 1 || Number(rawLimit) > 50) {
+    throw new ValidationError('limit must be an integer from 1 to 50.');
   }
   const before = query.before === undefined ? null : query.before;
   if (before !== null && (typeof before !== 'string' || !UUID.test(before))) {
     throw new ValidationError('before must be a refund UUID.');
   }
   const includeUnflagged = query.includeUnflagged === true || query.includeUnflagged === 'true';
-  return { limit: Math.min(Number(rawLimit), 50), before, includeUnflagged };
+  return { limit: Number(rawLimit), before, includeUnflagged };
 }
 
 /** FR-69: return failed refunds that need admin attention. */
@@ -787,22 +788,28 @@ async function retryFailedRefund(refundId, adminId, { isOrderPayoutReleased } = 
       throw new ConflictError('A refund cannot be retried after payout release.');
     }
 
-    await enqueueRefundJob(client, refundId, `refund-retry:${refundId}:${refund.attempt_count || 0}`);
-    await moneyAudit.recordMoneyAuditEvent(client, {
-      actorId: adminId,
-      action: 'refund_retry_requested',
-      orderId: order.id,
-      paymentId: payment.id,
-      refundId: refund.id,
-      metadata: {
-        trigger: refund.trigger,
-        attemptCount: refund.attempt_count || 0,
-      },
-    });
+    const jobId = await enqueueRefundJob(
+      client,
+      refundId,
+      `refund-retry:${refundId}:${refund.attempt_count}`
+    );
+    if (jobId) {
+      await moneyAudit.recordMoneyAuditEvent(client, {
+        actorId: adminId,
+        action: 'refund_retry_requested',
+        orderId: order.id,
+        paymentId: payment.id,
+        refundId: refund.id,
+        metadata: {
+          trigger: refund.trigger,
+          attemptCount: refund.attempt_count,
+        },
+      });
+    }
     return {
       refundId: refund.id,
       status: refund.status,
-      retryQueued: true,
+      retryQueued: Boolean(jobId),
     };
   });
   return result;
@@ -882,6 +889,9 @@ async function processRefundJob({ refundId, gateway } = {}) {
         refundId
       );
       if (!locked) return null;
+      const { refund } = locked;
+      const newlyNeedsAttention = !refund.needs_attention_at &&
+        refund.attempt_count + 1 >= maxAttempts;
       const { rows } = await client.query(
         `UPDATE refunds
          SET status = 'failed',
@@ -898,7 +908,7 @@ async function processRefundJob({ refundId, gateway } = {}) {
         [refundId, failureCode, maxAttempts]
       );
       const update = rows[0] || null;
-      if (update && update.attempt_count >= maxAttempts && update.needs_attention_at) {
+      if (update && newlyNeedsAttention && update.needs_attention_at) {
         await moneyAudit.recordMoneyAuditEvent(client, {
           action: 'refund_needs_attention',
           orderId: update.order_id,
@@ -911,11 +921,11 @@ async function processRefundJob({ refundId, gateway } = {}) {
           },
         });
       }
-      return update;
+      return update ? { ...update, newlyNeedsAttention } : null;
     });
     if (failedRefund) {
       emitRefundStatusChange({ id: failedRefund.id, order_id: failedRefund.order_id, status: failedRefund.status });
-      if (failedRefund.attempt_count >= maxAttempts && failedRefund.needs_attention_at) {
+      if (failedRefund.newlyNeedsAttention && failedRefund.needs_attention_at) {
         console.error(JSON.stringify({
           refundId,
           orderId: failedRefund.order_id,
@@ -924,7 +934,7 @@ async function processRefundJob({ refundId, gateway } = {}) {
         }));
       }
     }
-    throw new PaymentGatewayUnavailableError(error);
+    throw new PaymentGatewayUnavailableError();
   }
 
   const result = await db.withTransaction(async (client) => {
@@ -1867,10 +1877,7 @@ async function reenqueueOrphanRefund(refundContext) {
          OR (status = 'pending' AND updated_at <= now() - INTERVAL '10 minutes')
          OR (status = 'failed'
              AND attempt_count < $2
-             AND COALESCE(last_attempt_at, updated_at) <= now() - LEAST(
-               INTERVAL '10 minutes' * POWER(2, attempt_count - 1),
-               INTERVAL '6 hours'
-             ))
+             AND COALESCE(last_attempt_at, updated_at) <= now() - INTERVAL '10 minutes')
        )`,
       [refundContext.id, maxAttempts]
     );
@@ -1977,10 +1984,7 @@ async function reconcileMoneyState({ limit = 100, timeBudgetMs = 20000, logger =
         OR (status = 'pending' AND updated_at <= now() - INTERVAL '10 minutes')
         OR (status = 'failed'
               AND attempt_count < $2
-              AND COALESCE(last_attempt_at, updated_at) <= now() - LEAST(
-                INTERVAL '10 minutes' * POWER(2, attempt_count - 1),
-                INTERVAL '6 hours'
-              ))
+              AND COALESCE(last_attempt_at, updated_at) <= now() - INTERVAL '10 minutes')
      ORDER BY COALESCE(last_attempt_at, updated_at), id
      LIMIT $1`,
     [limit, maxAttempts]

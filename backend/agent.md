@@ -277,7 +277,12 @@ purpose so the schema works whichever way this eventually gets decided.
   locking the payment row. This guarded transactional check blocks payout while
   a manual request is requested, approved, pending or retryable-failed; it does
   not use an order exception. Orphan-job reconciliation retries approved manual
-  refunds only; it never enqueues a still-requested manual refund. The worker
+  refunds only; it never enqueues a still-requested manual refund. A refunds
+  queue job gets up to five retries after its initial attempt (`retryLimit: 5`);
+  the six total failed attempts count toward the refund cap. The first five retry
+  delays are 1, 2, 4, 8 and 16 seconds, so the six attempts span 31 seconds of
+  queue delay, excluding execution time. At six failures the refund appears in
+  Needs attention, where an Admin can request another retry. The worker
   also requires `delivery.service.js` so its transaction-aware manual-refund
   completion listener can resolve `order_exceptions` through the table owner.
 - **Notifications**: every other service just does

@@ -13,9 +13,12 @@ export default function AdminRefunds() {
   const [refunds, setRefunds] = useState([])
   const [needsAttention, setNeedsAttention] = useState([])
   const [nextBefore, setNextBefore] = useState(null)
+  const [nextAttentionBefore, setNextAttentionBefore] = useState(null)
+  const [retryStates, setRetryStates] = useState({})
   const [loading, setLoading] = useState(true)
   const [loadingNeedsAttention, setLoadingNeedsAttention] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [loadingMoreAttention, setLoadingMoreAttention] = useState(false)
   const [error, setError] = useState('')
   const [reload, setReload] = useState(0)
 
@@ -33,6 +36,7 @@ export default function AdminRefunds() {
     api.getAdminRefundsNeedingAttention({ limit: 20 }).then((result) => {
       if (!active) return
       setNeedsAttention(result.refunds || [])
+      setNextAttentionBefore(result.nextBefore || null)
     }).catch((cause) => {
       if (active) setError((current) => current || adminErrorMessage(cause))
     }).finally(() => {
@@ -56,11 +60,32 @@ export default function AdminRefunds() {
     }
   }
 
+  async function loadMoreAttention() {
+    if (!nextAttentionBefore || loadingMoreAttention) return
+    setLoadingMoreAttention(true)
+    setError('')
+    try {
+      const result = await api.getAdminRefundsNeedingAttention({
+        limit: 20,
+        before: nextAttentionBefore,
+      })
+      setNeedsAttention((current) => [...current, ...(result.refunds || [])])
+      setNextAttentionBefore(result.nextBefore || null)
+    } catch (cause) {
+      setError(adminErrorMessage(cause))
+    } finally {
+      setLoadingMoreAttention(false)
+    }
+  }
+
   async function retryRefund(refundId) {
     if (!window.confirm('Retry this failed refund now?')) return
     try {
-      await api.retryAdminFailedRefund(refundId)
-      setNeedsAttention((current) => current.filter((refund) => refund.refundId !== refundId))
+      const result = await api.retryAdminFailedRefund(refundId)
+      setRetryStates((current) => ({
+        ...current,
+        [refundId]: result.retryQueued ? 'Retry queued' : 'Retry already queued',
+      }))
       setError('')
     } catch (cause) {
       setError(adminErrorMessage(cause))
@@ -88,12 +113,20 @@ export default function AdminRefunds() {
                 <p><strong>Last error:</strong> {refund.lastErrorCode || 'unknown'}</p>
                 <p><strong>Last attempt:</strong> {formatAdminDate(refund.lastAttemptAt)}</p>
                 <p><strong>Needs attention:</strong> {formatAdminDate(refund.needsAttentionAt)}</p>
-                <button className="admin-button admin-button-primary" type="button" onClick={() => retryRefund(refund.refundId)}>
-                  Retry
+                <button className="admin-button admin-button-primary" type="button"
+                  onClick={() => retryRefund(refund.refundId)} disabled={Boolean(retryStates[refund.refundId])}>
+                  {retryStates[refund.refundId] || 'Retry'}
                 </button>
               </article>
             ))}
           </div>}
+        {nextAttentionBefore && (
+          <div className="admin-pagination">
+            <button className="admin-button" type="button" onClick={loadMoreAttention} disabled={loadingMoreAttention}>
+              {loadingMoreAttention ? 'Loading…' : 'Load more'}
+            </button>
+          </div>
+        )}
       </section>
       {loading ? <p role="status">Loading manual refunds…</p> : error ? null : refunds.length === 0
         ? <p role="status">No manual refund requests found.</p>

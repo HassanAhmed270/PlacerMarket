@@ -132,6 +132,18 @@ describe('SEC-24: adminOps protects staff mutating route families and fails clos
     });
   });
 
+  test('refund attention and retry routes return 429 after the account quota', async () => {
+    await expect429OnMaxPlusOne('198.51.100.47', {
+      method: 'get',
+      path: '/api/admin/refunds/attention',
+    });
+    await expect429OnMaxPlusOne('198.51.100.48', {
+      method: 'post',
+      path: `/api/admin/refunds/${crypto.randomUUID()}/retry`,
+      body: {},
+    });
+  });
+
   test('listing approval returns 429 on the account quota request', async () => {
     await expect429OnMaxPlusOne('198.51.100.42', {
       method: 'post',
@@ -161,17 +173,17 @@ describe('SEC-24: adminOps protects staff mutating route families and fails clos
     });
   });
 
-  test('an unavailable Redis client returns 503 instead of allowing a staff mutation', async () => {
-    const ip = '198.51.100.46';
-    const route = {
-      method: 'post',
-      path: '/api/admin/listing-search/synonyms',
-      body: {},
-    };
+  test('an unavailable Redis client returns 503 for Admin refund routes', async () => {
+    const routes = [
+      { method: 'get', path: '/api/admin/refunds/attention' },
+      { method: 'post', path: `/api/admin/refunds/${crypto.randomUUID()}/retry`, body: {} },
+    ];
     setSharedRedisClient({ isOpen: false });
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
     try {
-      await sendAdminRequest(ip, route).expect(503);
+      for (let index = 0; index < routes.length; index += 1) {
+        await sendAdminRequest(`198.51.100.${49 + index}`, routes[index]).expect(503);
+      }
     } finally {
       consoleError.mockRestore();
       setSharedRedisClient(redisClient);
