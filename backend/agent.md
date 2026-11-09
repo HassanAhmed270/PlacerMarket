@@ -279,9 +279,11 @@ purpose so the schema works whichever way this eventually gets decided.
   not use an order exception. Orphan-job reconciliation retries approved manual
   refunds only; it never enqueues a still-requested manual refund. A refunds
   queue job gets up to five retries after its initial attempt (`retryLimit: 5`);
-  the six total failed attempts count toward the refund cap. The first five retry
-  delays are 1, 2, 4, 8 and 16 seconds, so the six attempts span 31 seconds of
-  queue delay, excluding execution time. At six failures the refund appears in
+  the six total failed attempts count toward the refund cap. pg-boss uses
+  `min(retryDelayMax, retryDelay * (2^n / 2 + (2^n / 2 * random)))` seconds,
+  where `n = min(16, retryCount + 1)`; with a 1-second base and a 300-second
+  maximum, a real worker measures roughly 30 seconds between attempts, so the
+  six attempts take about 150 seconds total. At six failures the refund appears in
   Needs attention, where an Admin can request another retry. The worker
   also requires `delivery.service.js` so its transaction-aware manual-refund
   completion listener can resolve `order_exceptions` through the table owner.
