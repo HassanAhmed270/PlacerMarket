@@ -235,7 +235,7 @@ afterEach(async () => {
 });
 
 describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
-  test('FR-32, FR-32a, FR-32b, FR-63: Buy creates one reservation and locks its item/seller price snapshot', async () => {
+  test('FR-32, FR-32a, FR-32b, FR-63, FR-86: Buy creates one reservation and locks its item/seller price snapshot', async () => {
     const response = await buy(fixture.listingId, buyerId)
       .expect(201)
       .expect('Cache-Control', 'private, no-store');
@@ -330,7 +330,7 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     expect(await countOrdersAndReservations(fixture.listingId)).toEqual(before);
   });
 
-  test('FR-63: the listing owner receives 403 when attempting to buy their listing', async () => {
+  test('FR-63, FR-87: the listing owner receives 403 when attempting to buy their listing', async () => {
     await buy(fixture.listingId, fixture.userId).expect(403);
     expect(await countOrdersAndReservations(fixture.listingId)).toEqual({ orders: 0, reservations: 0 });
   });
@@ -344,7 +344,7 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     }
   );
 
-  test('FR-32a: unsupported and inactive cities return 422, while an unknown city returns 404', async () => {
+  test('FR-32a, FR-86: unsupported and inactive cities return 422, while an unknown city returns 404', async () => {
     await db.query('DELETE FROM supported_delivery_cities WHERE city_id = $1', [fixture.cityId]);
     await buy(fixture.listingId, buyerId).expect(422);
 
@@ -361,7 +361,7 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
     expect(response.body.error).toMatch(/city not found/i);
   });
 
-  test('FR-32a: malformed or incomplete address fields return 400', async () => {
+  test('FR-32a, FR-86: malformed or incomplete address fields return 400', async () => {
     for (const address of [
       null,
       { ...ADDRESS, recipientName: 'A' },
@@ -614,6 +614,30 @@ describe('FR-32a, FR-63 and FR-63a reservation Buy', () => {
       [response.body.reservationId]
     );
     expect(Number(rows[0].seconds)).toBeCloseTo(3600, 0);
+  });
+
+  test('FR-85: Buy uses the administrator-configured delivery fee in server-calculated snapshots', async () => {
+    await db.query(
+      `UPDATE platform_settings SET value = '450.00', updated_at = now()
+       WHERE key = 'delivery_fee_pkr'`
+    );
+    const response = await buy(fixture.listingId, buyerId).expect(201);
+
+    expect(response.body).toMatchObject({
+      itemPrice: '1250.50',
+      deliveryFee: '450.00',
+      total: '1700.50',
+      currency: 'PKR',
+    });
+    const { rows } = await db.query(
+      `SELECT delivery_fee_snapshot, total_amount_snapshot
+       FROM reservations WHERE id = $1`,
+      [response.body.reservationId]
+    );
+    expect(rows[0]).toEqual({
+      delivery_fee_snapshot: '450.00',
+      total_amount_snapshot: '1700.50',
+    });
   });
 
   test.each([
