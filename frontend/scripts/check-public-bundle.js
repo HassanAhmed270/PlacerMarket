@@ -19,6 +19,7 @@ const nonPublicRoutes = new Set([
   '/checkout/:listingId',
   '/orders',
   '/orders/:orderId',
+  '/orders/:orderId/report-problem',
   '/orders/:orderId/payment-return',
   '/seller/orders',
   '/seller/orders/:orderId',
@@ -36,6 +37,7 @@ const nonPublicRoutes = new Set([
 const privateModules = new Set([
   'src/CheckoutPage.jsx',
   'src/OrderPage.jsx',
+  'src/DisputePage.jsx',
   'src/MyOrdersPage.jsx',
   'src/SellerOrdersPage.jsx',
   'src/SellerOrderPage.jsx',

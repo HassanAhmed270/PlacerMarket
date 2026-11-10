@@ -14,6 +14,7 @@ const ProtectedCustomerWorkspace = lazy(() => import('./CustomerWorkspace.jsx'))
 const StaticPage = lazy(() => import('./StaticPage.jsx'))
 const CheckoutPage = lazy(() => import('./CheckoutPage.jsx'))
 const OrderPage = lazy(() => import('./OrderPage.jsx'))
+const DisputePage = lazy(() => import('./DisputePage.jsx'))
 const MyOrdersPage = lazy(() => import('./MyOrdersPage.jsx'))
 const SellerOrdersPage = lazy(() => import('./SellerOrdersPage.jsx'))
 const SellerOrderPage = lazy(() => import('./SellerOrderPage.jsx'))
@@ -96,6 +97,8 @@ function App() {
     page = <SellerOrderPage orderId={decodeURIComponent(path.slice('/seller/orders/'.length))} />
   } else if (/^\/orders\/[^/]+\/payment-return$/.test(path)) {
     page = <PaymentReturnPage orderId={decodeURIComponent(path.split('/')[2])} />
+  } else if (/^\/orders\/[^/]+\/report-problem$/.test(path)) {
+    page = <DisputePage orderId={decodeURIComponent(path.split('/')[2])} />
   } else if (/^\/orders\/[^/]+$/.test(path)) {
     page = <OrderPage orderId={decodeURIComponent(path.slice('/orders/'.length))} />
   } else if (path === '/seller/listings' || path === '/moderation') {

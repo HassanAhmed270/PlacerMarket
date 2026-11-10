@@ -97,6 +97,7 @@ router.get('/:orderId/summary', noStore, limiters.payments, async (req, res) => 
       status: paymentStatus.status,
       checkoutUrl: paymentStatus.checkoutUrl || null,
     },
+    disputeFiling: await disputes.getBuyerDisputeFilingStatus(order),
     handoverDeadlineAt: order.handoverDeadlineAt,
     createdAt: order.createdAt,
     address: {

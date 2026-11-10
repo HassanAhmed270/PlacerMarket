@@ -155,6 +155,11 @@ function OrderPage({ orderId }) {
           {canCancel && <button className="button button-secondary" type="button" onClick={cancelOrder} disabled={busy}>
             {summary.status === 'funded' || summary.status === 'seller_preparing' ? 'Cancel and refund' : 'Cancel order'}
           </button>}
+          {summary.disputeFiling?.canFileDispute && (
+            <a className="button button-secondary" href={`/orders/${encodeURIComponent(orderId)}/report-problem`}>
+              Report a problem
+            </a>
+          )}
           {['cancelled', 'expired'].includes(summary.status) && (
             <a className="button button-secondary" href={listingPath}>Return to listing</a>
           )}

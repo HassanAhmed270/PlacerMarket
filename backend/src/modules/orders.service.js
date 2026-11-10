@@ -430,7 +430,7 @@ async function getBuyerReservationOrder(orderId, buyerId) {
     throw new ValidationError('Order and buyer ids must be UUIDs.');
   }
   const { rows } = await db.read(
-    `SELECT id, listing_id, reservation_id, status, handover_deadline_at, created_at
+    `SELECT id, listing_id, reservation_id, status, handover_deadline_at, created_at, delivered_at
      FROM orders
      WHERE id = $1 AND buyer_id = $2 AND reservation_id IS NOT NULL`,
     [orderId, buyerId]
@@ -443,6 +443,7 @@ async function getBuyerReservationOrder(orderId, buyerId) {
     status: rows[0].status,
     handoverDeadlineAt: rows[0].handover_deadline_at,
     createdAt: rows[0].created_at,
+    deliveredAt: rows[0].delivered_at,
   };
 }
 

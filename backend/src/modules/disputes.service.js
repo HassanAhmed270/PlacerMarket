@@ -30,6 +30,32 @@ const {
   NotFoundError, ValidationError, NotYetSpecifiedError, ConflictError,
 } = require('../lib/errors');
 
+const MAX_EVIDENCE_URLS = 2;
+
+function normalizeEvidenceUrls(evidenceUrls) {
+  if (!Array.isArray(evidenceUrls) || evidenceUrls.length === 0) {
+    throw new ValidationError('At least one evidence photo/file is required to file a dispute (FR-43a)');
+  }
+  if (evidenceUrls.length > MAX_EVIDENCE_URLS) {
+    throw new ValidationError(`No more than ${MAX_EVIDENCE_URLS} evidence URLs may be submitted.`);
+  }
+  return evidenceUrls.map((value) => {
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new ValidationError('Every evidence URL must be a nonblank HTTPS URL.');
+    }
+    let url;
+    try {
+      url = new URL(value.trim());
+    } catch {
+      throw new ValidationError('Every evidence URL must be a nonblank HTTPS URL.');
+    }
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) {
+      throw new ValidationError('Every evidence URL must be a nonblank HTTPS URL.');
+    }
+    return url.href;
+  });
+}
+
 // ---- FR-43, FR-43a, FR-43b: filing ----
 
 /**
@@ -38,12 +64,11 @@ const {
  * FR-43b: reason is free-text only, no fixed category list.
  */
 async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }) {
-  if (!reasonText || !reasonText.trim()) {
+  if (typeof reasonText !== 'string' || !reasonText.trim()) {
     throw new ValidationError('A dispute reason is required (FR-43b, free-text)');
   }
-  if (!evidenceUrls || evidenceUrls.length === 0) {
-    throw new ValidationError('At least one evidence photo/file is required to file a dispute (FR-43a)');
-  }
+  const normalizedReason = reasonText.trim();
+  const normalizedEvidenceUrls = normalizeEvidenceUrls(evidenceUrls);
 
   const dispute = await db.withTransaction(async (client) => {
     const context = await orders.getMoneyLockContext(client, orderId);
@@ -91,10 +116,10 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }) {
     const { rows } = await client.query(
       `INSERT INTO disputes (order_id, raised_by, reason_text, status)
        VALUES ($1, $2, $3, 'open') RETURNING *`,
-      [orderId, buyerId, reasonText]
+      [orderId, buyerId, normalizedReason]
     );
     const dispute = rows[0];
-    for (const url of evidenceUrls) {
+    for (const url of normalizedEvidenceUrls) {
       await client.query(
         `INSERT INTO dispute_evidence (dispute_id, uploaded_by, file_url) VALUES ($1, $2, $3)`,
         [dispute.id, buyerId, url]
@@ -104,6 +129,30 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }) {
   });
   eventBus.emit(events.DISPUTE_FILED, { disputeId: dispute.id, orderId });
   return dispute;
+}
+
+/** FR-43: report whether a buyer may file against an order and expose its filing limit. */
+async function getBuyerDisputeFilingStatus(order) {
+  const { rows } = await db.read(
+    'SELECT status FROM disputes WHERE order_id = $1 LIMIT 1',
+    [order.orderId]
+  );
+  const existing = rows[0] || null;
+  let complaintWindowClosesAt = null;
+  let withinComplaintWindow = false;
+  if (order.deliveredAt) {
+    const complaintWindowDays = Number(await settlement.getSetting('complaint_window_days'));
+    const windowCloses = new Date(order.deliveredAt);
+    windowCloses.setDate(windowCloses.getDate() + complaintWindowDays);
+    complaintWindowClosesAt = windowCloses.toISOString();
+    withinComplaintWindow = new Date() <= windowCloses;
+  }
+  return {
+    canFileDispute: Boolean(order.deliveredAt && order.status !== 'completed' && !existing && withinComplaintWindow),
+    disputeStatus: existing?.status ?? null,
+    complaintWindowClosesAt,
+    maxEvidenceUrls: MAX_EVIDENCE_URLS,
+  };
 }
 
 /**
@@ -298,6 +347,7 @@ async function getResolvedResolutionAmount(orderId) {
 
 module.exports = {
   fileDispute,
+  getBuyerDisputeFilingStatus,
   submitCounterEvidence,
   getDisputeQueue,
   getDisputeEvidence,

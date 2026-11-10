@@ -117,6 +117,52 @@ describe('disputes.service.resolveDispute — FR-45a guard', () => {
 });
 
 describe('FR-43 delivered reservation-order compatibility', () => {
+  test('FR-43, FR-43a: Buyer eligibility includes the complaint window and server evidence limit', async () => {
+    db.read.mockResolvedValue({ rows: [] });
+    const setting = jest.spyOn(settlement, 'getSetting').mockResolvedValue('3');
+    try {
+      const state = await disputes.getBuyerDisputeFilingStatus({
+        orderId: 'order-1',
+        status: 'held',
+        deliveredAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+      });
+      expect(state.canFileDispute).toBe(true);
+      expect(state.disputeStatus).toBeNull();
+      expect(state.maxEvidenceUrls).toBe(2);
+      expect(state.complaintWindowClosesAt).toBeTruthy();
+    } finally {
+      setting.mockRestore();
+    }
+  });
+
+  test('FR-43a: filing rejects more evidence URLs than the server limit', async () => {
+    await expect(disputes.fileDispute('order-1', 'buyer-1', {
+      reasonText: 'The delivered item differs from the listing',
+      evidenceUrls: [
+        'https://example.test/one',
+        'https://example.test/two',
+        'https://example.test/three',
+      ],
+    })).rejects.toMatchObject({ statusCode: 400 });
+    expect(db.withTransaction).not.toHaveBeenCalled();
+  });
+
+  test('FR-43a: filing rejects non-HTTPS evidence URLs', async () => {
+    await expect(disputes.fileDispute('order-1', 'buyer-1', {
+      reasonText: 'The delivered item differs from the listing',
+      evidenceUrls: ['javascript:alert(1)'],
+    })).rejects.toMatchObject({ statusCode: 400 });
+    expect(db.withTransaction).not.toHaveBeenCalled();
+  });
+
+  test('FR-43b: filing rejects a blank free-text reason', async () => {
+    await expect(disputes.fileDispute('order-1', 'buyer-1', {
+      reasonText: '  ',
+      evidenceUrls: ['https://example.test/evidence'],
+    })).rejects.toMatchObject({ statusCode: 400 });
+    expect(db.withTransaction).not.toHaveBeenCalled();
+  });
+
   test('FR-43: fileDispute accepts a delivered reservation-backed order based on delivered_at', async () => {
     const dispute = { id: 'dispute-1', order_id: 'order-1', status: 'open' };
     const client = {

@@ -139,7 +139,7 @@ describe('FR-60a public delivery cities', () => {
 });
 
 describe('FR-61, FR-62 buyer order reads', () => {
-  test('FR-61, FR-62: summary returns only the caller reservation snapshot and safe listing/payment fields', async () => {
+  test('FR-43, FR-61, FR-62: summary returns filing eligibility and only safe order fields', async () => {
     const reservation = await createReservation();
     await db.query(
       `INSERT INTO payments
@@ -158,11 +158,17 @@ describe('FR-61, FR-62 buyer order reads', () => {
 
     expect(response.headers['cache-control']).toBe('private, no-store');
     expect(Object.keys(response.body).sort()).toEqual([
-      'address', 'createdAt', 'currency', 'deliveryFee', 'handoverDeadlineAt',
+      'address', 'createdAt', 'currency', 'deliveryFee', 'disputeFiling', 'handoverDeadlineAt',
       'itemPrice', 'listing', 'orderId', 'payment', 'reservation', 'status', 'total',
     ]);
     expect(response.body).toMatchObject({
       orderId: reservation.orderId,
+      disputeFiling: {
+        canFileDispute: false,
+        disputeStatus: null,
+        complaintWindowClosesAt: null,
+        maxEvidenceUrls: 2,
+      },
       listing: { id: fixture.listingId, title: expect.stringContaining('Fixture listing'), imageUrl: null },
       status: 'reserved',
       itemPrice: '1250.50',
