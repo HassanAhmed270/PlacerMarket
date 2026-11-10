@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { ApiError, createApiClient } from './api.js'
+import { ApiError, createApiClient, resolveApiBaseUrl } from './api.js'
+
+test('FR-84: development API default follows the page host and production requires configuration', () => {
+  assert.equal(resolveApiBaseUrl({
+    development: true,
+    location: { hostname: '127.0.0.1', protocol: 'http:' },
+  }), 'http://127.0.0.1:3000/api')
+  assert.equal(resolveApiBaseUrl({ configuredBaseUrl: 'https://api.example.test/api', production: true }),
+    'https://api.example.test/api')
+  assert.throws(() => resolveApiBaseUrl({ production: true }), /VITE_API_BASE_URL must be set/)
+})
 
 test('public catalog client requests the existing main-categories endpoint', async () => {
   let requestUrl
@@ -70,6 +80,57 @@ test('FR-84, SEC-04/05: login uses a bearer challenge flow and refresh sends onl
   assert.equal(calls[1].options.credentials, 'include')
   assert.equal(calls[1].options.headers.Authorization, undefined)
   assert.equal(Object.hasOwn(globalThis, 'localStorage'), false)
+})
+
+test('FR-84: concurrent refresh calls share one in-flight refresh request', async () => {
+  let calls = 0
+  let release
+  const pending = new Promise((resolve) => { release = resolve })
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async () => {
+      calls += 1
+      await pending
+      return { ok: true, status: 200, json: async () => ({ accessToken: 'refreshed-token' }) }
+    },
+  })
+
+  const first = client.refresh()
+  const second = client.refresh()
+  await Promise.resolve()
+  assert.equal(calls, 1)
+  release()
+  assert.deepEqual(await Promise.all([first, second]), [
+    { accessToken: 'refreshed-token' },
+    { accessToken: 'refreshed-token' },
+  ])
+})
+
+test('FR-84: an authenticated 401 silently refreshes once and retries once', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      if (url.endsWith('/users/auth/refresh')) {
+        return { ok: true, status: 200, json: async () => ({ accessToken: 'refreshed-token' }) }
+      }
+      if (calls.filter((call) => call.url.endsWith('/orders/order-1/summary')).length === 1) {
+        return { ok: false, status: 401, json: async () => ({ error: 'expired' }) }
+      }
+      return { ok: true, status: 200, json: async () => ({ orderId: 'order-1' }) }
+    },
+  })
+  client.setAccessToken('expired-token')
+
+  await client.getOrderSummary('order-1')
+
+  assert.equal(calls.length, 3)
+  assert.equal(calls[0].options.headers.Authorization, 'Bearer expired-token')
+  assert.equal(calls[1].options.credentials, 'include')
+  assert.equal(calls[1].options.headers.Authorization, undefined)
+  assert.equal(calls[2].options.headers.Authorization, 'Bearer refreshed-token')
+  client.clearAccessToken()
 })
 
 test('FR-83c/f: protected seller API requests use only the in-memory access token', async () => {
@@ -230,4 +291,29 @@ test('FR-34: seller order APIs use authenticated reads and cursor query paramete
     ['https://api.example.test/api/orders/selling/order-1', 'GET'],
   ])
   assert.ok(calls.every(({ options }) => options.headers.Authorization?.startsWith('Bearer ')))
+})
+
+test('FR-43, FR-43a, FR-43b: Buyer dispute filing sends reason and evidence to the authenticated route', async () => {
+  let call
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      call = { url, options }
+      return { ok: true, status: 201, json: async () => ({ id: 'dispute-1', status: 'open' }) }
+    },
+  })
+  client.setAccessToken('short-lived-memory-token')
+
+  await client.fileDispute('order-1', {
+    reasonText: 'The delivered item differs from the listing',
+    evidenceUrls: ['https://evidence.example/photo.jpg'],
+  })
+
+  assert.equal(call.url, 'https://api.example.test/api/disputes/orders/order-1')
+  assert.equal(call.options.method, 'POST')
+  assert.equal(call.options.headers.Authorization, 'Bearer short-lived-memory-token')
+  assert.deepEqual(JSON.parse(call.options.body), {
+    reasonText: 'The delivered item differs from the listing',
+    evidenceUrls: ['https://evidence.example/photo.jpg'],
+  })
 })

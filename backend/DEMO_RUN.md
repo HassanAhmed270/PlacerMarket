@@ -1,8 +1,11 @@
 # Phase 3 local demo run
 
+Use frontend origin `http://127.0.0.1:5173` and API base `http://127.0.0.1:3000/api`.
+Reason: keeping one hostname consistent lets the Secure, SameSite=Strict refresh cookie persist.
+
 ## Services and safety
 
-This run used the existing localhost PostgreSQL development database
+This run used the existing 127.0.0.1 PostgreSQL development database
 `poshaak_demo` (not `testing_only`) and Redis reachable at
 `127.0.0.1:6379`. The development migrations had no pending work and
 `db:seed` completed. The guarded `demo:seed` was intentionally not run: this
@@ -99,7 +102,7 @@ foreach ($line in $settings) {
 }
 if (-not $env:TEST_DATABASE_URL) { throw 'TEST_DATABASE_URL is missing from backend/.env' }
 $testDb = [Uri]$env:TEST_DATABASE_URL
-if ($testDb.Host -notin @('localhost','127.0.0.1','::1') -or $testDb.AbsolutePath.TrimStart('/') -ne 'testing_only') {
+if ($testDb.Host -notin @('127.0.0.1','::1') -or $testDb.AbsolutePath.TrimStart('/') -ne 'testing_only') {
   throw 'Integration tests refused an unexpected database target.'
 }
 $env:TEST_REDIS_URL = 'redis://127.0.0.1:6379/15'

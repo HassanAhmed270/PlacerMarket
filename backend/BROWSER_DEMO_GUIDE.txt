@@ -1,0 +1,93 @@
+POSHAAK BROWSER DEMO
+====================
+
+Use frontend origin http://127.0.0.1:5173 and API base http://127.0.0.1:3000/api.
+Reason: keeping one hostname consistent lets the Secure, SameSite=Strict refresh cookie persist.
+
+OPEN THE APP
+------------
+Frontend: http://127.0.0.1:5173/
+API check: http://127.0.0.1:3000/api/delivery-cities
+Email-code inbox: http://127.0.0.1:3000/api/dev/outbox
+
+The local PostgreSQL and Redis services must be running. Do not run demo:seed
+against the existing shared poshaak_demo database or reset it.
+
+START THREE TERMINALS
+---------------------
+Terminal 1 - API:
+  cd D:\Havuor\marketplace\backend
+  node --env-file-if-exists=.demo.env src/server.js
+
+Terminal 2 - worker (email and payment events):
+  cd D:\Havuor\marketplace\backend
+  node --env-file-if-exists=.demo.env worker.js
+
+Terminal 3 - frontend:
+  cd D:\Havuor\marketplace\frontend
+  $env:VITE_API_BASE_URL = 'http://127.0.0.1:3000/api'
+  npm.cmd run dev -- --host 127.0.0.1
+
+Do not start a second copy if these services are already running. Restart API
+and worker after changing backend/.demo.env.
+
+DEMO SIGN-INS
+-------------
+Use only non-production sign-in values from ignored backend/.demo.env.
+Never store account credentials in this guide.
+
+SELLER APPLICATION AND LISTING
+------------------------------
+1. Sign in as the candidate at http://127.0.0.1:5173/login
+2. Open http://127.0.0.1:5173/account and submit Seller application.
+3. Sign out. Sign in as the admin and open /account.
+4. Select "Load admin queues" and approve the application.
+5. Sign back in as the seller and open /seller/listings.
+6. Create a listing and complete any required seller/profile steps.
+7. As admin, open /moderation and approve/publish the listing.
+
+BUYER CHECKOUT
+--------------
+Use a buyer account different from the seller. Register it at /register if
+needed. Open the published listing at /listing/<listing-id>, choose Buy, enter
+the delivery address, then use Pay now and choose Pay (success) on the local
+fake checkout. The order and payment result are at /orders/<order-id>.
+
+For a failed payment, choose Fail on the fake checkout, then use Retry payment.
+My orders: /orders
+Legacy payments-off page: /checkout/soon
+
+PAYMENTS MUST BE ENABLED FOR CHECKOUT
+-------------------------------------
+The current backend/.demo.env does not include fake-payment configuration.
+For a disposable local demo database only, add these settings to that ignored
+file, using the same fresh secret for both API and worker:
+
+  PAYMENTS_ENABLED=1
+  PAYMENT_GATEWAY_PROVIDER=fake
+  PUBLIC_BASE_URL=http://127.0.0.1:5173
+  PAYMENT_WEBHOOK_URL=http://127.0.0.1:3000/api/webhooks/payments/fake
+  FAKE_GATEWAY_WEBHOOK_SECRET=<generate a private random secret of at least 32 bytes>
+
+After adding them, restart the API and worker. Never paste the secret into
+chat, commit it, or use live payment credentials. Checkout requires a
+published, available listing, a separate buyer, and an active delivery city.
+
+ROUTES AT A GLANCE
+------------------
+/                  Home
+/register          Create a separate buyer account
+/login             Buyer, seller, or admin sign-in
+/account           Seller application; admin seller-review queue
+/seller/listings   Seller listing workspace
+/moderation        Admin listing approval
+/listing/<id>      Public listing and Buy entry
+/checkout/<id>     Buyer address and reservation form
+/checkout/soon     Payments-off fallback
+/orders            Buyer's order list
+/orders/<id>       Reservation, payment, and cancellation status
+/orders/<id>/payment-return  Payment confirmation
+/?paymentReturn=<id>         Fake gateway return route
+
+Browser routes do not need a trailing period. Replace <id> with the actual
+listing or order ID.

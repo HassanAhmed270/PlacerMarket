@@ -1,6 +1,20 @@
-const DEFAULT_API_BASE_URL = 'http://localhost:3000/api'
 export const DEV_FAKES_BANNER = Boolean(import.meta.env?.DEV && import.meta.env?.VITE_DEV_FAKES === '1')
 let accessTokenInMemory = null
+
+export function resolveApiBaseUrl({
+  configuredBaseUrl = import.meta.env?.VITE_API_BASE_URL,
+  development = Boolean(import.meta.env?.DEV),
+  production = Boolean(import.meta.env?.PROD),
+  location = globalThis.location,
+} = {}) {
+  if (configuredBaseUrl) return configuredBaseUrl
+  if (production) throw new Error('VITE_API_BASE_URL must be set for production builds.')
+  if (development) {
+    if (!location?.hostname) throw new Error('The development API base requires the page hostname.')
+    return `http://${location.hostname}:3000/api`
+  }
+  return 'http://127.0.0.1:3000/api'
+}
 
 export class ApiError extends Error {
   constructor(status) {
@@ -11,17 +25,31 @@ export class ApiError extends Error {
 }
 
 export function createApiClient({
-  baseUrl = import.meta.env?.VITE_API_BASE_URL || DEFAULT_API_BASE_URL,
+  baseUrl = resolveApiBaseUrl(),
   fetchImpl = globalThis.fetch,
 } = {}) {
   const normalizedBaseUrl = baseUrl.replace(/\/+$/, '')
+  let refreshPromise = null
+
+  async function authenticatedFetch(url, options, authenticated) {
+    let response = await fetchImpl(url, options)
+    if (authenticated && response.status === 401) {
+      const session = await refresh()
+      if (!session?.accessToken) throw new ApiError(401)
+      response = await fetchImpl(url, {
+        ...options,
+        headers: { ...options.headers, Authorization: `Bearer ${session.accessToken}` },
+      })
+    }
+    return response
+  }
 
   async function get(path, { signal, authenticated = false } = {}) {
-    const response = await fetchImpl(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
+    const response = await authenticatedFetch(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
       method: 'GET',
       headers: { Accept: 'application/json', ...(authenticated && accessTokenInMemory ? { Authorization: `Bearer ${accessTokenInMemory}` } : {}) },
       signal,
-    })
+    }, authenticated)
 
     if (!response.ok) {
       let payload = null
@@ -37,13 +65,13 @@ export function createApiClient({
     }
   }
 
-  async function send(method, path, body, { authenticated = false, refresh = false } = {}) {
+  async function send(method, path, body, { authenticated = false, refresh: isRefresh = false } = {}) {
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json' }
     if (authenticated && accessTokenInMemory) headers.Authorization = `Bearer ${accessTokenInMemory}`
-    const response = await fetchImpl(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
+    const response = await authenticatedFetch(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
       method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      ...(refresh ? { credentials: 'include' } : {}),
-    })
+      ...(isRefresh ? { credentials: 'include' } : {}),
+    }, authenticated && !isRefresh)
     let result = null
     try { result = await response.json() } catch { /* Empty success response. */ }
     if (!response.ok) throw Object.assign(new ApiError(response.status), { payload: result })
@@ -52,15 +80,28 @@ export function createApiClient({
 
   const post = (path, body, options) => send('POST', path, body, options)
 
+  async function refresh() {
+    if (!refreshPromise) {
+      refreshPromise = send('POST', 'users/auth/refresh', {}, { refresh: true })
+        .then((session) => {
+          if (!session?.accessToken) throw new ApiError(401)
+          accessTokenInMemory = session.accessToken
+          return session
+        })
+        .finally(() => { refreshPromise = null })
+    }
+    return refreshPromise
+  }
+
   async function upload(path, file) {
-    const response = await fetchImpl(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
+    const response = await authenticatedFetch(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
       method: 'POST',
       headers: {
         Accept: 'application/json', 'Content-Type': 'application/octet-stream',
         ...(accessTokenInMemory ? { Authorization: `Bearer ${accessTokenInMemory}` } : {}),
       },
       body: file,
-    })
+    }, true)
     let result = null
     try { result = await response.json() } catch { /* Non-JSON response. */ }
     if (!response.ok) throw Object.assign(new ApiError(response.status), { payload: result })
@@ -71,9 +112,9 @@ export function createApiClient({
     const imageUrl = path.startsWith('/api/')
       ? `${new URL(normalizedBaseUrl).origin}${path}`
       : `${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`
-    const response = await fetchImpl(imageUrl, {
+    const response = await authenticatedFetch(imageUrl, {
       method: 'GET', headers: { ...(accessTokenInMemory ? { Authorization: `Bearer ${accessTokenInMemory}` } : {}) },
-    })
+    }, true)
     if (!response.ok) throw new ApiError(response.status)
     return URL.createObjectURL(await response.blob())
   }
@@ -133,6 +174,7 @@ export function createApiClient({
     getPublicListing: (id) => get(`discovery/listings/${encodeURIComponent(id)}`),
     getListingStatus: (id) => get(`discovery/listings/${encodeURIComponent(id)}/status`),
     buyListing: (id, input) => post(`listings/${encodeURIComponent(id)}/buy`, input, { authenticated: true }),
+    fileDispute: (id, input) => post(`disputes/orders/${encodeURIComponent(id)}`, input, { authenticated: true }),
     getOrderSummary: (id) => get(`orders/${encodeURIComponent(id)}/summary`, { authenticated: true }),
     getMyOrders: (options = {}) => get(`orders/mine${queryString(options)}`, { authenticated: true }),
     getSellingOrders: (options = {}) => get(`orders/selling${queryString(options)}`, { authenticated: true }),
@@ -150,7 +192,7 @@ export function createApiClient({
     register: (input) => post('users/register', input),
     requestPasswordReset: (email) => post('users/password/forgot', { email }),
     resetPassword: (input) => post('users/password/reset', input),
-    refresh: () => post('users/auth/refresh', {}, { refresh: true }),
+    refresh,
     logout: () => post('users/logout', {}, { authenticated: true }),
     getSellerApplication: () => get('users/me/seller-application', { authenticated: true }),
     submitSellerApplication: (input) => post('users/seller-applications', input, { authenticated: true }),
