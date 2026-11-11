@@ -29,6 +29,21 @@ describe('smoke: app boots and routes respond', () => {
     expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/i);
   });
 
+  test('SEC-22: CORS protects API routes without blocking fake-gateway requests', async () => {
+    const apiResponse = await request(app)
+      .get('/api/catalog/condition-types')
+      .set('Origin', 'https://unlisted.invalid');
+    expect(apiResponse.status).toBe(403);
+
+    app.post('/fake-gateway/__cors_probe', (_req, res) => res.sendStatus(204));
+    const fakeCheckoutResponse = await request(app)
+      .post('/fake-gateway/__cors_probe')
+      .set('Origin', 'http://127.0.0.1:3000')
+      .type('form')
+      .send({ scenario: 'success' });
+    expect(fakeCheckoutResponse.status).toBe(204);
+  });
+
   test('FR-01, SEC-01, SEC-16: registration rejects client password hashes and accepts only validated fields', async () => {
     const register = jest.spyOn(users, 'registerUser')
       .mockResolvedValueOnce({ id: 'new-user' }).mockResolvedValueOnce(null);

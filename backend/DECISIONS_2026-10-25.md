@@ -73,8 +73,8 @@
 
 **Scope note:** This file records the owner-approved Phase 4 decisions **Q1–Q19 only**. It is a decision record, not a claim that the code is implemented, tested, deployed or legally cleared for live payments.
 
-## Addendum (provisional, owner to confirm)
+## Addendum (D1 and D2 confirmed by the owner on 2026-10-29)
 
-- **D1 (Q12 scope): PROVISIONAL** — buyer payments only; cards first; buyer wallets/bank later through the PaymentGateway adapter; seller payouts stay manual (FR-65), out of Phase 4.
-- **D2 (Q17 second admin): PROVISIONAL** — a second real person with their own Admin account and authenticator; a controlled command to create additional Admins is part of the Phase 4 design; `PAYMENTS_ENABLED` may not be enabled until two distinct authenticator-enrolled Admins exist. System-triggered refunds (expiry, missed handover, pre-handover cancellation) use their own idempotent path and do not need a second Admin.
+- **D1 (Q12 scope): CONFIRMED 2026-10-29** — buyer payments only; cards first; buyer wallets/bank later through the PaymentGateway adapter; seller payouts stay manual (FR-65), out of Phase 4.
+- **D2 (Q17 second admin): CONFIRMED 2026-10-29** — a second real person with their own Admin account and authenticator; a controlled command to create additional Admins is part of the Phase 4 design; `PAYMENTS_ENABLED` may not be enabled until two distinct authenticator-enrolled Admins exist. System-triggered refunds (expiry, missed handover, pre-handover cancellation) use their own idempotent path and do not need a second Admin.
 - Derived notes: refunds need a trigger field (`system_cancel`, `system_expiry`, `system_handover_timeout`, `manual_admin`); price-revision approval must check for an active reservation under a row lock; mount the webhook route before `express.json()` so signature verification can use the raw body; the worker needs its first recurring jobs for reservation expiry and the handover deadline.

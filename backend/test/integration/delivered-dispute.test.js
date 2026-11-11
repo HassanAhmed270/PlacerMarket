@@ -295,4 +295,97 @@ describe('FR-43, FR-45g delivered reservation disputes', () => {
       dispute_id: disputeRows[0].id,
     }]);
   });
+
+  function fileDisputeBody(body, actorId = scenario.buyerId) {
+    return request(getApp())
+      .post(`/api/disputes/orders/${scenario.orderId}`)
+      .set('Authorization', authHeader(actorId))
+      .send(body);
+  }
+
+  function readSummary(actorId) {
+    return request(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(actorId));
+  }
+
+  async function disputeCount() {
+    const { rows } = await db.query('SELECT count(*)::int AS disputes FROM disputes WHERE order_id = $1', [
+      scenario.orderId,
+    ]);
+    return rows[0].disputes;
+  }
+
+  test('FR-43a, FR-43b: filing rejects a blank reason and missing, blank, non-HTTPS, credentialed or excess evidence without writing a dispute', async () => {
+    const evidence = 'https://media.example.test/a.jpg';
+    const rejected = [
+      { reasonText: '   ', evidenceUrls: [evidence] },
+      { reasonText: 5, evidenceUrls: [evidence] },
+      { reasonText: 'reason', evidenceUrls: [] },
+      { reasonText: 'reason' },
+      { reasonText: 'reason', evidenceUrls: ['   '] },
+      { reasonText: 'reason', evidenceUrls: [123] },
+      { reasonText: 'reason', evidenceUrls: ['http://media.example.test/a.jpg'] },
+      { reasonText: 'reason', evidenceUrls: ['javascript:alert(1)'] },
+      { reasonText: 'reason', evidenceUrls: ['data:text/html,hi'] },
+      { reasonText: 'reason', evidenceUrls: ['https://user:secret@media.example.test/a.jpg'] },
+      { reasonText: 'reason', evidenceUrls: [evidence, `${evidence}1`, `${evidence}2`] },
+    ];
+    for (const body of rejected) {
+      const response = await fileDisputeBody(body);
+      expect({ body, status: response.status }).toEqual({ body, status: 400 });
+    }
+    expect(await disputeCount()).toBe(0);
+  });
+
+  test('FR-43: the buyer summary reports filing eligibility, other users get nothing, and a filing stores trimmed values once', async () => {
+    const before = await readSummary(scenario.buyerId).expect(200);
+    expect(before.body.disputeFiling).toMatchObject({
+      canFileDispute: true,
+      disputeStatus: null,
+      maxEvidenceUrls: 2,
+    });
+    expect(Date.parse(before.body.disputeFiling.complaintWindowClosesAt)).toBeGreaterThan(Date.now());
+    const stranger = await readSummary(harness.unrelatedBuyerId);
+    const seller = await readSummary(harness.fixture.userId);
+    expect([stranger.status, seller.status]).toEqual([404, 404]);
+    expect(JSON.stringify([stranger.body, seller.body])).not.toContain('disputeFiling');
+
+    const filed = await fileDisputeBody({
+      reasonText: '  padded reason  ',
+      evidenceUrls: ['  https://media.example.test/a.jpg  ', 'https://media.example.test/b.jpg'],
+    }).expect(201);
+    await global.drainIntegrationListeners(5000);
+    const { rows: evidence } = await db.query(
+      'SELECT file_url FROM dispute_evidence WHERE dispute_id = $1 ORDER BY file_url',
+      [filed.body.id]
+    );
+    const { rows: [stored] } = await db.query(
+      'SELECT reason_text, raised_by FROM disputes WHERE id = $1',
+      [filed.body.id]
+    );
+    expect(evidence.map((row) => row.file_url)).toEqual([
+      'https://media.example.test/a.jpg',
+      'https://media.example.test/b.jpg',
+    ]);
+    expect(stored).toEqual({ reason_text: 'padded reason', raised_by: scenario.buyerId });
+
+    const after = await readSummary(scenario.buyerId).expect(200);
+    expect(after.body.disputeFiling).toMatchObject({ canFileDispute: false, disputeStatus: 'open' });
+    await fileDisputeBody({ reasonText: 'again', evidenceUrls: ['https://media.example.test/c.jpg'] }).expect(409);
+    expect(await disputeCount()).toBe(1);
+  });
+
+  test('FR-43: a closed complaint window hides filing from the summary and the server refuses it', async () => {
+    await db.query("UPDATE orders SET delivered_at = now() - INTERVAL '400 days' WHERE id = $1", [
+      scenario.orderId,
+    ]);
+    const summary = await readSummary(scenario.buyerId).expect(200);
+    expect(summary.body.disputeFiling.canFileDispute).toBe(false);
+    await fileDisputeBody({
+      reasonText: 'too late',
+      evidenceUrls: ['https://media.example.test/a.jpg'],
+    }).expect(400);
+    expect(await disputeCount()).toBe(0);
+  });
 });

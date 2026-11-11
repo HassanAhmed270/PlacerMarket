@@ -25,7 +25,7 @@ closed. Production CDN/snapshot serving and other hosted checks remain pending.
 `DECISIONS_2026-10-25.md`; Phase 4 Task 0 is design-only. Fixed-price Buy
 creates a reservation directly (`reserved`, with a temporary legacy `Bag`
 alias); it does not depend on offers. The order/payment scope, launch checks,
-and provisional D1/D2 boundaries are in `specs.md`, `Phases.md`,
+and the confirmed D1/D2 boundaries (2026-10-29) are in `specs.md`, `Phases.md`,
 `open-questions.md`, and `LIVE_CHECKS.md`. No Phase 4 code/schema change is
 claimed by this documentation update.
 

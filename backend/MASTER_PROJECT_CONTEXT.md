@@ -20,7 +20,7 @@ decisions now specify fixed-price Buy → reservation → payment, a 60-minute
 configurable reservation, three active unpaid reservations, server-calculated
 PKR 300 delivery, structured address validation, pre-handover full refunds, and
 a three-day seller handover deadline. Task 0 is design-only; implementation and
-live payment readiness are not claimed. D1/D2 remain provisional. See
+live payment readiness are not claimed. D1/D2 were confirmed by the owner on 2026-10-29, and the Phase 4 gate was closed by owner amendment on 2026-11-08 (`PHASE4_GATE_REPORT.md`). See
 `DECISIONS_2026-10-25.md`, `specs.md`, `Phases.md` and `open-questions.md`.
 
 **Owner update (2026-10-22; machine state refreshed 2026-10-23):** the approved Phase 1 implementation stages are
@@ -171,11 +171,11 @@ Target load: **10K concurrent visitors**. Full requirement rows: `specs.md` sect
 
 | Area | Was (COD) | Now |
 |---|---|---|
-| Payment | Cash or digital transfer at the door | PaymentGateway adapter; cards first provisionally, buyer wallets/bank later (D1 provisional); provider unselected |
+| Payment | Cash or digital transfer at the door | PaymentGateway adapter; cards first, buyer wallets/bank later (D1 confirmed 2026-10-29); provider unselected |
 | Order becomes paid | Courier confirms collection | Only from a verified webhook (FR-61) |
 | Flow | Order Placed … Delivered (Payment Confirmed) | Fixed-price Buy → `reserved` (temporary `Bag` alias) → verified Funded → … → Delivered → hold → Completed (FR-62) |
 | Delivered marked by | Courier/ops staff | **Admin only, for now** (FR-68) |
-| Cash remittance reconciliation | Manual vs courier statements | Obsolete; gateway settlement reconciliation (FR-70, DISCUSS) |
+| Cash remittance reconciliation | Manual vs courier statements | Obsolete; gateway settlement reconciliation (FR-70, design approved as built 2026-11-08, row unticked) |
 | Gateway fee | n/a | Platform absorbs it from commission (FR-64) |
 | Payouts | Manual by admin | Still manual at launch (FR-65) |
 | Seller ID verification | Manual Admin check required before first payout at any price (FR-66/66a) | Current manual flow stores no CNIC number or document |

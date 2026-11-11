@@ -13,7 +13,7 @@ implementation: select and verify the live gateway provider and sandbox; obtain
 legal clearance for holding customer funds and approve customer-facing terms;
 verify provider webhook signatures against raw request bytes; keep production
 `PAYMENTS_ENABLED` disabled until all gates are approved; enroll two distinct
-authenticator-protected Admins if provisional D2 is confirmed; and confirm the
+authenticator-protected Admins, as the confirmed D2 (2026-10-29) requires; and confirm the
 manual courier arrangement and escalation process. Track execution in
 `LIVE_CHECKS.md`.
 

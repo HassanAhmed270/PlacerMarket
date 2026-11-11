@@ -120,6 +120,32 @@ passes at 76 KB gzip of 200 KB, but the owner has not signed off the UI).
 - A real second Admin (D2); production `PAYMENTS_ENABLED` stays closed until two
   distinct enrolled Admins, the provider checks and legal clearance exist.
 
+## Post-closure changes and click-through status (2026-11-10)
+
+Main is at `4c011b0` (closure commit `dd532aa` plus three commits from `review/p4-closeout`):
+
+- The stray `phase4-close.patch` was removed from the repository root.
+- Session persistence: the development API address follows the page host, concurrent refresh
+  calls share one request, and an authenticated 401 refreshes once and retries once (FR-84
+  tests). No cookie flag, token lifetime or rate limit changed.
+- Buyer "Report a problem" screen on `/orders/:orderId/report-problem`, with a server-side
+  evidence rule (1–2 HTTPS URLs) and an eligibility read on the order summary (FR-43,
+  FR-43a, FR-43b). No row was ticked.
+
+Owner click-through (local demo, fake gateway):
+
+| Scenario | Status |
+|---|---|
+| A: Buy, pay, cancel before handover | passed (owner) |
+| B: handover, delivered, two-Admin manual refund | passed (owner) |
+| Delivery cities toggle and unsupported-city Buy | passed (API check by Copilot; the UI toggle is still the owner's to confirm) |
+| C: dispute resolved for the buyer | not run; a Buyer filing screen did not exist at the time. It now exists and must be clicked through. |
+| D: late payment | not run; blocked by the email-code limit on the owner's Buyer |
+| Notifications (refund, late payment) | not run |
+
+The frontend rows FR-32a, FR-34, FR-42, FR-60a and FR-85 stay unticked until the remaining
+scenarios are reported.
+
 ## Phase 4 gate checklist (as ticked in `Phases.md`)
 
 | Gate line | Status | Basis |

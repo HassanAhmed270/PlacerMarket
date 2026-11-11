@@ -34,7 +34,7 @@ price Buy creates a `reserved` listing/order state directly (temporary legacy
 payment → Funded only from a verified webhook → ship → Delivered (admin marks it,
 FR-68) → hold/complaint window → Completed. The reservation window starts at 60
 minutes, configurable; the active-unpaid cap is 3, configurable. Buyer payments
-are adapter-based; cards first is provisional (D1), wallets/bank later. Seller
+are adapter-based; cards first (D1, confirmed 2026-10-29), wallets/bank later. Seller
 payouts stay manual under FR-65. The platform absorbs gateway fees (FR-64).
 Manual refunds require two distinct authenticator-verified Admins; system refunds
 use a separate idempotent path. D2's additional-admin and payment-enable gates
