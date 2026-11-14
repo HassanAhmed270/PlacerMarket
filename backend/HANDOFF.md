@@ -6,6 +6,7 @@ instructions: `DEVELOPMENT_HANDOFF.md`. Full state and architecture:
 first called "Marketplace").
 
 Current phase: 4 closed by owner amendment on 2026-11-08 (Option A, as for Phase 3; evidence and carried-forward list in `PHASE4_GATE_REPORT.md`). Phase 5 rows FR-45b-h, FR-65 and dispute ownership were pulled forward and accepted by the owner on 2026-11-07. Launch blockers, not gate blockers: payment gateway, legal clearance, courier, a real second Admin; the owner's browser click-through is still pending (Scenarios A and B passed on 2026-11-10; Scenario C through the new Buyer "Report a problem" screen, Scenario D and the notifications remain). Post-closure changes on main `4c011b0`: the Buyer problem-report screen (FR-43, FR-43a, FR-43b rows still unticked) and the one-origin session fix (FR-84); see `open-questions.md` Resolved 2026-11-10.
+Stage P5-S1 (2026-11-13): Settlement core implemented with 5% launch commission snapshotted at Buy, partial-refund settlement maths (FR-46, FR-46a, FR-47, FR-50, FR-50a), idempotent settlement recording with ledger entries, and migration 028.
 
 ## 0. Inspect before you propose anything
 

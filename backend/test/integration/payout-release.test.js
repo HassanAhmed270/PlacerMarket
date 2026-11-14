@@ -325,7 +325,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
       order_status: 'completed',
       hold_state: 'released',
       settlements: 1,
-      ledger: 1,
+      ledger: 3,
       audits: 2,
       refunds: 0,
     });
@@ -342,7 +342,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
       order_status: 'completed',
       hold_state: 'released',
       settlements: 1,
-      ledger: 1,
+      ledger: 3,
       audits: 2,
       refunds: 0,
     });

@@ -371,12 +371,24 @@ async function releaseReservationPayout(orderId, adminId, input) {
       );
     }
 
-    const settings = await settlement.getSettingsForTransaction(client, ['commission_percent']);
+    const { rows: refundRows } = await client.query(
+      `SELECT COALESCE(SUM(amount), 0)::text AS refunded_item_amount
+       FROM refunds
+       WHERE order_id = $1 AND status = 'succeeded'`,
+      [orderId]
+    );
+    const refundedItemAmount = refundRows[0]?.refunded_item_amount || '0.00';
     const amounts = settlement.calculateReservationSettlement(
       reservation.item_price_snapshot,
-      settings.commission_percent
+      reservation.commission_percent_snapshot,
+      refundedItemAmount
     );
-    await settlement.recordReservationSettlement(client, orderId, adminId, amounts);
+    if (amounts) {
+      await settlement.recordReservationSettlement(client, orderId, adminId, {
+        ...amounts,
+        currency: reservation.currency,
+      });
+    }
     const completedOrder = await orders.completeReservationPayoutOrder(client, orderId);
     if (!completedOrder) throw new ConflictError('The order state changed before payout release.');
 
@@ -397,8 +409,8 @@ async function releaseReservationPayout(orderId, adminId, input) {
       note,
       itemPrice: reservation.item_price_snapshot,
       deliveryFee: reservation.delivery_fee_snapshot,
-      sellerNetAmount: amounts.sellerNetAmount,
-      commissionAmount: amounts.commissionAmount,
+      sellerNetAmount: amounts ? amounts.sellerNetAmount : '0.00',
+      commissionAmount: amounts ? amounts.commissionAmount : '0.00',
       currency: reservation.currency,
     });
 
@@ -406,8 +418,8 @@ async function releaseReservationPayout(orderId, adminId, input) {
       orderId,
       status: 'completed',
       payout: {
-        sellerNetAmount: amounts.sellerNetAmount,
-        commissionAmount: amounts.commissionAmount,
+        sellerNetAmount: amounts ? amounts.sellerNetAmount : '0.00',
+        commissionAmount: amounts ? amounts.commissionAmount : '0.00',
         currency: reservation.currency,
       },
       releasedAt: releasedRows[0].released_at,

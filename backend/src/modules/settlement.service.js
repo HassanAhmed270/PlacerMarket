@@ -61,11 +61,17 @@ async function calculateCommission(itemPrice) {
   return { percent, commissionAmount };
 }
 
-function decimalToMinorUnits(value, fieldName) {
-  if (typeof value !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(value)) {
-    throw new ValidationError(`${fieldName} must be a non-negative decimal string with at most two decimal places.`);
+function parseDecimalInput(value, fieldName) {
+  const str = typeof value === 'number' ? value.toFixed(2) : String(value ?? '');
+  if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(str)) {
+    throw new ValidationError(`${fieldName} must be a non-negative decimal with at most two decimal places.`);
   }
-  const [whole, fraction = ''] = value.split('.');
+  return str;
+}
+
+function decimalToMinorUnits(value, fieldName) {
+  const str = parseDecimalInput(value, fieldName);
+  const [whole, fraction = ''] = str.split('.');
   return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
 }
 
@@ -73,85 +79,161 @@ function minorUnitsToDecimal(value) {
   return `${value / 100n}.${String(value % 100n).padStart(2, '0')}`;
 }
 
-/** FR-47: calculate reservation settlement amounts exactly from decimal strings. */
-function calculateReservationSettlement(itemPrice, commissionPercent) {
+/** FR-46, FR-47, FR-50a: calculate reservation settlement amounts exactly from decimal strings and snapshots. */
+function calculateReservationSettlement(itemPrice, commissionPercent, refundedItemAmount = '0.00') {
+  if (typeof itemPrice === 'object' && itemPrice !== null) {
+    const reservation = itemPrice;
+    itemPrice = reservation.item_price_snapshot ?? reservation.itemPrice;
+    commissionPercent = commissionPercent ?? reservation.commission_percent_snapshot ?? reservation.commissionPercent;
+    refundedItemAmount = refundedItemAmount !== '0.00' ? refundedItemAmount : (reservation.refunded_item_amount ?? reservation.refundedItemAmount ?? '0.00');
+  }
+
   const itemPriceMinor = decimalToMinorUnits(itemPrice, 'itemPrice');
-  if (typeof commissionPercent !== 'string' ||
-      !/^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(commissionPercent)) {
+
+  const percentStr = typeof commissionPercent === 'number' ? String(commissionPercent) : commissionPercent;
+  if (typeof percentStr !== 'string' ||
+      !/^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(percentStr)) {
     throw new ValidationError('commissionPercent must be a decimal string from 0 to 100.');
   }
-  const percentParts = commissionPercent.split('.');
+  const percentParts = percentStr.split('.');
   const percentMinor = BigInt(percentParts[0]) * 100n + BigInt((percentParts[1] || '').padEnd(2, '0'));
   if (percentMinor > 10000n) {
     throw new ValidationError('commissionPercent must be a decimal string from 0 to 100.');
   }
 
-  const commissionMinor = (itemPriceMinor * percentMinor + 5000n) / 10000n;
+  const refundedMinor = decimalToMinorUnits(refundedItemAmount, 'refundedItemAmount');
+  if (refundedMinor > itemPriceMinor) {
+    throw new ValidationError('Refunds above the item price are rejected.');
+  }
+  if (refundedMinor === itemPriceMinor) {
+    return null;
+  }
+
+  const receivedByPlatformBaseMinor = itemPriceMinor - refundedMinor;
+  const commissionMinor = (receivedByPlatformBaseMinor * percentMinor + 5000n) / 10000n;
+  const sellerNetAmountMinor = receivedByPlatformBaseMinor - commissionMinor;
+
   return {
-    commissionPercent,
+    commissionPercent: percentStr,
     commissionAmount: minorUnitsToDecimal(commissionMinor),
-    sellerNetAmount: minorUnitsToDecimal(itemPriceMinor - commissionMinor),
+    sellerNetAmount: minorUnitsToDecimal(sellerNetAmountMinor),
+    refundedItemAmount: minorUnitsToDecimal(refundedMinor),
   };
 }
 
-/** FR-47, FR-49: insert a reservation settlement in the payout transaction. */
+/** FR-47, FR-49, FR-50a: insert an idempotent reservation settlement and ledger entries in the payout transaction. */
 async function recordReservationSettlement(client, orderId, adminId, amounts) {
+  let finalAmounts = amounts;
+  let currency = 'PKR';
+
+  if (!finalAmounts) {
+    const { rows: resRows } = await client.query(
+      `SELECT r.item_price_snapshot, r.commission_percent_snapshot, r.currency
+       FROM reservations r
+       JOIN orders o ON o.reservation_id = r.id
+       WHERE o.id = $1`,
+      [orderId]
+    );
+    if (!resRows[0]) throw new NotFoundError('reservation for order', orderId);
+
+    const { rows: refundRows } = await client.query(
+      `SELECT COALESCE(SUM(amount), 0)::text AS refunded_item_amount
+       FROM refunds
+       WHERE order_id = $1 AND status = 'succeeded'`,
+      [orderId]
+    );
+    currency = resRows[0].currency || 'PKR';
+    finalAmounts = calculateReservationSettlement(
+      resRows[0].item_price_snapshot,
+      resRows[0].commission_percent_snapshot,
+      refundRows[0]?.refunded_item_amount || '0.00'
+    );
+  } else {
+    currency = amounts.currency || 'PKR';
+  }
+
+  if (!finalAmounts) {
+    return null;
+  }
+
   const { rows } = await client.query(
     `INSERT INTO settlements
        (order_id, commission_percent, commission_amount, seller_net_payout,
-        payout_initiated_by, payout_initiated_at)
-     VALUES ($1, $2, $3::numeric, $4::numeric, $5, now())
+        refunded_item_amount, payout_initiated_by, payout_initiated_at)
+     VALUES ($1, $2::numeric, $3::numeric, $4::numeric, $5::numeric, $6, now())
+     ON CONFLICT (order_id) DO UPDATE
+       SET order_id = settlements.order_id
      RETURNING order_id, commission_percent, commission_amount, seller_net_payout,
-               payout_initiated_by, payout_initiated_at`,
-    [orderId, amounts.commissionPercent, amounts.commissionAmount, amounts.sellerNetAmount, adminId]
+               refunded_item_amount, payout_initiated_by, payout_initiated_at`,
+    [
+      orderId,
+      finalAmounts.commissionPercent,
+      finalAmounts.commissionAmount,
+      finalAmounts.sellerNetAmount,
+      finalAmounts.refundedItemAmount || '0.00',
+      adminId,
+    ]
   );
-  return rows[0];
+  const settlementRow = rows[0];
+
+  if (finalAmounts.commissionAmount !== '0.00' && Number(finalAmounts.commissionAmount) > 0) {
+    await client.query(
+      `INSERT INTO ledger_entries
+         (order_id, currency, amount, entry_type, idempotency_key)
+       VALUES ($1, $2, $3::numeric, 'commission', $4)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [orderId, currency, finalAmounts.commissionAmount, `commission:${orderId}`]
+    );
+  }
+
+  if (finalAmounts.sellerNetAmount !== '0.00' && Number(finalAmounts.sellerNetAmount) > 0) {
+    await client.query(
+      `INSERT INTO ledger_entries
+         (order_id, currency, amount, entry_type, idempotency_key)
+       VALUES ($1, $2, -($3::numeric), 'seller_payable', $4)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [orderId, currency, finalAmounts.sellerNetAmount, `seller_payable:${orderId}`]
+    );
+  }
+
+  return settlementRow;
 }
 
 // ---- FR-47, FR-49: settlement record ----
 
 /**
- * FR-47: called by payout.service.js once cash is confirmed remitted AND
- * the hold window has passed (or admin force-released) with no unresolved
- * dispute — this file does not decide WHEN to settle, only HOW MUCH.
- *
- * FR-50a (OPEN): if resolutionAmountToBuyer is passed and is neither 0 nor
- * the full agreed_item_price, that's a partial-refund scenario this
- * function refuses to compute — FR-45a hasn't decided partial-refund policy
- * yet, and settlement math for it is explicitly blocked on that decision.
+ * FR-47, FR-50a: called by payout.service.js once cash is confirmed remitted AND
+ * the hold window has passed (or admin force-released) with no unresolved dispute.
  */
 async function calculateSettlement(orderId, { agreedItemPrice, resolutionAmountToBuyer } = {}) {
-  if (
-    resolutionAmountToBuyer !== undefined &&
-    resolutionAmountToBuyer !== null &&
-    Number(resolutionAmountToBuyer) !== 0 &&
-    Number(resolutionAmountToBuyer) !== Number(agreedItemPrice)
-  ) {
-    throw new NotYetSpecifiedError(
-      'FR-50a',
-      'settlement math for a partial-refund dispute resolution is blocked on the FR-45a decision'
-    );
+  const itemPrice = Number(agreedItemPrice);
+  const refundedItemAmount = resolutionAmountToBuyer !== undefined && resolutionAmountToBuyer !== null
+    ? Number(resolutionAmountToBuyer)
+    : 0;
+
+  if (refundedItemAmount > itemPrice) {
+    throw new ValidationError('refunds above the item price are rejected');
   }
 
-  const { percent, commissionAmount } = await calculateCommission(agreedItemPrice);
-  // If the dispute resolved as a full refund to the buyer, the seller's net
-  // payout is 0 for this order (commission also does not apply — TODO:
-  // confirm this "commission waived on full refund" assumption once
-  // FR-50a's broader scope firms up).
-  const sellerNetPayout =
-    resolutionAmountToBuyer && Number(resolutionAmountToBuyer) === Number(agreedItemPrice)
-      ? 0
-      : Number(agreedItemPrice) - commissionAmount;
+  if (refundedItemAmount === itemPrice && itemPrice > 0) {
+    return null;
+  }
+
+  const { percent } = await calculateCommission(agreedItemPrice);
+  const receivedByPlatformBase = itemPrice - refundedItemAmount;
+  const commissionAmount = Math.round(receivedByPlatformBase * percent) / 100;
+  const sellerNetPayout = receivedByPlatformBase - commissionAmount;
 
   const { rows } = await db.query(
-    `INSERT INTO settlements (order_id, commission_percent, commission_amount, seller_net_payout)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO settlements (order_id, commission_percent, commission_amount, seller_net_payout, refunded_item_amount)
+     VALUES ($1, $2, $3, $4, $5)
      ON CONFLICT (order_id) DO UPDATE
        SET commission_percent = EXCLUDED.commission_percent,
            commission_amount = EXCLUDED.commission_amount,
-           seller_net_payout = EXCLUDED.seller_net_payout
+           seller_net_payout = EXCLUDED.seller_net_payout,
+           refunded_item_amount = EXCLUDED.refunded_item_amount
      RETURNING *`,
-    [orderId, percent, commissionAmount, sellerNetPayout]
+    [orderId, percent, commissionAmount, sellerNetPayout, refundedItemAmount]
   );
   return rows[0];
 }
@@ -178,8 +260,14 @@ async function getSettlementRecord(orderId) {
 
 /** FR-50: Admin-only (enforced at route level via lib/roles.js ADMIN_ONLY_ACTIONS 'fee.configure'). */
 async function adjustCommissionPercent(newPercent, adminId) {
-  if (newPercent < 0 || newPercent > 100) throw new ValidationError('commission percent must be between 0 and 100');
-  return setSetting('commission_percent', newPercent, adminId);
+  if (typeof newPercent === 'boolean' || newPercent === null || newPercent === undefined) {
+    throw new ValidationError('commission percent must be between 0 and 100');
+  }
+  const numeric = Number(newPercent);
+  if (Number.isNaN(numeric) || numeric < 0 || numeric > 100) {
+    throw new ValidationError('commission percent must be between 0 and 100');
+  }
+  return setSetting('commission_percent', String(newPercent), adminId);
 }
 
 module.exports = {
