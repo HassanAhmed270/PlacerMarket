@@ -180,4 +180,32 @@ describe('settlement core integration', () => {
     await expect(settlement.adjustCommissionPercent(100, harness.adminId)).resolves.toMatchObject({ value: '100' });
     await expect(settlement.adjustCommissionPercent(5, harness.adminId)).resolves.toMatchObject({ value: '5' });
   });
+
+  test('FR-46: a reservation inserted without a commission snapshot is rejected because the column has no default', async () => {
+    const listingId = harness.fixture.listingId;
+    const buyerId = harness.buyerId;
+    const sellerId = harness.fixture.userId;
+    const cityId = harness.fixture.cityId;
+
+    const countBefore = await db.query(
+      'SELECT count(*)::int AS count FROM reservations WHERE listing_id = $1 AND buyer_id = $2',
+      [listingId, buyerId]
+    );
+
+    await expect(db.query(
+      `INSERT INTO reservations
+         (listing_id, buyer_id, seller_id, status, item_price_snapshot,
+          delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
+          recipient_phone, city_id, address_line1, expires_at)
+       VALUES ($1, $2, $3, 'active', 1000.00, 300.00, 1300.00, 'PKR', 'Test Buyer',
+               '+923001234567', $4, '123 Main St', now() + interval '30 minutes')`,
+      [listingId, buyerId, sellerId, cityId]
+    )).rejects.toMatchObject({ code: '23502' });
+
+    const countAfter = await db.query(
+      'SELECT count(*)::int AS count FROM reservations WHERE listing_id = $1 AND buyer_id = $2',
+      [listingId, buyerId]
+    );
+    expect(countAfter.rows[0].count).toBe(countBefore.rows[0].count);
+  });
 });

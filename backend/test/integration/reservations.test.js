@@ -87,11 +87,13 @@ async function createReservation({
     `INSERT INTO reservations
        (listing_id, buyer_id, seller_id, status, item_price_snapshot,
         delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
-        recipient_phone, city_id, address_line1, expires_at, paid_at)
+        recipient_phone, city_id, address_line1, expires_at, paid_at,
+        commission_percent_snapshot)
      VALUES
        ($1, $2, $3, $4, $5::numeric, $6::numeric, $5::numeric + $6::numeric,
         'PKR', 'Existing Recipient', '+15551234567', $7, 'Existing Address',
-        ${expires}, CASE WHEN $4 = 'paid' THEN now() ELSE NULL END)
+        ${expires}, CASE WHEN $4 = 'paid' THEN now() ELSE NULL END,
+        5.00)
      RETURNING id`,
     [listingId, buyer, fixture.userId, status, price, fee, fixture.cityId]
   );

@@ -173,9 +173,9 @@ describe('FR-73 moderated listing revisions', () => {
       `INSERT INTO reservations
          (listing_id, buyer_id, seller_id, status, item_price_snapshot,
           delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
-          recipient_phone, city_id, address_line1, expires_at)
+          recipient_phone, city_id, address_line1, expires_at, commission_percent_snapshot)
        VALUES ($1, $2, $3, 'active', 100, 0, 100, 'PKR', 'Fixture buyer',
-               '+15551234567', $4, '12 Fixture Street', now() + interval '1 minute')`,
+               '+15551234567', $4, '12 Fixture Street', now() + interval '1 minute', 5.00)`,
       [fixture.listingId, fixture.otherUserId, fixture.userId, fixture.cityId]
     );
     const { rows: beforeListingRows } = await db.query(

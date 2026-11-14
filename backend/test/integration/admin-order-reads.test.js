@@ -26,12 +26,14 @@ async function createExtraReservationOrders(count) {
        INSERT INTO reservations
          (listing_id, buyer_id, seller_id, status, item_price_snapshot,
           delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
-          recipient_phone, city_id, address_line1, created_at, expires_at)
+          recipient_phone, city_id, address_line1, created_at, expires_at,
+          commission_percent_snapshot)
        SELECT $2, $3, $4, 'expired', '100.00', '0.00', '100.00', 'PKR',
               'Read fixture recipient', '+15550000000', $5,
               '1 Read Fixture Road',
               now() - generated.sequence * INTERVAL '1 minute',
-              now() - generated.sequence * INTERVAL '1 minute'
+              now() - generated.sequence * INTERVAL '1 minute',
+              5.00
        FROM generated
        RETURNING id, created_at
      )
