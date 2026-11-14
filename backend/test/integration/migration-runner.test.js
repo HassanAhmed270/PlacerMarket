@@ -130,6 +130,12 @@ async function insertListing(client, fixture, title = 'Phase 4 Additional Listin
 }
 
 async function insertReservation(client, fixture, overrides = {}) {
+  const hasCommissionCol = await client.query(
+    `SELECT 1 FROM information_schema.columns
+     WHERE table_schema = current_schema()
+       AND table_name = 'reservations'
+       AND column_name = 'commission_percent_snapshot'`
+  );
   const values = {
     listingId: fixture.listingId,
     buyerId: fixture.buyerId,
@@ -140,8 +146,36 @@ async function insertReservation(client, fixture, overrides = {}) {
     total: '110.00',
     currency: 'PKR',
     cityId: fixture.cityId,
+    commissionPercentSnapshot: '5.00',
     ...overrides,
   };
+  if (hasCommissionCol.rowCount > 0) {
+    const result = await client.query(
+      `INSERT INTO reservations (
+         listing_id, buyer_id, seller_id, status, item_price_snapshot,
+         delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
+         recipient_phone, city_id, address_line1, address_line2, postal_code, expires_at,
+         commission_percent_snapshot
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, 'Test Recipient', '+923000000102',
+         $9, 'Test address', NULL, NULL, now() + INTERVAL '60 minutes',
+         $10
+       ) RETURNING id`,
+      [
+        values.listingId,
+        values.buyerId,
+        values.sellerId,
+        values.status,
+        values.itemPrice,
+        values.deliveryFee,
+        values.total,
+        values.currency,
+        values.cityId,
+        values.commissionPercentSnapshot,
+      ]
+    );
+    return result.rows[0].id;
+  }
   const result = await client.query(
     `INSERT INTO reservations (
        listing_id, buyer_id, seller_id, status, item_price_snapshot,
@@ -351,7 +385,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     const schema = newSchemaName();
     await resetPgBossSchema();
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(26);
+    expect(applied).toHaveLength(27);
 
     const relations = await db.query(
       `SELECT table_name FROM information_schema.tables
@@ -430,7 +464,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     await expect(runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir }))
-      .resolves.toHaveLength(7);
+      .resolves.toHaveLength(8);
     await withSchemaClient(schema, async (client) => {
       const { rows } = await client.query(
         'SELECT title, search_text, is_reserved, reserved_until, is_sold FROM listing_search WHERE listing_id = $1',
@@ -482,7 +516,7 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    expect(applied).toHaveLength(8);
+    expect(applied).toHaveLength(9);
 
     await withSchemaClient(schema, async (client) => {
       const preservedOrders = await client.query(

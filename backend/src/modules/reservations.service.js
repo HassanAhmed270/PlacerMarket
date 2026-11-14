@@ -83,6 +83,18 @@ function parseDeliveryFee(value) {
   return value.replace(/^\+/, '');
 }
 
+function parseCommissionPercentSetting(value) {
+  if (typeof value !== 'string' || !/^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(value)) {
+    throw new ConfigurationError('Invalid platform setting: commission_percent');
+  }
+  const percentParts = value.split('.');
+  const integerVal = Number(percentParts[0]);
+  if (integerVal > 100 || (integerVal === 100 && percentParts[1] && Number(percentParts[1]) > 0)) {
+    throw new ConfigurationError('Invalid platform setting: commission_percent');
+  }
+  return value;
+}
+
 /** FR-63: parse the documented defaults and exact NUMERIC(12,2) fee. */
 function parseReservationSettings(values) {
   return {
@@ -186,7 +198,8 @@ async function lockReservationForSystemAction(client, reservationId) {
 /** FR-65: lock and read the reservation snapshot used for payout settlement. */
 async function lockReservationForPayout(client, reservationId) {
   const { rows } = await client.query(
-    `SELECT id, listing_id, status, item_price_snapshot, delivery_fee_snapshot, currency
+    `SELECT id, listing_id, status, item_price_snapshot, delivery_fee_snapshot, currency,
+            commission_percent_snapshot
      FROM reservations
      WHERE id = $1
      FOR UPDATE`,
@@ -459,15 +472,19 @@ async function buyListing(listingId, buyerId, input) {
         throw new ConflictError('You have reached the active unpaid reservation limit.');
       }
 
+      const platformSettings = await settlement.getSettingsForTransaction(client, ['commission_percent']);
+      const commissionPercent = parseCommissionPercentSetting(platformSettings.commission_percent);
+
       const { rows: reservationRows } = await client.query(
         `INSERT INTO reservations
            (listing_id, buyer_id, seller_id, status, item_price_snapshot,
             delivery_fee_snapshot, total_amount_snapshot, currency, recipient_name,
-            recipient_phone, city_id, address_line1, address_line2, postal_code, expires_at)
+            recipient_phone, city_id, address_line1, address_line2, postal_code,
+            commission_percent_snapshot, expires_at)
          VALUES
            ($1, $2, $3, 'active', $4::numeric, $5::numeric, $4::numeric + $5::numeric,
-            'PKR', $6, $7, $8, $9, $10, $11,
-            now() + ($12 * interval '1 minute'))
+            'PKR', $6, $7, $8, $9, $10, $11, $12::numeric,
+            now() + ($13 * interval '1 minute'))
          RETURNING id, item_price_snapshot, delivery_fee_snapshot, total_amount_snapshot,
                    currency, expires_at`,
         [
@@ -482,6 +499,7 @@ async function buyListing(listingId, buyerId, input) {
           address.addressLine1,
           address.addressLine2,
           address.postalCode,
+          commissionPercent,
           settings.reservationMinutes,
         ]
       );

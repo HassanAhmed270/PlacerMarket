@@ -1952,3 +1952,22 @@ ALTER TABLE refunds
 CREATE INDEX refunds_failed_needs_attention_idx
   ON refunds (needs_attention_at)
   WHERE status = 'failed' AND needs_attention_at IS NOT NULL;
+
+-- Migration: 028_commission_snapshot.sql
+ALTER TABLE reservations
+  ADD COLUMN commission_percent_snapshot NUMERIC(5,2);
+
+UPDATE reservations
+  SET commission_percent_snapshot = COALESCE((SELECT value::numeric FROM platform_settings WHERE key = 'commission_percent'), 10.00);
+
+ALTER TABLE reservations
+  ALTER COLUMN commission_percent_snapshot SET NOT NULL,
+  ADD CONSTRAINT reservations_commission_percent_snapshot_range
+    CHECK (commission_percent_snapshot >= 0 AND commission_percent_snapshot <= 100);
+
+ALTER TABLE settlements
+  ADD COLUMN refunded_item_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
+
+UPDATE platform_settings
+  SET value = '5'
+  WHERE key = 'commission_percent' AND value = '10';

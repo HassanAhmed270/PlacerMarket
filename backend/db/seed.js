@@ -21,7 +21,7 @@
 const { Pool } = require('pg');
 
 const SEED_SETTINGS = [
-  ['commission_percent', '10'], // FR-46
+  ['commission_percent', '5'], // FR-46
   ['high_value_threshold_pkr', '100000'], // FR-08a / FR-19b
   ['instant_price_decrease_max_percent', '30'], // FR-73e
   ['payout_hold_days', '5'], // FR-45c
