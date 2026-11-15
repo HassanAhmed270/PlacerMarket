@@ -19,6 +19,21 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const VALID_METHODS = ['bank', 'easypaisa', 'jazzcash'];
 const PAYOUT_APPROVAL_THRESHOLD_SETTING = 'payout_two_admin_threshold';
 const NUMERIC_SETTING_PATTERN = '^[+]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$';
+const MAX_PAYOUT_EXPORT_ROWS = 5000;
+const PAYOUT_EXPORT_COLUMNS = [
+  ['payoutId', 'id'],
+  ['orderId', 'order_id'],
+  ['sellerId', 'seller_id'],
+  ['attempt', 'attempt'],
+  ['status', 'status'],
+  ['amount', 'amount'],
+  ['currency', 'currency'],
+  ['method', 'method'],
+  ['transferReference', 'transfer_reference'],
+  ['initiatedAt', 'initiated_at'],
+  ['paidOn', 'paid_on'],
+  ['paidAt', 'paid_at'],
+];
 
 async function getApprovalRequirement(client, amount) {
   let threshold;
@@ -71,6 +86,26 @@ function validatePaidOn(paidOn) {
     throw new ValidationError('paidOn must be a valid calendar date.');
   }
   return paidOn;
+}
+
+function validateExportDate(value, name) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new ValidationError(`${name} must be a valid date in YYYY-MM-DD format.`);
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new ValidationError(`${name} must be a valid calendar date.`);
+  }
+  return value;
+}
+
+/** FR-48: escape one cell for the Admin payout CSV and prevent formula injection. */
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  let cell = value instanceof Date ? value.toISOString() : String(value);
+  if (/^[=+\-@\t\r]/.test(cell)) cell = `'${cell}`;
+  if (/[,"\r\n]/.test(cell)) cell = `"${cell.replace(/"/g, '""')}"`;
+  return cell;
 }
 
 function formatPayoutRow(row) {
@@ -523,6 +558,96 @@ async function getSellerPayout(payoutId) {
   return formatPayoutRow(rows[0]);
 }
 
+/** FR-48: export a capped, step-up-protected payout CSV without account details. */
+async function exportSellerPayoutsCsv(adminId, sessionId, filters) {
+  if (!filters || typeof filters !== 'object' || Array.isArray(filters)) {
+    throw new ValidationError('Export filters must be an object.');
+  }
+  const { status, from, to, stepUpGrant } = filters;
+  let statusFilter = null;
+  if (status !== undefined && status !== null && status !== '') {
+    if (!['initiated', 'paid', 'failed'].includes(status)) {
+      throw new ValidationError('status must be initiated, paid, or failed.');
+    }
+    statusFilter = status;
+  }
+
+  const fromFilter = from === undefined || from === null || from === ''
+    ? null
+    : validateExportDate(from, 'from');
+  const toFilter = to === undefined || to === null || to === ''
+    ? null
+    : validateExportDate(to, 'to');
+  if (fromFilter && toFilter && fromFilter > toFilter) {
+    throw new ValidationError('from must be on or before to.');
+  }
+  if (!stepUpGrant || typeof stepUpGrant !== 'string') {
+    throw new ForbiddenError('A valid step-up grant is required.');
+  }
+
+  const values = [];
+  const conditions = [];
+  if (statusFilter) {
+    values.push(statusFilter);
+    conditions.push(`status = $${values.length}`);
+  }
+  if (fromFilter) {
+    values.push(fromFilter);
+    conditions.push(`initiated_at >= ($${values.length}::date::timestamp AT TIME ZONE 'UTC')`);
+  }
+  if (toFilter) {
+    values.push(toFilter);
+    conditions.push(`initiated_at < (($${values.length}::date + INTERVAL '1 day') AT TIME ZONE 'UTC')`);
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+  return db.withTransaction(async (client) => {
+    await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ');
+    const { rows: countRows } = await client.query(
+      `SELECT COUNT(*) AS row_count FROM seller_payouts ${whereClause}`,
+      values
+    );
+    const rowCount = Number(countRows[0].row_count);
+    if (rowCount > MAX_PAYOUT_EXPORT_ROWS) {
+      throw new ValidationError('Payout export exceeds 5000 rows; use a narrower date range or filters.');
+    }
+
+    await users.consumeStepUpGrantWithClient(client, adminId, sessionId, 'payout.export', stepUpGrant);
+
+    const { rows } = await client.query(
+      `SELECT id, order_id, seller_id, attempt, status, amount::text, currency,
+              method, transfer_reference, initiated_at, paid_on, paid_at
+       FROM seller_payouts
+       ${whereClause}
+       ORDER BY initiated_at, id`,
+      values
+    );
+    const csvRows = [
+      PAYOUT_EXPORT_COLUMNS.map(([header]) => header).join(','),
+      ...rows.map((row) => PAYOUT_EXPORT_COLUMNS.map(([, column]) => {
+        const value = row[column];
+        const formattedValue = value instanceof Date && column === 'paid_on'
+          ? value.toISOString().slice(0, 10)
+          : value;
+        return csvCell(formattedValue);
+      }).join(',')),
+    ];
+
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: adminId,
+      action: 'seller_payout_exported',
+      metadata: {
+        status: statusFilter,
+        from: fromFilter,
+        to: toFilter,
+        rowCount,
+      },
+    });
+
+    return csvRows.join('\r\n');
+  });
+}
+
 module.exports = {
   createInitiatedPayout,
   markPaid,
@@ -531,4 +656,7 @@ module.exports = {
   retryPayout,
   listSellerPayouts,
   getSellerPayout,
+  exportSellerPayoutsCsv,
+  csvCell,
+  MAX_PAYOUT_EXPORT_ROWS,
 };

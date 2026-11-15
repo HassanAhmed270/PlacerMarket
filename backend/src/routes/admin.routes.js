@@ -204,6 +204,25 @@ router.get(
   }
 );
 
+router.post(
+  '/seller-payouts/export',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (req, res) => {
+    const csv = await sellerPayouts.exportSellerPayoutsCsv(
+      req.user.id,
+      req.authSessionId,
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    );
+    res.status(200).set({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': 'attachment; filename=payouts.csv',
+    }).send(csv);
+  }
+);
+
 router.get(
   '/seller-payouts/:payoutId',
   noStoreOrderResponses,

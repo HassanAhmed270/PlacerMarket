@@ -67,6 +67,7 @@ const DELIVERY_ADMIN_ONLY_PATHS = [
 ];
 const PAYOUT_ADMIN_ONLY_PATHS = [
   { method: 'get', path: '/api/admin/seller-payouts' },
+  { method: 'post', path: '/api/admin/seller-payouts/export' },
   { method: 'get', path: '/api/admin/seller-payouts/x' },
   { method: 'post', path: '/api/admin/seller-payouts/x/approve' },
   { method: 'post', path: '/api/admin/seller-payouts/x/paid' },
