@@ -74,6 +74,16 @@ async function createHarness() {
     extraUserIds: [],
     retained: false,
   };
+  const { rowCount: verifiedProfileCount } = await db.query(
+    'UPDATE seller_profiles SET id_verified = true WHERE user_id = $1',
+    [fixture.userId]
+  );
+  if (verifiedProfileCount === 0) {
+    await db.query(
+      'INSERT INTO seller_profiles (user_id, id_verified) VALUES ($1, true)',
+      [fixture.userId]
+    );
+  }
   await db.query("UPDATE users SET role = 'admin' WHERE id = $1", [harness.adminId]);
   harness.moderatorId = await createUser(harness, 'moderator');
   harness.unrelatedBuyerId = await createUser(harness, 'buyer');

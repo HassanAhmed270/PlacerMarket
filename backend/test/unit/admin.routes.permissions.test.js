@@ -72,6 +72,8 @@ const PAYOUT_ADMIN_ONLY_PATHS = [
   { method: 'post', path: '/api/admin/seller-payouts/x/paid' },
   { method: 'post', path: '/api/admin/seller-payouts/x/failed' },
   { method: 'post', path: '/api/admin/seller-payouts/x/retry' },
+  { method: 'get', path: '/api/admin/held-funds' },
+  { method: 'post', path: '/api/admin/held-funds/x/decision' },
 ];
 
 beforeAll(() => jest.spyOn(console, 'error').mockImplementation(() => {})); // errorHandler logs 5xx

@@ -140,6 +140,7 @@ later): `orders.service.createBagEntry()` (reads `conversations`),
 | 8. Delivery | FR-39–42, FR-72e | `modules/delivery.service.js` | delivery_partners, delivery_status_log, order_exceptions |
 | 9. Disputes, Returns & Refunds | FR-43–45a | `modules/disputes.service.js` | disputes, dispute_evidence |
 | 9a. Payout Hold Window | FR-45b–45h, FR-65 reservation payout | `modules/payout.service.js` | payout_holds |
+| 9b. Seller Held Funds | FR-65 | `modules/sellerHeldFunds.service.js` | seller_held_funds |
 | 10. Commission & Settlement | FR-46–50a | `modules/settlement.service.js` | platform_settings, settlements |
 | 11. Notifications | FR-51 | `modules/notifications.service.js` | notifications |
 | 12. Administration | FR-52–59 | `modules/admin.service.js` | **none** — thin orchestration only |
@@ -229,8 +230,17 @@ purpose so the schema works whichever way this eventually gets decided.
 - **FR-65 manual payout**: `payout.service.releaseReservationPayout()`
   orchestrates one transaction and calls the owning `listings`, `users`,
   `orders`, `reservations`, `escrowPayments`, and `settlement` functions.
-  The order completion is atomic with hold release, settlement, ledger, and
-  audit writes; the manual path emits no notification or order event.
+  The order completion is atomic with hold release, settlement, and audit
+  writes; the manual path emits no notification or order event. For an
+  unverified seller it calls `sellerHeldFunds.service.js` to own the held
+  proceeds record instead of creating a payout.
+- **FR-65 held funds**: `sellerHeldFunds.service.js` owns
+  `seller_held_funds`, uses the orders/listings/users/reservations/escrow
+  owner functions for payout locks, and calls only
+  `sellerPayouts.createInitiatedPayout()` and `moneyAudit.service.js` when
+  handling Admin decisions. Reminder events are awaited in the held-funds
+  transaction; the notification listener reads `seller_held_funds` only to
+  resolve its seller.
 - **FR-48 approval threshold**: `sellerPayouts.service.js` reads
   `payout_two_admin_threshold` through `settlement.service.js` (including
   within the paid/approval transaction); it does not query `platform_settings`

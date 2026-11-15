@@ -37,6 +37,8 @@ const reservations = require('./reservations.service');
 const users = require('./users.service');
 const escrowPayments = require('./escrowPayments.service');
 const sellerPayouts = require('./sellerPayouts.service');
+const sellerHeldFunds = require('./sellerHeldFunds.service');
+const moneyAudit = require('./moneyAudit.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const { NotFoundError, ValidationError, ForbiddenError, ConflictError } = require('../lib/errors');
@@ -409,14 +411,36 @@ async function releaseReservationPayout(orderId, adminId, input) {
     if (!releasedRows[0]) throw new ConflictError('The payout hold changed before release.');
 
     let payoutRow = null;
+    let heldFundsRow = null;
     if (amounts && Number(amounts.sellerNetAmount) > 0) {
-      payoutRow = await sellerPayouts.createInitiatedPayout(client, {
-        orderId,
-        sellerId: order.seller_id,
-        amount: amounts.sellerNetAmount,
-        currency: reservation.currency,
-        initiatedBy: adminId,
-      });
+      if (await users.isSellerIdVerifiedWithClient(client, order.seller_id)) {
+        payoutRow = await sellerPayouts.createInitiatedPayout(client, {
+          orderId,
+          sellerId: order.seller_id,
+          amount: amounts.sellerNetAmount,
+          currency: reservation.currency,
+          initiatedBy: adminId,
+        });
+      } else {
+        heldFundsRow = await sellerHeldFunds.holdFundsForUnverifiedSeller(client, {
+          orderId,
+          sellerId: order.seller_id,
+          amount: amounts.sellerNetAmount,
+          currency: reservation.currency,
+          heldBy: adminId,
+        });
+        await moneyAudit.recordMoneyAuditEvent(client, {
+          actorId: adminId,
+          action: 'seller_funds_held',
+          orderId,
+          paymentId: payment.id,
+          metadata: {
+            heldFundsId: heldFundsRow.id,
+            amount: heldFundsRow.amount,
+            currency: heldFundsRow.currency,
+          },
+        });
+      }
     }
 
     await escrowPayments.recordManualSellerPayout(client, {
@@ -441,6 +465,10 @@ async function releaseReservationPayout(orderId, adminId, input) {
           status: payoutRow.status,
           attempt: payoutRow.attempt,
           amount: payoutRow.amount,
+        } : {}),
+        ...(heldFundsRow ? {
+          status: 'held',
+          heldFundsId: heldFundsRow.id,
         } : {}),
         sellerNetAmount: amounts ? amounts.sellerNetAmount : '0.00',
         commissionAmount: amounts ? amounts.commissionAmount : '0.00',

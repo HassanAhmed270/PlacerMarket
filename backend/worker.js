@@ -14,6 +14,7 @@ const listings = require('./src/modules/listings.service');
 const listingSearch = require('./src/modules/listingSearch.service');
 const pageSnapshots = require('./src/modules/pageSnapshots.service');
 const escrowPayments = require('./src/modules/escrowPayments.service');
+const sellerHeldFunds = require('./src/modules/sellerHeldFunds.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 const { assertPaymentsAdminGate } = require('./src/lib/paymentsAdminGate');
 
@@ -36,6 +37,12 @@ async function registerMoneyMaintenanceSchedules(boss) {
     { task: 'reconciliation' },
     { key: 'reconciliation', singletonKey: 'money-maintenance:reconciliation' }
   );
+  await boss.schedule(
+    QUEUES.MONEY_MAINTENANCE,
+    '0 * * * *',
+    { task: 'held-funds-reminders' },
+    { key: 'held-funds-reminders', singletonKey: 'money-maintenance:held-funds-reminders' }
+  );
 }
 
 async function processMoneyMaintenanceJob(job) {
@@ -47,6 +54,9 @@ async function processMoneyMaintenanceJob(job) {
   }
   if (job.data?.task === 'reconciliation') {
     return escrowPayments.reconcileMoneyState();
+  }
+  if (job.data?.task === 'held-funds-reminders') {
+    return sellerHeldFunds.processReminders();
   }
   throw new Error('Unsupported money maintenance task.');
 }

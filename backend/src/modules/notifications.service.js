@@ -30,6 +30,7 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.PAYOUT_FORCE_RELEASED,
   events.PAYOUT_PAID,
   events.PAYOUT_FAILED,
+  events.HELD_FUNDS_REMINDER,
   events.MESSAGE_SENT,
 ]);
 
@@ -58,6 +59,15 @@ function jobKeys(eventName, payload) {
     }
     return {
       idempotencyKey: `${eventName}:${payload.payoutId}`,
+      orderingKey: `order:${payload.orderId}`,
+    };
+  }
+  if (eventName === events.HELD_FUNDS_REMINDER) {
+    if (!payload.heldFundsId || !payload.orderId || ![7, 30, 90].includes(Number(payload.milestone))) {
+      throw new TypeError('Held-funds reminder event is missing its record, order, or milestone.');
+    }
+    return {
+      idempotencyKey: `held-funds-reminder:${payload.heldFundsId}:${Number(payload.milestone)}`,
       orderingKey: `order:${payload.orderId}`,
     };
   }
@@ -276,6 +286,46 @@ async function processNotificationJob(job, transactionDb) {
         await queue.enqueue(queue.QUEUES.EMAIL, { encryptedPayload }, {
           idempotencyKey: `payout-email:${job.payload.payoutId}:${eventType}`,
           orderingKey: `payout-email:${job.payload.payoutId}`,
+          transaction: transactionDb,
+        });
+      }
+      return;
+    }
+    case events.HELD_FUNDS_REMINDER: {
+      // cross-module read: seller_held_funds (owned by sellerHeldFunds.service.js)
+      const { rows } = await transactionDb.executeSql(
+        `SELECT h.seller_id, u.email
+         FROM seller_held_funds h
+         JOIN users u ON u.id = h.seller_id
+         WHERE h.id = $1 AND h.order_id = $2 AND h.seller_id = $3`,
+        [job.payload.heldFundsId, job.payload.orderId, job.payload.sellerId]
+      );
+      const seller = rows[0];
+      if (!seller) return;
+
+      const milestone = Number(job.payload.milestone);
+      if (![7, 30, 90].includes(milestone)) {
+        throw new TypeError('Held-funds reminder milestone is unsupported.');
+      }
+      const href = `/seller/orders/${encodeURIComponent(job.payload.orderId)}`;
+      const message = 'Your seller funds remain on hold while your identity verification is pending. Please complete verification to receive your payout.';
+      const dedupeKey = `held_funds_reminder:${job.payload.heldFundsId}:${milestone}`;
+      await transactionDb.executeSql(
+        `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
+         VALUES ($1, 'held_funds_reminder', $2, $3)
+         ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+        [seller.seller_id, JSON.stringify({ message, href }), dedupeKey]
+      );
+
+      if (seller.email) {
+        const encryptedPayload = encryptEmailPayload({
+          to: seller.email,
+          subject: 'Your payout is waiting for identity verification',
+          text: `${message}\nView your order: ${href}`,
+        });
+        await queue.enqueue(queue.QUEUES.EMAIL, { encryptedPayload }, {
+          idempotencyKey: `held-funds-reminder:${job.payload.heldFundsId}:${milestone}`,
+          orderingKey: `held-funds-email:${job.payload.heldFundsId}:${milestone}`,
           transaction: transactionDb,
         });
       }

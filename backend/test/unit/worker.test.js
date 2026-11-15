@@ -35,6 +35,7 @@ const mockEscrowPayments = {
   sweepUnhandedOverOrders: jest.fn(),
   reconcileMoneyState: jest.fn(),
 };
+const mockSellerHeldFunds = { processReminders: jest.fn() };
 const { encryptEmailPayload } = require('../../src/lib/emailQueuePayload');
 
 jest.mock('../../src/lib/queue', () => mockQueue);
@@ -45,6 +46,7 @@ jest.mock('../../src/modules/listingSearch.service', () => mockListingSearch);
 jest.mock('../../src/modules/listings.service', () => mockListings);
 jest.mock('../../src/modules/pageSnapshots.service', () => mockPageSnapshots);
 jest.mock('../../src/modules/escrowPayments.service', () => mockEscrowPayments);
+jest.mock('../../src/modules/sellerHeldFunds.service', () => mockSellerHeldFunds);
 
 const { startWorker } = require('../../worker');
 
@@ -177,6 +179,12 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
         { task: 'reconciliation' },
         { key: 'reconciliation', singletonKey: 'money-maintenance:reconciliation' }
       );
+      expect(boss.schedule).toHaveBeenCalledWith(
+        'money-maintenance',
+        '0 * * * *',
+        { task: 'held-funds-reminders' },
+        { key: 'held-funds-reminders', singletonKey: 'money-maintenance:held-funds-reminders' }
+      );
       const maintenanceHandler = boss.work.mock.calls.find(([name]) => name === 'money-maintenance')[2];
       await maintenanceHandler([{ data: { task: 'reservation-expiry' } }]);
       expect(mockListings.expireDueReservations).toHaveBeenCalledTimes(1);
@@ -184,6 +192,8 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
       expect(mockEscrowPayments.sweepUnhandedOverOrders).toHaveBeenCalledTimes(1);
       await maintenanceHandler([{ data: { task: 'reconciliation' } }]);
       expect(mockEscrowPayments.reconcileMoneyState).toHaveBeenCalledTimes(1);
+      await maintenanceHandler([{ data: { task: 'held-funds-reminders' } }]);
+      expect(mockSellerHeldFunds.processReminders).toHaveBeenCalledTimes(1);
       const paymentWebhookHandler = boss.work.mock.calls.find(([name]) => name === 'payment-webhooks')[2];
       await paymentWebhookHandler([{ data: { webhookInboxId: 'inbox-1' } }]);
       expect(mockEscrowPayments.processPaymentWebhookJob).toHaveBeenCalledWith({ webhookInboxId: 'inbox-1' });

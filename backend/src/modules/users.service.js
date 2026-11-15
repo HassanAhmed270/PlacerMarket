@@ -45,7 +45,7 @@ const {
 const STAFF_ROLES = new Set(['admin', 'moderator']);
 const STEP_UP_ACTIONS = Object.freeze([
   'payout.update', 'password.change', 'security.change', 'payout.force_release',
-  'refund.request', 'refund.decide',
+  'refund.request', 'refund.decide', 'payout.record', 'payout.approve', 'payout.export',
 ]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -976,6 +976,15 @@ async function isIdVerified(userId) {
   return Boolean(rows[0]?.id_verified);
 }
 
+/** FR-65: check seller identity verification using the caller's transaction; a missing profile is unverified. */
+async function isSellerIdVerifiedWithClient(client, sellerId) {
+  const { rows } = await client.query(
+    'SELECT id_verified FROM seller_profiles WHERE user_id = $1',
+    [sellerId]
+  );
+  return Boolean(rows[0]?.id_verified);
+}
+
 /** FR-08a: email ownership verification is distinct from seller identity verification. */
 async function isEmailVerified(userId) {
   const { rows } = await db.query('SELECT email_verified_at FROM users WHERE id = $1', [userId]);
@@ -1270,6 +1279,7 @@ module.exports = {
   isApprovedSeller,
   isIdVerificationRequired,
   isIdVerified,
+  isSellerIdVerifiedWithClient,
   isEmailVerified,
   verifySellerIdentity,
   getSellerProfile,

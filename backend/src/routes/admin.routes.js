@@ -3,6 +3,7 @@ const admin = require('../modules/admin.service');
 const listingSearch = require('../modules/listingSearch.service');
 const payout = require('../modules/payout.service');
 const sellerPayouts = require('../modules/sellerPayouts.service');
+const sellerHeldFunds = require('../modules/sellerHeldFunds.service');
 const reservations = require('../modules/reservations.service');
 const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
@@ -266,6 +267,31 @@ router.post(
   async (req, res) => {
     res.json(await sellerPayouts.retryPayout(
       req.params.payoutId,
+      req.user.id,
+      req.authSessionId,
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    ));
+  }
+);
+
+router.get(
+  '/held-funds',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await sellerHeldFunds.listHeldFunds(req.query));
+  }
+);
+
+router.post(
+  '/held-funds/:id/decision',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await sellerHeldFunds.decideHeldFunds(
+      req.params.id,
       req.user.id,
       req.authSessionId,
       req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
