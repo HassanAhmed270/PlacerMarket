@@ -28,6 +28,8 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.DISPUTE_RESOLUTION_COMMITTED,
   events.PAYOUT_RELEASED,
   events.PAYOUT_FORCE_RELEASED,
+  events.PAYOUT_PAID,
+  events.PAYOUT_FAILED,
   events.MESSAGE_SENT,
 ]);
 
@@ -48,6 +50,15 @@ function jobKeys(eventName, payload) {
     return {
       idempotencyKey: `message:${payload.messageId}`,
       orderingKey: `conversation:${payload.conversationId}`,
+    };
+  }
+  if ([events.PAYOUT_PAID, events.PAYOUT_FAILED].includes(eventName)) {
+    if (!payload.payoutId || !payload.orderId) {
+      throw new TypeError('Payout notification event is missing its payout or order ID.');
+    }
+    return {
+      idempotencyKey: `${eventName}:${payload.payoutId}`,
+      orderingKey: `order:${payload.orderId}`,
     };
   }
   if ([events.DISPUTE_FILED, events.DISPUTE_RESOLUTION_COMMITTED].includes(eventName)) {
@@ -212,6 +223,64 @@ async function processNotificationJob(job, transactionDb) {
   let eventType;
   let notificationContent;
   switch (job.eventName) {
+    case events.PAYOUT_PAID:
+    case events.PAYOUT_FAILED: {
+      // cross-module read: orders (owned by orders.service.js), users (owned by users.service.js)
+      const { rows } = await transactionDb.executeSql(
+        `SELECT o.seller_id, u.email
+         FROM orders o
+         JOIN users u ON u.id = o.seller_id
+         WHERE o.id = $1`,
+        [job.payload.orderId]
+      );
+      const seller = rows[0];
+      if (!seller) return;
+
+      const isPaid = job.eventName === events.PAYOUT_PAID;
+      eventType = isPaid ? 'payout_paid' : 'payout_failed';
+      const dedupeKey = `${eventType}:${job.payload.payoutId}`;
+
+      const message = isPaid
+        ? `Your payout of ${job.payload.currency || 'PKR'} ${job.payload.amount} via ${job.payload.method} (transfer reference: ${job.payload.transferReference}) was processed.`
+        : 'Your payout could not be processed. Our team is reviewing the issue.';
+
+      await transactionDb.executeSql(
+        `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+        [
+          seller.seller_id,
+          eventType,
+          JSON.stringify({
+            orderId: job.payload.orderId,
+            payoutId: job.payload.payoutId,
+            message,
+            href: `/seller/orders/${encodeURIComponent(job.payload.orderId)}`,
+          }),
+          dedupeKey,
+        ]
+      );
+
+      if (seller.email) {
+        const emailSubject = isPaid
+          ? 'Your Poshaak payout has been sent'
+          : 'Update regarding your Poshaak payout';
+        const emailText = isPaid
+          ? `Your payout of ${job.payload.currency || 'PKR'} ${job.payload.amount} via ${job.payload.method} (transfer reference: ${job.payload.transferReference}) was processed.`
+          : 'Your payout could not be processed. Our team is reviewing the issue.';
+        const encryptedPayload = encryptEmailPayload({
+          to: seller.email,
+          subject: emailSubject,
+          text: emailText,
+        });
+        await queue.enqueue(queue.QUEUES.EMAIL, { encryptedPayload }, {
+          idempotencyKey: `payout-email:${job.payload.payoutId}:${eventType}`,
+          orderingKey: `payout-email:${job.payload.payoutId}`,
+          transaction: transactionDb,
+        });
+      }
+      return;
+    }
     case events.REFUND_STATUS_CHANGED: {
       // cross-module read: refunds (owned by escrowPayments.service.js), orders (owned by orders.service.js)
       const { rows } = await transactionDb.executeSql(

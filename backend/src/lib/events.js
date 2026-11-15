@@ -49,4 +49,6 @@ module.exports = {
   PAYOUT_HELD: 'payout.held', // FR-45b
   PAYOUT_RELEASED: 'payout.released', // FR-47
   PAYOUT_FORCE_RELEASED: 'payout.force_released', // FR-45e
+  PAYOUT_PAID: 'payout.paid', // FR-48
+  PAYOUT_FAILED: 'payout.failed', // FR-48
 };
