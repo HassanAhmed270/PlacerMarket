@@ -2,6 +2,7 @@ const { Router } = require('express');
 const admin = require('../modules/admin.service');
 const listingSearch = require('../modules/listingSearch.service');
 const payout = require('../modules/payout.service');
+const sellerPayouts = require('../modules/sellerPayouts.service');
 const reservations = require('../modules/reservations.service');
 const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
@@ -19,6 +20,7 @@ function noStoreOrderResponses(_req, res, next) {
 
 router.use('/orders', noStoreOrderResponses);
 router.use('/refunds', noStoreOrderResponses);
+router.use('/seller-payouts', noStoreOrderResponses);
 router.use(requireAuth);
 // Permission checks live HERE, per route (rules.md Section 5) — admin.service.js
 // does not check roles. Every route below must carry its own requirePermission();
@@ -188,6 +190,71 @@ router.post(
   limiters.adminOps,
   async (req, res) => {
     res.json(await payout.releaseReservationPayout(req.params.orderId, req.user.id, req.body)); // FR-65
+  }
+);
+
+router.get(
+  '/seller-payouts',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await sellerPayouts.listSellerPayouts(req.query));
+  }
+);
+
+router.get(
+  '/seller-payouts/:payoutId',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await sellerPayouts.getSellerPayout(req.params.payoutId));
+  }
+);
+
+router.post(
+  '/seller-payouts/:payoutId/paid',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await sellerPayouts.markPaid(
+      req.params.payoutId,
+      req.user.id,
+      req.authSessionId,
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    ));
+  }
+);
+
+router.post(
+  '/seller-payouts/:payoutId/failed',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await sellerPayouts.markFailed(
+      req.params.payoutId,
+      req.user.id,
+      req.authSessionId,
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    ));
+  }
+);
+
+router.post(
+  '/seller-payouts/:payoutId/retry',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await sellerPayouts.retryPayout(
+      req.params.payoutId,
+      req.user.id,
+      req.authSessionId,
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    ));
   }
 );
 
