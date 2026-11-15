@@ -40,6 +40,7 @@ const ADMIN_ONLY_ACTIONS = new Set([
   'payout.force_release', // FR-45e / FR-83f
   'order.release_payout', // FR-65
   'payout.record', // FR-48, FR-65
+  'payout.approve', // FR-48
   'refund.view', // SEC-39
   'refund.request', // SEC-39
   'refund.decide', // SEC-39
