@@ -1,8 +1,12 @@
 const {
+  adminDeliveredRequest,
+  authHeader,
   cleanupHarness,
   createHarness,
   createScenario,
   db,
+  getApp,
+  request,
   restoreHandoverTestEnvironment,
 } = require('./delivery-handover.helpers');
 const settlement = require('../../src/modules/settlement.service');
@@ -80,7 +84,7 @@ describe('settlement core integration', () => {
     await settlement.adjustCommissionPercent('5', harness.adminId);
   });
 
-  test('FR-47: recording a settlement is idempotent under ten parallel calls (one settlement row, one commission entry, one payable entry)', async () => {
+  test('FR-47: recording a settlement is idempotent under ten parallel calls (one settlement row, zero commission or payable entries)', async () => {
     await settlement.adjustCommissionPercent('5', harness.adminId);
     const scenario = await createScenario(harness);
 
@@ -109,23 +113,19 @@ describe('settlement core integration', () => {
       "SELECT * FROM ledger_entries WHERE order_id = $1 AND entry_type = 'commission'",
       [scenario.orderId]
     );
-    expect(commissionEntries).toHaveLength(1);
-    expect(Number(commissionEntries[0].amount)).toBeGreaterThan(0);
-    expect(commissionEntries[0].idempotency_key).toBe(`commission:${scenario.orderId}`);
+    expect(commissionEntries).toHaveLength(0);
 
     const { rows: payableEntries } = await db.query(
       "SELECT * FROM ledger_entries WHERE order_id = $1 AND entry_type = 'seller_payable'",
       [scenario.orderId]
     );
-    expect(payableEntries).toHaveLength(1);
-    expect(Number(payableEntries[0].amount)).toBeLessThan(0);
-    expect(payableEntries[0].idempotency_key).toBe(`seller_payable:${scenario.orderId}`);
+    expect(payableEntries).toHaveLength(0);
 
     const { rows: allLedger } = await db.query(
       'SELECT * FROM ledger_entries WHERE order_id = $1',
       [scenario.orderId]
     );
-    expect(allLedger).toHaveLength(2);
+    expect(allLedger).toHaveLength(0);
   });
 
   test('FR-50a: a succeeded partial refund reduces commission and seller net, and the stored refunded_item_amount matches', async () => {
@@ -207,5 +207,58 @@ describe('settlement core integration', () => {
       [listingId, buyerId]
     );
     expect(countAfter.rows[0].count).toBe(countBefore.rows[0].count);
+  });
+
+  test('FR-47: a payout release writes exactly one cash ledger entry (seller_payout_manual) and no commission or seller_payable entries', async () => {
+    await settlement.adjustCommissionPercent('5', harness.adminId);
+    const scenario = await createScenario(harness);
+
+    await db.query(
+      `UPDATE orders
+       SET status = 'handed_to_delivery', handed_over_at = now() - INTERVAL '5 minutes'
+       WHERE id = $1`,
+      [scenario.orderId]
+    );
+    await adminDeliveredRequest(harness, scenario, { note: 'Delivered for payout test' }).expect(200);
+
+    await db.query(
+      `UPDATE payout_holds
+       SET hold_started_at = now() - INTERVAL '10 days'
+       WHERE order_id = $1`,
+      [scenario.orderId]
+    );
+    await db.query(
+      `UPDATE orders SET delivered_at = now() - INTERVAL '10 days' WHERE id = $1`,
+      [scenario.orderId]
+    );
+
+    await request(getApp())
+      .post(`/api/admin/orders/${scenario.orderId}/payout/release`)
+      .set('Authorization', authHeader(harness.adminId))
+      .send({
+        payoutReference: 'bank-ref-cash-only',
+        note: 'Manual transfer confirmed for FR-47',
+      })
+      .expect(200);
+
+    const { rows: settlementRows } = await db.query(
+      'SELECT * FROM settlements WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(settlementRows).toHaveLength(1);
+
+    const { rows: ledgerRows } = await db.query(
+      'SELECT entry_type, amount FROM ledger_entries WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(ledgerRows).toHaveLength(1);
+    expect(ledgerRows[0].entry_type).toBe('seller_payout_manual');
+    expect(Number(ledgerRows[0].amount)).toBeLessThan(0);
+
+    const { rows: nonCashEntries } = await db.query(
+      "SELECT * FROM ledger_entries WHERE order_id = $1 AND entry_type IN ('commission', 'seller_payable')",
+      [scenario.orderId]
+    );
+    expect(nonCashEntries).toHaveLength(0);
   });
 });

@@ -121,14 +121,13 @@ function calculateReservationSettlement(itemPrice, commissionPercent, refundedIt
   };
 }
 
-/** FR-47, FR-49, FR-50a: insert an idempotent reservation settlement and ledger entries in the payout transaction. */
+/** FR-47, FR-49, FR-50a: insert an idempotent reservation settlement in the payout transaction. */
 async function recordReservationSettlement(client, orderId, adminId, amounts) {
   let finalAmounts = amounts;
-  let currency = 'PKR';
 
   if (!finalAmounts) {
     const { rows: resRows } = await client.query(
-      `SELECT r.item_price_snapshot, r.commission_percent_snapshot, r.currency
+      `SELECT r.item_price_snapshot, r.commission_percent_snapshot
        FROM reservations r
        JOIN orders o ON o.reservation_id = r.id
        WHERE o.id = $1`,
@@ -142,14 +141,11 @@ async function recordReservationSettlement(client, orderId, adminId, amounts) {
        WHERE order_id = $1 AND status = 'succeeded'`,
       [orderId]
     );
-    currency = resRows[0].currency || 'PKR';
     finalAmounts = calculateReservationSettlement(
       resRows[0].item_price_snapshot,
       resRows[0].commission_percent_snapshot,
       refundRows[0]?.refunded_item_amount || '0.00'
     );
-  } else {
-    currency = amounts.currency || 'PKR';
   }
 
   if (!finalAmounts) {
@@ -174,29 +170,7 @@ async function recordReservationSettlement(client, orderId, adminId, amounts) {
       adminId,
     ]
   );
-  const settlementRow = rows[0];
-
-  if (finalAmounts.commissionAmount !== '0.00' && Number(finalAmounts.commissionAmount) > 0) {
-    await client.query(
-      `INSERT INTO ledger_entries
-         (order_id, currency, amount, entry_type, idempotency_key)
-       VALUES ($1, $2, $3::numeric, 'commission', $4)
-       ON CONFLICT (idempotency_key) DO NOTHING`,
-      [orderId, currency, finalAmounts.commissionAmount, `commission:${orderId}`]
-    );
-  }
-
-  if (finalAmounts.sellerNetAmount !== '0.00' && Number(finalAmounts.sellerNetAmount) > 0) {
-    await client.query(
-      `INSERT INTO ledger_entries
-         (order_id, currency, amount, entry_type, idempotency_key)
-       VALUES ($1, $2, -($3::numeric), 'seller_payable', $4)
-       ON CONFLICT (idempotency_key) DO NOTHING`,
-      [orderId, currency, finalAmounts.sellerNetAmount, `seller_payable:${orderId}`]
-    );
-  }
-
-  return settlementRow;
+  return rows[0];
 }
 
 // ---- FR-47, FR-49: settlement record ----
