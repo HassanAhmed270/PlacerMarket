@@ -57,4 +57,11 @@ describe('lib/roles FR-05a permission matrix', () => {
     }
     expect(hasPermission(ROLES.ADMIN, 'order.release_payout')).toBe(true);
   });
+
+  test('FR-65, FR-48: payout.record is Admin-only', () => {
+    for (const role of [ROLES.SELLER, ROLES.BUYER, ROLES.MODERATOR]) {
+      expect(hasPermission(role, 'payout.record')).toBe(false);
+    }
+    expect(hasPermission(ROLES.ADMIN, 'payout.record')).toBe(true);
+  });
 });

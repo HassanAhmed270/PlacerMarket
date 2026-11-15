@@ -65,6 +65,13 @@ const DELIVERY_ADMIN_ONLY_PATHS = [
   { method: 'get', path: '/api/admin/refunds' },
   { method: 'get', path: '/api/admin/refunds/x' },
 ];
+const PAYOUT_ADMIN_ONLY_PATHS = [
+  { method: 'get', path: '/api/admin/seller-payouts' },
+  { method: 'get', path: '/api/admin/seller-payouts/x' },
+  { method: 'post', path: '/api/admin/seller-payouts/x/paid' },
+  { method: 'post', path: '/api/admin/seller-payouts/x/failed' },
+  { method: 'post', path: '/api/admin/seller-payouts/x/retry' },
+];
 
 beforeAll(() => jest.spyOn(console, 'error').mockImplementation(() => {})); // errorHandler logs 5xx
 afterAll(() => console.error.mockRestore());
@@ -87,6 +94,13 @@ describe('admin routes: permission gates at the route layer', () => {
   });
 
   test.each(DELIVERY_ADMIN_ONLY_PATHS)('buyer, seller, and moderator are blocked on delivery admin $method $path', async ({ method, path }) => {
+    for (const role of ['buyer', 'seller', 'moderator']) {
+      const res = await request(appAs(role))[method](path).send({});
+      expect(res.status).toBe(403);
+    }
+  });
+
+  test.each(PAYOUT_ADMIN_ONLY_PATHS)('buyer, seller, and moderator are blocked on payout admin $method $path', async ({ method, path }) => {
     for (const role of ['buyer', 'seller', 'moderator']) {
       const res = await request(appAs(role))[method](path).send({});
       expect(res.status).toBe(403);
