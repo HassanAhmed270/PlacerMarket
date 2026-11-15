@@ -231,6 +231,10 @@ purpose so the schema works whichever way this eventually gets decided.
   `orders`, `reservations`, `escrowPayments`, and `settlement` functions.
   The order completion is atomic with hold release, settlement, ledger, and
   audit writes; the manual path emits no notification or order event.
+- **FR-48 approval threshold**: `sellerPayouts.service.js` reads
+  `payout_two_admin_threshold` through `settlement.service.js` (including
+  within the paid/approval transaction); it does not query `platform_settings`
+  directly.
 - **FR-68 (Admin-delivered reservation orders)**: `delivery.service.js`
   uses `orders.service.js` for the order-state transition, `payout.service.js`
   for the transaction-aware payout-hold insert, and
