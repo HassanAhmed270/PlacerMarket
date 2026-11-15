@@ -1053,14 +1053,6 @@ async function recordManualSellerPayout(client, {
   commissionAmount,
   currency,
 }) {
-  if (sellerNetAmount !== '0.00') {
-    await client.query(
-      `INSERT INTO ledger_entries
-         (order_id, payment_id, currency, amount, entry_type, idempotency_key)
-       VALUES ($1, $2, $3, -($4::numeric), 'seller_payout_manual', $5)`,
-      [orderId, paymentId, currency, sellerNetAmount, `seller_payout_manual:${orderId}`]
-    );
-  }
   await moneyAudit.recordMoneyAuditEvent(client, {
     actorId: adminId,
     action: 'seller_payout_manual_released',
@@ -1068,7 +1060,7 @@ async function recordManualSellerPayout(client, {
     paymentId,
     reason: note,
     metadata: {
-      payoutReference,
+      ...(payoutReference ? { payoutReference } : {}),
       note,
       itemPrice,
       deliveryFee,
@@ -1077,6 +1069,16 @@ async function recordManualSellerPayout(client, {
       currency,
     },
   });
+}
+
+/** FR-48: write cash ledger entry when seller payout is marked paid. */
+async function recordPaidSellerPayoutLedgerEntry(client, { orderId, paymentId, currency, amount }) {
+  await client.query(
+    `INSERT INTO ledger_entries
+       (order_id, payment_id, currency, amount, entry_type, idempotency_key)
+     VALUES ($1, $2, $3, -($4::numeric), 'seller_payout_manual', $5)`,
+    [orderId, paymentId, currency, amount, `seller_payout_manual:${orderId}`]
+  );
 }
 
 /** FR-72: lock payment and refund rows after the order reservation is locked. */
@@ -2046,6 +2048,7 @@ module.exports = {
   lockPaymentAndRefundRowsForHandover,
   lockPaymentsForOrder,
   recordManualSellerPayout,
+  recordPaidSellerPayoutLedgerEntry,
   recordCourierHandoverAuditEvent,
   recordOrderDeliveredAuditEvent,
   recordOrderExceptionResolvedAuditEvent,

@@ -11,6 +11,8 @@ const {
   request,
   restoreHandoverTestEnvironment,
 } = require('./delivery-handover.helpers');
+const crypto = require('crypto');
+const { signAccessToken } = require('../../src/lib/jwt');
 const payout = require('../../src/modules/payout.service');
 const settlement = require('../../src/modules/settlement.service');
 
@@ -56,7 +58,8 @@ async function getPayoutState(orderId) {
        (SELECT count(*)::int FROM settlements WHERE order_id = $1) AS settlements,
        (SELECT count(*)::int FROM ledger_entries WHERE order_id = $1) AS ledger,
        (SELECT count(*)::int FROM money_audit_events WHERE order_id = $1) AS audits,
-       (SELECT count(*)::int FROM refunds WHERE order_id = $1) AS refunds`,
+       (SELECT count(*)::int FROM refunds WHERE order_id = $1) AS refunds,
+       (SELECT count(*)::int FROM seller_payouts WHERE order_id = $1 AND status = 'initiated') AS payouts`,
     [orderId]
   );
   return rows[0];
@@ -114,6 +117,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
       ledger: 0,
       audits: 1,
       refunds: 0,
+      payouts: 0,
     });
   });
 
@@ -139,6 +143,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
       settlements: 0,
       ledger: 0,
       refunds: 0,
+      payouts: 0,
     });
   });
 
@@ -160,6 +165,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
       settlements: 0,
       ledger: 0,
       refunds: 0,
+      payouts: 0,
     });
   });
 
@@ -233,6 +239,10 @@ describe('FR-65 manual reservation-backed payout release', () => {
       orderId: scenario.orderId,
       status: 'completed',
       payout: {
+        id: expect.any(String),
+        status: 'initiated',
+        attempt: 1,
+        amount: expected.sellerNetAmount,
         sellerNetAmount: expected.sellerNetAmount,
         commissionAmount: expected.commissionAmount,
         currency: reservationRows[0].currency,
@@ -315,6 +325,55 @@ describe('FR-65 manual reservation-backed payout release', () => {
     expect(refundRows).toEqual([]);
     expect(codRows).toEqual([]);
     expect(notificationRowsAfter).toEqual(notificationRowsBefore);
+
+    const { rows: ledgerRowsAfterRelease } = await db.query(
+      'SELECT count(*)::int AS count FROM ledger_entries WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(ledgerRowsAfterRelease[0].count).toBe(0);
+
+    const { rows: initiatedPayoutRows } = await db.query(
+      'SELECT id, status, attempt, amount::text FROM seller_payouts WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(initiatedPayoutRows).toEqual([{
+      id: response.body.payout.id,
+      status: 'initiated',
+      attempt: 1,
+      amount: expected.sellerNetAmount,
+    }]);
+
+    const adminSessionId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO auth_sessions (id, family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at)
+       VALUES ($1, $2, $3, $4, now() + interval '1 hour', now() + interval '1 day')`,
+      [adminSessionId, crypto.randomUUID(), harness.adminId, crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex')]
+    );
+    const grant = crypto.randomBytes(32).toString('base64url');
+    await db.query(
+      `INSERT INTO step_up_grants (token_hash, user_id, session_id, action, expires_at)
+       VALUES ($1, $2, $3, 'payout.record', now() + interval '5 minutes')`,
+      [crypto.createHash('sha256').update(grant).digest('hex'), harness.adminId, adminSessionId]
+    );
+    const adminToken = `Bearer ${signAccessToken(harness.adminId, { secret: 'delivery-handover-integration-secret', sessionId: adminSessionId })}`;
+    await request(getApp())
+      .post(`/api/admin/seller-payouts/${response.body.payout.id}/paid`)
+      .set('Authorization', adminToken)
+      .send({
+        method: 'bank',
+        transferReference: 'bank-ref-123',
+        paidOn: new Date().toISOString().slice(0, 10),
+        stepUpGrant: grant,
+      })
+      .expect(200);
+
+    const { rows: ledgerRowsAfterPaid } = await db.query(
+      'SELECT entry_type, amount::text FROM ledger_entries WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(ledgerRowsAfterPaid).toHaveLength(1);
+    expect(ledgerRowsAfterPaid[0].entry_type).toBe('seller_payout_manual');
+    expect(Number(ledgerRowsAfterPaid[0].amount)).toBeLessThan(0);
   });
 
   test('FR-65: repeating a successful release returns 409 without a second financial record', async () => {
@@ -325,9 +384,10 @@ describe('FR-65 manual reservation-backed payout release', () => {
       order_status: 'completed',
       hold_state: 'released',
       settlements: 1,
-      ledger: 1,
+      ledger: 0,
       audits: 2,
       refunds: 0,
+      payouts: 1,
     });
   });
 
@@ -342,9 +402,10 @@ describe('FR-65 manual reservation-backed payout release', () => {
       order_status: 'completed',
       hold_state: 'released',
       settlements: 1,
-      ledger: 1,
+      ledger: 0,
       audits: 2,
       refunds: 0,
+      payouts: 1,
     });
   });
 
@@ -436,6 +497,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
       settlements: 0,
       ledger: 0,
       refunds: 0,
+      payouts: 0,
     });
   });
 });

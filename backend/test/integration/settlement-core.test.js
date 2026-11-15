@@ -9,6 +9,8 @@ const {
   request,
   restoreHandoverTestEnvironment,
 } = require('./delivery-handover.helpers');
+const crypto = require('crypto');
+const { signAccessToken } = require('../../src/lib/jwt');
 const settlement = require('../../src/modules/settlement.service');
 const { ValidationError } = require('../../src/lib/errors');
 
@@ -232,7 +234,7 @@ describe('settlement core integration', () => {
       [scenario.orderId]
     );
 
-    await request(getApp())
+    const releaseRes = await request(getApp())
       .post(`/api/admin/orders/${scenario.orderId}/payout/release`)
       .set('Authorization', authHeader(harness.adminId))
       .send({
@@ -246,6 +248,36 @@ describe('settlement core integration', () => {
       [scenario.orderId]
     );
     expect(settlementRows).toHaveLength(1);
+
+    const { rows: ledgerBeforePaid } = await db.query(
+      'SELECT entry_type, amount FROM ledger_entries WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(ledgerBeforePaid).toHaveLength(0);
+
+    const adminSessionId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO auth_sessions (id, family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at)
+       VALUES ($1, $2, $3, $4, now() + interval '1 hour', now() + interval '1 day')`,
+      [adminSessionId, crypto.randomUUID(), harness.adminId, crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex')]
+    );
+    const grant = crypto.randomBytes(32).toString('base64url');
+    await db.query(
+      `INSERT INTO step_up_grants (token_hash, user_id, session_id, action, expires_at)
+       VALUES ($1, $2, $3, 'payout.record', now() + interval '5 minutes')`,
+      [crypto.createHash('sha256').update(grant).digest('hex'), harness.adminId, adminSessionId]
+    );
+    const adminToken = `Bearer ${signAccessToken(harness.adminId, { secret: 'delivery-handover-integration-secret', sessionId: adminSessionId })}`;
+    await request(getApp())
+      .post(`/api/admin/seller-payouts/${releaseRes.body.payout.id}/paid`)
+      .set('Authorization', adminToken)
+      .send({
+        method: 'bank',
+        transferReference: 'bank-ref-cash-only',
+        paidOn: new Date().toISOString().slice(0, 10),
+        stepUpGrant: grant,
+      })
+      .expect(200);
 
     const { rows: ledgerRows } = await db.query(
       'SELECT entry_type, amount FROM ledger_entries WHERE order_id = $1',

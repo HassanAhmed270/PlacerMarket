@@ -36,6 +36,7 @@ const listings = require('./listings.service');
 const reservations = require('./reservations.service');
 const users = require('./users.service');
 const escrowPayments = require('./escrowPayments.service');
+const sellerPayouts = require('./sellerPayouts.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const { NotFoundError, ValidationError, ForbiddenError, ConflictError } = require('../lib/errors');
@@ -282,16 +283,22 @@ function validateManualPayoutRequest(input) {
     throw new ValidationError('Only payoutReference and note are accepted.');
   }
   const { payoutReference, note } = input;
-  if (typeof payoutReference !== 'string' || typeof note !== 'string') {
-    throw new ValidationError('payoutReference and note are required.');
+  if (typeof note !== 'string') {
+    throw new ValidationError('note is required.');
   }
-  const trimmedReference = payoutReference.trim();
   const trimmedNote = note.trim();
-  if (trimmedReference.length < 3 || trimmedReference.length > 100) {
-    throw new ValidationError('payoutReference must be 3 to 100 characters.');
-  }
   if (trimmedNote.length < 3 || trimmedNote.length > 500) {
     throw new ValidationError('note must be 3 to 500 characters.');
+  }
+  let trimmedReference = null;
+  if (payoutReference !== undefined && payoutReference !== null) {
+    if (typeof payoutReference !== 'string') {
+      throw new ValidationError('payoutReference must be a string.');
+    }
+    trimmedReference = payoutReference.trim();
+    if (trimmedReference.length < 3 || trimmedReference.length > 100) {
+      throw new ValidationError('payoutReference must be 3 to 100 characters.');
+    }
   }
   return { payoutReference: trimmedReference, note: trimmedNote };
 }
@@ -401,6 +408,17 @@ async function releaseReservationPayout(orderId, adminId, input) {
     );
     if (!releasedRows[0]) throw new ConflictError('The payout hold changed before release.');
 
+    let payoutRow = null;
+    if (amounts && Number(amounts.sellerNetAmount) > 0) {
+      payoutRow = await sellerPayouts.createInitiatedPayout(client, {
+        orderId,
+        sellerId: order.seller_id,
+        amount: amounts.sellerNetAmount,
+        currency: reservation.currency,
+        initiatedBy: adminId,
+      });
+    }
+
     await escrowPayments.recordManualSellerPayout(client, {
       orderId,
       paymentId: payment.id,
@@ -418,6 +436,12 @@ async function releaseReservationPayout(orderId, adminId, input) {
       orderId,
       status: 'completed',
       payout: {
+        ...(payoutRow ? {
+          id: payoutRow.id,
+          status: payoutRow.status,
+          attempt: payoutRow.attempt,
+          amount: payoutRow.amount,
+        } : {}),
         sellerNetAmount: amounts ? amounts.sellerNetAmount : '0.00',
         commissionAmount: amounts ? amounts.commissionAmount : '0.00',
         currency: reservation.currency,
