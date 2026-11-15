@@ -44,6 +44,7 @@ describe('FR-79b migration support', () => {
         '026_admin_manual_refund_read_idx.sql',
         '027_refund_failure_tracking.sql',
         '028_commission_snapshot.sql',
+        '029_seller_payouts.sql',
     ]);
     expect(upSection('-- Up Migration\nCREATE TABLE x (id int);\n-- Down Migration\nDROP TABLE x;', 'sample.sql'))
       .toBe('CREATE TABLE x (id int);');
