@@ -13,9 +13,43 @@ const users = require('./users.service');
 const reservations = require('./reservations.service');
 const escrowPayments = require('./escrowPayments.service');
 const moneyAudit = require('./moneyAudit.service');
+const settlement = require('./settlement.service');
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_METHODS = ['bank', 'easypaisa', 'jazzcash'];
+const PAYOUT_APPROVAL_THRESHOLD_SETTING = 'payout_two_admin_threshold';
+const NUMERIC_SETTING_PATTERN = '^[+]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$';
+
+async function getApprovalRequirement(client, amount) {
+  let threshold;
+  try {
+    const settings = await settlement.getSettingsForTransaction(client, [PAYOUT_APPROVAL_THRESHOLD_SETTING]);
+    threshold = settings[PAYOUT_APPROVAL_THRESHOLD_SETTING];
+  } catch (error) {
+    if (!(error instanceof NotFoundError)) throw error;
+    return { valid: false, required: false };
+  }
+
+  const { rows } = await client.query(
+    `SELECT CASE
+       WHEN $1::text ~ $3 THEN
+         CASE WHEN $1::numeric > 0 THEN $2::numeric > $1::numeric ELSE NULL END
+       ELSE NULL
+     END AS requires_approval`,
+    [threshold, amount, NUMERIC_SETTING_PATTERN]
+  );
+  const required = rows[0].requires_approval;
+  return { valid: required !== null, required: required === true };
+}
+
+async function getPayoutApprovalThreshold() {
+  try {
+    return await settlement.getSetting(PAYOUT_APPROVAL_THRESHOLD_SETTING);
+  } catch (error) {
+    if (!(error instanceof NotFoundError)) throw error;
+    return null;
+  }
+}
 
 function assertUuid(id, name = 'id') {
   if (typeof id !== 'string' || !UUID_REGEX.test(id)) {
@@ -56,9 +90,12 @@ function formatPayoutRow(row) {
     paidOn: row.paid_on ? (row.paid_on instanceof Date ? row.paid_on.toISOString().slice(0, 10) : String(row.paid_on).slice(0, 10)) : null,
     paidBy: row.paid_by || null,
     paidAt: row.paid_at || null,
+    approvedBy: row.approved_by || null,
+    approvedAt: row.approved_at || null,
     failureReason: row.failure_reason || null,
     failedBy: row.failed_by || null,
     failedAt: row.failed_at || null,
+    ...(Object.hasOwn(row, 'requires_approval') ? { requiresApproval: row.requires_approval } : {}),
   };
 }
 
@@ -163,6 +200,14 @@ async function markPaid(payoutId, adminId, sessionId, input) {
       throw new ConflictError('Payout is not in initiated status.');
     }
 
+    const approvalRequirement = await getApprovalRequirement(client, payout.amount);
+    if (!approvalRequirement.valid) {
+      throw new ConflictError('Payout approval threshold is invalid.');
+    }
+    if (approvalRequirement.required && !payout.approved_by) {
+      throw new ConflictError('Approval required.');
+    }
+
     await users.consumeStepUpGrantWithClient(client, adminId, sessionId, 'payout.record', stepUpGrant);
 
     const { rows: updatedRows } = await client.query(
@@ -176,7 +221,7 @@ async function markPaid(payoutId, adminId, sessionId, input) {
        WHERE id = $5 AND status = 'initiated'
        RETURNING id, order_id, seller_id, attempt, status, amount::text, currency,
                  initiated_by, initiated_at, method, transfer_reference,
-                 paid_on, paid_by, paid_at`,
+                 paid_on, paid_by, paid_at, approved_by, approved_at`,
       [method, trimmedRef, paidOn, adminId, payoutId]
     );
     if (!updatedRows[0]) throw new ConflictError('Payout status changed.');
@@ -218,6 +263,68 @@ async function markPaid(payoutId, adminId, sessionId, input) {
     method: result.method,
     transferReference: result.transfer_reference,
     paidOn: result.paid_on,
+  });
+
+  return formatPayoutRow(result);
+}
+
+/** FR-48: require a different Admin to approve payouts strictly above the configured threshold. */
+async function approvePayout(payoutId, adminId, sessionId, input) {
+  assertUuid(payoutId, 'payoutId');
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new ValidationError('Request body must be an object.');
+  }
+  const { stepUpGrant } = input;
+  if (!stepUpGrant || typeof stepUpGrant !== 'string') {
+    throw new ForbiddenError('A valid step-up grant is required.');
+  }
+
+  const result = await db.withTransaction(async (client) => {
+    const { payout, payment } = await lockOrderAndPayoutContext(client, payoutId);
+    if (payout.status !== 'initiated') {
+      throw new ConflictError('Payout is not in initiated status.');
+    }
+    if (payout.approved_by) {
+      throw new ConflictError('Payout has already been approved.');
+    }
+    if (adminId === payout.initiated_by) {
+      throw new ForbiddenError('The Admin who initiated a payout cannot approve it.');
+    }
+
+    const approvalRequirement = await getApprovalRequirement(client, payout.amount);
+    if (!approvalRequirement.valid) {
+      throw new ConflictError('Payout approval threshold is invalid.');
+    }
+    if (!approvalRequirement.required) {
+      throw new ConflictError('Approval not required.');
+    }
+
+    await users.consumeStepUpGrantWithClient(client, adminId, sessionId, 'payout.approve', stepUpGrant);
+
+    const { rows: updatedRows } = await client.query(
+      `UPDATE seller_payouts
+       SET approved_by = $1, approved_at = now()
+       WHERE id = $2 AND status = 'initiated' AND approved_by IS NULL
+       RETURNING id, order_id, seller_id, attempt, status, amount::text, currency,
+                 initiated_by, initiated_at, approved_by, approved_at`,
+      [adminId, payoutId]
+    );
+    if (!updatedRows[0]) throw new ConflictError('Payout approval status changed.');
+
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: adminId,
+      action: 'seller_payout_approved',
+      orderId: payout.order_id,
+      paymentId: payment.id,
+      metadata: {
+        payoutId,
+        attempt: payout.attempt,
+        amount: payout.amount,
+        currency: payout.currency,
+      },
+    });
+
+    return updatedRows[0];
   });
 
   return formatPayoutRow(result);
@@ -365,13 +472,20 @@ async function listSellerPayouts(query = {}) {
     limit = Math.min(parsedLimit, 100);
   }
 
-  const values = [];
+  const threshold = await getPayoutApprovalThreshold();
+  const values = [threshold];
   let sql = `
     SELECT id, order_id, seller_id, attempt, status,
            amount::text, currency, initiated_by,
            initiated_at, method, transfer_reference,
            paid_on, paid_by, paid_at,
-           failure_reason, failed_by, failed_at
+           failure_reason, failed_by, failed_at,
+           CASE
+             WHEN $1::text IS NULL THEN true
+             WHEN $1::text ~ '${NUMERIC_SETTING_PATTERN}' THEN
+               CASE WHEN $1::numeric > 0 THEN amount::numeric > $1::numeric ELSE true END
+             ELSE true
+           END AS requires_approval
     FROM seller_payouts
   `;
   if (statusFilter) {
@@ -388,15 +502,22 @@ async function listSellerPayouts(query = {}) {
 /** FR-48: get single seller payout details without sensitive seller account information. */
 async function getSellerPayout(payoutId) {
   assertUuid(payoutId, 'payoutId');
+  const threshold = await getPayoutApprovalThreshold();
   const { rows } = await db.query(
     `SELECT id, order_id, seller_id, attempt, status,
             amount::text, currency, initiated_by,
             initiated_at, method, transfer_reference,
             paid_on, paid_by, paid_at,
-            failure_reason, failed_by, failed_at
+            failure_reason, failed_by, failed_at,
+            CASE
+              WHEN $2::text IS NULL THEN true
+              WHEN $2::text ~ '${NUMERIC_SETTING_PATTERN}' THEN
+                CASE WHEN $2::numeric > 0 THEN amount::numeric > $2::numeric ELSE true END
+              ELSE true
+            END AS requires_approval
      FROM seller_payouts
      WHERE id = $1`,
-    [payoutId]
+    [payoutId, threshold]
   );
   if (!rows[0]) throw new NotFoundError('seller_payout', payoutId);
   return formatPayoutRow(rows[0]);
@@ -405,6 +526,7 @@ async function getSellerPayout(payoutId) {
 module.exports = {
   createInitiatedPayout,
   markPaid,
+  approvePayout,
   markFailed,
   retryPayout,
   listSellerPayouts,

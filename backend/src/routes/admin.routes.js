@@ -214,6 +214,21 @@ router.get(
 );
 
 router.post(
+  '/seller-payouts/:payoutId/approve',
+  noStoreOrderResponses,
+  requirePermission('payout.approve'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await sellerPayouts.approvePayout(
+      req.params.payoutId,
+      req.user.id,
+      req.authSessionId,
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+    ));
+  }
+);
+
+router.post(
   '/seller-payouts/:payoutId/paid',
   noStoreOrderResponses,
   requirePermission('payout.record'),
