@@ -4,6 +4,7 @@ import { getCheckoutError } from './lib/checkout.js'
 import {
   getSellerHandoverDeadline,
   getSellerOrderStatusMessage,
+  getSellerPayoutStatusLabel,
 } from './lib/sellerOrders.js'
 
 const PAGE_SIZE = 20
@@ -89,6 +90,7 @@ function SellerOrdersPage() {
                   <span className="seller-order-summary">
                     <span className="seller-order-title">{order.title}</span>
                     <span>{status.title}</span>
+                    <span className="seller-payout-status">{getSellerPayoutStatusLabel(order.payout)}</span>
                     <span>{order.currency} {order.itemPrice}</span>
                     <span>{order.deliveryCity}</span>
                     {order.fundedAt && (

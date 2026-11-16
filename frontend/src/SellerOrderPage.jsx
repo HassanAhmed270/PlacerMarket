@@ -2,10 +2,13 @@ import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
 import { getCheckoutError } from './lib/checkout.js'
 import {
+  getHeldFundsBanner,
   getSellerDisputeLabel,
+  getSellerEarningsRows,
   getSellerHandoverDeadline,
   getSellerOrderStatusMessage,
   getSellerPayoutLabel,
+  getSellerPayoutStatusLabel,
 } from './lib/sellerOrders.js'
 
 function SellerOrderPage({ orderId }) {
@@ -61,6 +64,9 @@ function SellerOrderPage({ orderId }) {
     ? null
     : getSellerHandoverDeadline(order.status, order.handoverDeadlineAt, now)
   const disputeLabel = getSellerDisputeLabel(order.disputeStatus)
+  const earningsRows = getSellerEarningsRows(order)
+  const payoutStatusLabel = getSellerPayoutStatusLabel(order.payout)
+  const heldFundsBanner = getHeldFundsBanner(order)
 
   return (
     <main className="seller-order-page">
@@ -75,6 +81,18 @@ function SellerOrderPage({ orderId }) {
           <h2>{order.title}</h2>
         </div>
         <p className="seller-order-status-copy" role="status">{status.message}</p>
+        <section className="seller-earnings-panel" aria-labelledby="seller-earnings-title">
+          <h2 id="seller-earnings-title">Earnings and payout</h2>
+          {earningsRows.length > 0
+            ? <dl className="seller-earnings-details">
+              {earningsRows.map((row) => (
+                <div key={row.label}><dt>{row.label}</dt><dd>{row.value}</dd></div>
+              ))}
+            </dl>
+            : <p role="status">Earnings not yet available.</p>}
+          <p className="seller-payout-status">{payoutStatusLabel}</p>
+          {heldFundsBanner && <p className="seller-held-funds-banner" role="status">{heldFundsBanner}</p>}
+        </section>
         <dl className="seller-order-details">
           <div><dt>Item price</dt><dd>{order.currency} {order.itemPrice}</dd></div>
           <div><dt>Delivery city</dt><dd>{order.deliveryCity}</dd></div>

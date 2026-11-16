@@ -54,6 +54,46 @@ export function getSellerPayoutLabel(state) {
   return 'Payout status unavailable.'
 }
 
+function formatPkr(amount) {
+  if (typeof amount !== 'string') return '—'
+  const match = /^(-?)(\d+)(\.\d+)?$/.exec(amount.trim())
+  if (!match) return '—'
+  const whole = match[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  return `PKR ${match[1]}${whole}${match[3] || ''}`
+}
+
+export function getSellerEarningsRows(order) {
+  const earnings = order?.earnings
+  if (!earnings) return []
+
+  return [
+    { label: 'Item price', value: formatPkr(order.itemPrice) },
+    {
+      label: `Commission (${earnings.commissionPercent}%)`,
+      value: formatPkr(earnings.commissionAmount),
+    },
+    { label: 'Your net earnings', value: formatPkr(earnings.sellerNetAmount) },
+  ]
+}
+
+export function getSellerPayoutStatusLabel(payout) {
+  if (!payout) return 'Not yet released'
+  if (payout.status === 'initiated') return 'Payout being prepared'
+  if (payout.status === 'paid') {
+    return `Paid on ${payout.paidOn || 'date unavailable'} by ${payout.method || 'method unavailable'}, reference ${payout.transferReference || 'not available'}`
+  }
+  if (payout.status === 'failed') {
+    return 'Payout could not be completed. Our team will retry it.'
+  }
+  return 'Not yet released'
+}
+
+export function getHeldFundsBanner(order) {
+  return order?.fundsHeldForVerification === true
+    ? 'Payout is held until seller identity verification is complete.'
+    : ''
+}
+
 export function getSellerDisputeLabel(status) {
   if (status === 'open' || status === 'seller_responded') return 'A dispute is open.'
   if (status === 'resolved_release') return 'The dispute was decided in your favour.'
