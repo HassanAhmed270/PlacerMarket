@@ -15,6 +15,8 @@ const { signAccessToken } = require('../../src/lib/jwt');
 
 let harness;
 let scenario;
+let originalPlatformSettings;
+const PLATFORM_SETTING_KEYS = ['commission_percent', 'payout_two_admin_threshold'];
 
 function adminAuthHeader(adminId, sessionId) {
   return `Bearer ${signAccessToken(adminId, { secret: 'delivery-handover-integration-secret', sessionId })}`;
@@ -98,8 +100,28 @@ async function setPlatformSetting(key, value) {
   );
 }
 
+async function readPlatformSettings() {
+  const { rows } = await db.query(
+    'SELECT key, value FROM platform_settings WHERE key = ANY($1::text[])',
+    [PLATFORM_SETTING_KEYS]
+  );
+  return Object.fromEntries(rows.map((row) => [row.key, row.value]));
+}
+
+async function restorePlatformSettings() {
+  if (!originalPlatformSettings) return;
+  for (const key of PLATFORM_SETTING_KEYS) {
+    if (Object.hasOwn(originalPlatformSettings, key)) {
+      await setPlatformSetting(key, originalPlatformSettings[key]);
+    } else {
+      await db.query('DELETE FROM platform_settings WHERE key = $1', [key]);
+    }
+  }
+}
+
 beforeAll(async () => {
   harness = await createHarness();
+  originalPlatformSettings = await readPlatformSettings();
 });
 
 beforeEach(async () => {
@@ -109,13 +131,20 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await global.drainIntegrationListeners(5000);
-  if (scenario) await cleanupScenario(harness, scenario);
+  try {
+    await global.drainIntegrationListeners(5000);
+    if (scenario) await cleanupScenario(harness, scenario);
+  } finally {
+    await restorePlatformSettings();
+  }
 });
 
 afterAll(async () => {
-  await cleanupHarness(harness);
-  restoreHandoverTestEnvironment();
+  try {
+    await cleanupHarness(harness);
+  } finally {
+    restoreHandoverTestEnvironment();
+  }
 });
 
 describe('seller order earnings and payout reads', () => {
@@ -194,7 +223,7 @@ describe('seller order earnings and payout reads', () => {
       status: 'paid',
       method: 'bank',
       transferReference: 'SELLER-PAY-PAID-REF',
-      paidOn: expect.any(String),
+      paidOn,
     });
 
     const failedScenario = await createScenario(harness);

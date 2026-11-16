@@ -88,6 +88,18 @@ function validatePaidOn(paidOn) {
   return paidOn;
 }
 
+/** FR-48: format PostgreSQL DATE values without shifting their local calendar date. */
+function dateOnly(value) {
+  if (value instanceof Date) {
+    const year = String(value.getFullYear()).padStart(4, '0');
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+  if (typeof value === 'string') return value.slice(0, 10);
+  return null;
+}
+
 function validateExportDate(value, name) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new ValidationError(`${name} must be a valid date in YYYY-MM-DD format.`);
@@ -122,7 +134,7 @@ function formatPayoutRow(row) {
     initiatedAt: row.initiated_at,
     method: row.method || null,
     transferReference: row.transfer_reference || null,
-    paidOn: row.paid_on ? (row.paid_on instanceof Date ? row.paid_on.toISOString().slice(0, 10) : String(row.paid_on).slice(0, 10)) : null,
+    paidOn: dateOnly(row.paid_on),
     paidBy: row.paid_by || null,
     paidAt: row.paid_at || null,
     approvedBy: row.approved_by || null,
@@ -297,7 +309,7 @@ async function markPaid(payoutId, adminId, sessionId, input) {
     currency: result.currency,
     method: result.method,
     transferReference: result.transfer_reference,
-    paidOn: result.paid_on,
+    paidOn: dateOnly(result.paid_on),
   });
 
   return formatPayoutRow(result);
@@ -521,7 +533,7 @@ async function getSellerOrderPayoutSummaries(orderIds) {
     currency: row.currency,
     method: row.status === 'paid' ? row.method : null,
     transferReference: row.status === 'paid' ? row.transfer_reference : null,
-    paidOn: row.status === 'paid' && row.paid_on ? String(row.paid_on).slice(0, 10) : null,
+    paidOn: row.status === 'paid' ? dateOnly(row.paid_on) : null,
   }));
 }
 
@@ -662,9 +674,7 @@ async function exportSellerPayoutsCsv(adminId, sessionId, filters) {
       PAYOUT_EXPORT_COLUMNS.map(([header]) => header).join(','),
       ...rows.map((row) => PAYOUT_EXPORT_COLUMNS.map(([, column]) => {
         const value = row[column];
-        const formattedValue = value instanceof Date && column === 'paid_on'
-          ? value.toISOString().slice(0, 10)
-          : value;
+        const formattedValue = column === 'paid_on' ? dateOnly(value) : value;
         return csvCell(formattedValue);
       }).join(',')),
     ];
@@ -695,5 +705,6 @@ module.exports = {
   getSellerPayout,
   exportSellerPayoutsCsv,
   csvCell,
+  dateOnly,
   MAX_PAYOUT_EXPORT_ROWS,
 };
