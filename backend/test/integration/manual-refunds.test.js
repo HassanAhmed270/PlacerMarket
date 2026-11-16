@@ -353,7 +353,7 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       .expect('Cache-Control', 'private, no-store');
     expect(requested.body).toMatchObject({
       status: 'requested',
-      amount: '1550.50',
+      amount: '0.01',
       currency: 'PKR',
     });
 
@@ -368,6 +368,11 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
         refundId: requested.body.refundId,
         status: 'approved',
         decision: 'approved',
+        amount: '0.01',
+        itemAmount: '0.01',
+        deliveryFeeAmount: '0.00',
+        sellerAtFault: false,
+        refundAfterPayout: false,
       }));
 
     const { rows: refundRows } = await db.query(
@@ -442,14 +447,19 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     }
     expect(JSON.stringify(auditRows)).not.toContain(requestGrant);
     expect(JSON.stringify(auditRows)).not.toContain(decisionGrant);
-    expect(JSON.stringify(auditRows)).not.toMatch(/"amount"\s*:/);
+    expect(auditRows[0].metadata).toMatchObject({ amount: '0.01' });
+    expect(auditRows[1].metadata).toMatchObject({
+      amount: '0.01',
+      itemAmount: '0.01',
+      deliveryFeeAmount: '0.00',
+    });
     await processRefundNotification(
       requested.body.refundId,
       'succeeded',
       'refund_succeeded',
       [
-        { role: 'buyer', message: 'Your refund was processed: PKR 1550.50.' },
-        { role: 'seller', message: 'A refund was issued for your sale: PKR 1550.50.' },
+        { role: 'buyer', message: 'Your refund was processed: PKR 0.01.' },
+        { role: 'seller', message: 'A refund was issued for your sale: PKR 0.01.' },
       ]
     );
   });
@@ -800,10 +810,156 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     }).expect(400);
   });
 
-  test('FR-69: one open request per order is enforced and client amounts are ignored', async () => {
+  test('FR-69: one open request per order is enforced and a partial amount is honored', async () => {
     const requested = await createRequest(staff.first, { amount: '1.00' });
-    expect(requested.body.amount).toBe('1550.50');
+    expect(requested.body.amount).toBe('1.00');
     expect((await createRequest(staff.second)).status).toBe(409);
+  });
+
+  test('FR-69: partial refund amounts require exact positive decimal strings and stay within the captured cap', async () => {
+    await sendManualRequest(staff.first, {
+      reason: 'Customer service reviewed the delivery issue.',
+      amount: '0',
+      stepUpGrant: await insertGrant(staff.first, 'refund.request'),
+    }).expect(400);
+    await sendManualRequest(staff.first, {
+      reason: 'Customer service reviewed the delivery issue.',
+      amount: '1.001',
+      stepUpGrant: await insertGrant(staff.first, 'refund.request'),
+    }).expect(400);
+    await sendManualRequest(staff.first, {
+      reason: 'Customer service reviewed the delivery issue.',
+      amount: 1.01,
+      stepUpGrant: await insertGrant(staff.first, 'refund.request'),
+    }).expect(400);
+    await sendManualRequest(staff.first, {
+      reason: 'Customer service reviewed the delivery issue.',
+      amount: '1550.51',
+      stepUpGrant: await insertGrant(staff.first, 'refund.request'),
+    }).expect(409);
+
+    const requested = await createRequest(staff.first, { amount: '1.01' });
+    expect(requested.status).toBe(201);
+    expect(requested.body.amount).toBe('1.01');
+  });
+
+  test('FR-69: concurrent partial requests whose sum exceeds the cap have exactly one winner', async () => {
+    const [grantA, grantB] = await Promise.all([
+      createGrant(staff.first, 'refund.request'),
+      createGrant(staff.second, 'refund.request'),
+    ]);
+    const results = await Promise.all([
+      sendManualRequest(staff.first, {
+        reason: 'First administrator requested a partial refund.',
+        amount: '900.00',
+        stepUpGrant: grantA,
+      }),
+      sendManualRequest(staff.second, {
+        reason: 'Second administrator requested a partial refund.',
+        amount: '800.00',
+        stepUpGrant: grantB,
+      }),
+    ]);
+    expect(results.map((result) => result.status).sort()).toEqual([201, 409]);
+  });
+
+  test('FR-69: cumulative partial refunds cannot exceed the captured amount', async () => {
+    const requested = await createRequest(staff.first, { amount: '1.01' });
+    await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'Second administrator approved this refund.',
+      stepUpGrant: await createGrant(staff.second, 'refund.decide'),
+    }).expect(200);
+    await escrowPayments.processRefundJob({
+      refundId: requested.body.refundId,
+      gateway: {
+        createRefund: jest.fn(async ({ amount, providerPaymentRef }) => ({
+          providerRefundRef: `partial-provider-ref-${crypto.randomUUID()}`,
+          providerPaymentRef,
+          amount,
+          status: 'succeeded',
+        })),
+      },
+    });
+
+    const balance = await request(app)
+      .get(`/api/admin/orders/${scenario.orderId}/refundable-balance`)
+      .set('Authorization', authHeader(staff.first.id, staff.first.sessionId))
+      .expect(200);
+    const remaining = balance.body.refundableAmount.total;
+    const [whole, fraction = ''] = remaining.split('.');
+    const overCapMinor = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0')) + 1n;
+    const overCap = `${overCapMinor / 100n}.${String(overCapMinor % 100n).padStart(2, '0')}`;
+    await sendManualRequest(staff.first, {
+      reason: 'Customer service reviewed the delivery issue.',
+      amount: overCap,
+      stepUpGrant: await insertGrant(staff.first, 'refund.request'),
+    }).expect(409);
+  });
+
+  test('FR-69: delivered-order delivery fee requires seller-at-fault approval', async () => {
+    await db.query('UPDATE orders SET delivered_at = now() WHERE id = $1', [scenario.orderId]);
+    const requested = await createRequest();
+
+    await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'Second administrator approved this refund.',
+      stepUpGrant: await insertGrant(staff.second, 'refund.decide'),
+    }).expect(409);
+    const response = await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'Seller fault justified the delivery fee refund.',
+      sellerAtFault: true,
+      stepUpGrant: await insertGrant(staff.second, 'refund.decide'),
+    }).expect(200);
+    expect(response.body).toMatchObject({
+      refundAfterPayout: false,
+      sellerAtFault: true,
+    });
+    expect(response.body.deliveryFeeAmount).not.toBe('0.00');
+  });
+
+  test('FR-69: a fully refunded payment cannot be refunded again', async () => {
+    const requested = await createRequest();
+    await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'Second administrator approved this refund.',
+      stepUpGrant: await createGrant(staff.second, 'refund.decide'),
+    }).expect(200);
+    await escrowPayments.processRefundJob({
+      refundId: requested.body.refundId,
+      gateway: {
+        createRefund: jest.fn(async ({ amount, providerPaymentRef }) => ({
+          providerRefundRef: `full-provider-ref-${crypto.randomUUID()}`,
+          providerPaymentRef,
+          amount,
+          status: 'succeeded',
+        })),
+      },
+    });
+    await createRequest(staff.first, {
+      amount: '0.01',
+      stepUpGrant: await insertGrant(staff.first, 'refund.request'),
+    }).then((response) => {
+      expect(response.status).toBe(409);
+    });
+  });
+
+  test('FR-69: refund approval is blocked while an initiated payout is unpaid', async () => {
+    await db.query(
+      `INSERT INTO seller_payouts
+         (order_id, seller_id, attempt, status, amount, currency, initiated_by)
+       VALUES ($1, $2, 1, 'initiated', '1.00', 'PKR', $3)`,
+      [scenario.orderId, fixture.userId, staff.first.id]
+    );
+    const requested = await createRequest();
+    const grant = await createGrant(staff.second, 'refund.decide');
+    await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'Second administrator approved this refund.',
+      stepUpGrant: grant,
+    }).expect(409);
+    const digest = crypto.createHash('sha256').update(grant).digest('hex');
+    const { rows } = await db.query(
+      'SELECT consumed_at FROM step_up_grants WHERE token_hash = $1',
+      [digest]
+    );
+    expect(rows[0].consumed_at).toBeNull();
   });
 
   test('FR-77a: orphan refund reconciliation does not enqueue a manual request before approval', async () => {
@@ -942,20 +1098,61 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       .expect('Cache-Control', 'private, no-store');
     const { total, itemPrice, deliveryFee } = response.body.refundableAmount;
     expect(total).toBe('1250.50');
-    expect((Number(itemPrice) + Number(deliveryFee)).toFixed(2)).toBe(total);
+    const minor = (value) => {
+      const [whole, fraction = ''] = value.split('.');
+      return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+    };
+    expect(minor(itemPrice) + minor(deliveryFee)).toBe(minor(total));
     expect({ itemPrice, deliveryFee }).toEqual({
-      itemPrice: '1008.55',
-      deliveryFee: '241.95',
+      itemPrice: '950.50',
+      deliveryFee: '300.00',
     });
   });
 
-  test('FR-69: a manual refund request is refused after payout has been released', async () => {
+  test('FR-69: a refund after payout is audited and returned for human handling', async () => {
     await db.query(
       `INSERT INTO payout_holds (order_id, hold_started_at, state, released_at)
        VALUES ($1, now() - INTERVAL '1 day', 'released', now())`,
       [scenario.orderId]
     );
-    expect((await createRequest()).status).toBe(409);
+    await db.query(
+      `INSERT INTO seller_payouts
+         (order_id, seller_id, attempt, status, amount, currency, initiated_by,
+          method, transfer_reference, paid_on, paid_by, paid_at)
+       VALUES ($1, $2, 1, 'paid', '100.00', 'PKR', $3,
+               'bank', 'REFUND-AFTER-PAYOUT-TEST', CURRENT_DATE, $3, now())`,
+      [scenario.orderId, fixture.userId, staff.first.id]
+    );
+    await db.query(
+      `INSERT INTO ledger_entries
+         (order_id, payment_id, currency, amount, entry_type, idempotency_key)
+       VALUES ($1, $2, 'PKR', '-100.00', 'seller_payout_manual', $3)`,
+      [scenario.orderId, scenario.paymentId, `seller_payout_manual:${scenario.orderId}`]
+    );
+    const requested = await createRequest();
+    const response = await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'Second administrator approved this refund.',
+      stepUpGrant: await createGrant(staff.second, 'refund.decide'),
+    }).expect(200);
+    expect(response.body).toMatchObject({ refundAfterPayout: true });
+    const { rows } = await db.query(
+      `SELECT action, actor_id, metadata
+       FROM money_audit_events
+       WHERE order_id = $1 AND action = 'refund_after_payout'`,
+      [scenario.orderId]
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      actor_id: staff.second.id,
+      metadata: { amount: '1550.50' },
+    });
+    const { rows: payoutLedgerRows } = await db.query(
+      `SELECT count(*)::int AS count
+       FROM ledger_entries
+       WHERE order_id = $1 AND entry_type = 'seller_payout_manual'`,
+      [scenario.orderId]
+    );
+    expect(payoutLedgerRows[0].count).toBe(1);
   });
 
   test('FR-65, FR-69: payout release is blocked while a manual refund request is open', async () => {

@@ -10,13 +10,12 @@
  * - disputes.service.js reads 'complaint_window_days' (FR-43)
  * - payout.service.js reads 'payout_hold_days' (FR-45c)
  * This file does NOT require those modules back — to avoid a circular
- * require, cross-module coordination for the FR-50a guard below is done by
- * having the CALLER (payout.service.js) pass in resolutionAmountToBuyer
- * explicitly, rather than this file reaching into the `disputes` table.
+ * require, payout.service.js passes the resolved refund amount explicitly
+ * rather than this file reaching into the `disputes` table.
  */
 
 const db = require('../db.service');
-const { NotFoundError, ValidationError, NotYetSpecifiedError } = require('../lib/errors');
+const { NotFoundError, ValidationError } = require('../lib/errors');
 
 // ---- FR-50: generic settings accessor (used across modules) ----
 
@@ -88,13 +87,16 @@ async function getSellerOrderSettlements(orderIds) {
 
 /** FR-46, FR-46a: single global % (admin-adjustable), applied to item price ONLY — delivery fee excluded. */
 async function calculateCommission(itemPrice) {
-  const percent = Number(await getSetting('commission_percent'));
-  const commissionAmount = Number(itemPrice) * (percent / 100);
-  return { percent, commissionAmount };
+  const percent = await getSetting('commission_percent');
+  const amounts = calculateReservationSettlement(itemPrice, percent);
+  return { percent, commissionAmount: amounts.commissionAmount };
 }
 
 function parseDecimalInput(value, fieldName) {
-  const str = typeof value === 'number' ? value.toFixed(2) : String(value ?? '');
+  if (typeof value !== 'string') {
+    throw new ValidationError(`${fieldName} must be a non-negative decimal string with at most two decimal places.`);
+  }
+  const str = value;
   if (!/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(str)) {
     throw new ValidationError(`${fieldName} must be a non-negative decimal with at most two decimal places.`);
   }
@@ -122,7 +124,7 @@ function calculateReservationSettlement(itemPrice, commissionPercent, refundedIt
 
   const itemPriceMinor = decimalToMinorUnits(itemPrice, 'itemPrice');
 
-  const percentStr = typeof commissionPercent === 'number' ? String(commissionPercent) : commissionPercent;
+  const percentStr = commissionPercent;
   if (typeof percentStr !== 'string' ||
       !/^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(percentStr)) {
     throw new ValidationError('commissionPercent must be a decimal string from 0 to 100.');
@@ -212,34 +214,33 @@ async function recordReservationSettlement(client, orderId, adminId, amounts) {
  * the hold window has passed (or admin force-released) with no unresolved dispute.
  */
 async function calculateSettlement(orderId, { agreedItemPrice, resolutionAmountToBuyer } = {}) {
-  const itemPrice = Number(agreedItemPrice);
-  const refundedItemAmount = resolutionAmountToBuyer !== undefined && resolutionAmountToBuyer !== null
-    ? Number(resolutionAmountToBuyer)
-    : 0;
-
-  if (refundedItemAmount > itemPrice) {
-    throw new ValidationError('refunds above the item price are rejected');
-  }
-
-  if (refundedItemAmount === itemPrice && itemPrice > 0) {
-    return null;
-  }
-
-  const { percent } = await calculateCommission(agreedItemPrice);
-  const receivedByPlatformBase = itemPrice - refundedItemAmount;
-  const commissionAmount = Math.round(receivedByPlatformBase * percent) / 100;
-  const sellerNetPayout = receivedByPlatformBase - commissionAmount;
+  const percent = await getSetting('commission_percent');
+  const amounts = calculateReservationSettlement(
+    agreedItemPrice,
+    percent,
+    resolutionAmountToBuyer === undefined || resolutionAmountToBuyer === null
+      ? '0.00'
+      : resolutionAmountToBuyer
+  );
+  if (!amounts) return null;
 
   const { rows } = await db.query(
-    `INSERT INTO settlements (order_id, commission_percent, commission_amount, seller_net_payout, refunded_item_amount)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO settlements
+       (order_id, commission_percent, commission_amount, seller_net_payout, refunded_item_amount)
+     VALUES ($1, $2::numeric, $3::numeric, $4::numeric, $5::numeric)
      ON CONFLICT (order_id) DO UPDATE
        SET commission_percent = EXCLUDED.commission_percent,
            commission_amount = EXCLUDED.commission_amount,
            seller_net_payout = EXCLUDED.seller_net_payout,
            refunded_item_amount = EXCLUDED.refunded_item_amount
      RETURNING *`,
-    [orderId, percent, commissionAmount, sellerNetPayout, refundedItemAmount]
+    [
+      orderId,
+      amounts.commissionPercent,
+      amounts.commissionAmount,
+      amounts.sellerNetAmount,
+      amounts.refundedItemAmount,
+    ]
   );
   return rows[0];
 }

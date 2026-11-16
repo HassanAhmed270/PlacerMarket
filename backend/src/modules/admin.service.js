@@ -26,6 +26,7 @@ const delivery = require('./delivery.service');
 const settlement = require('./settlement.service');
 const payout = require('./payout.service');
 const escrowPayments = require('./escrowPayments.service');
+const sellerPayouts = require('./sellerPayouts.service');
 const { ValidationError } = require('../lib/errors');
 
 // ---- FR-52: users ----
@@ -79,15 +80,14 @@ async function getManualRefund(refundId, actorId) {
 
 /** FR-69, SEC-39: create a step-up-protected manual refund request. */
 async function requestManualRefund(orderId, actorId, sessionId, input) {
-  return escrowPayments.requestManualRefund(orderId, actorId, sessionId, input, {
-    isOrderPayoutReleased: payout.isOrderPayoutReleased,
-  });
+  return escrowPayments.requestManualRefund(orderId, actorId, sessionId, input);
 }
 
 /** FR-69, SEC-39: decide a step-up-protected manual refund request. */
 async function decideManualRefund(refundId, actorId, sessionId, input) {
   return escrowPayments.decideManualRefund(refundId, actorId, sessionId, input, {
     isOrderPayoutReleased: payout.isOrderPayoutReleased,
+    getOrderPayoutStatus: sellerPayouts.getOrderPayoutStatus,
   });
 }
 

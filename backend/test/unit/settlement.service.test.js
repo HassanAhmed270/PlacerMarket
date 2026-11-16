@@ -8,9 +8,8 @@ describe('settlement.service', () => {
 
   test('FR-46, FR-46a: calculateCommission applies the global % to item price only', async () => {
     db.query.mockResolvedValueOnce({ rows: [{ value: '5' }] }); // commission_percent setting
-    const { percent, commissionAmount } = await settlement.calculateCommission(5000);
-    expect(percent).toBe(5);
-    expect(commissionAmount).toBe(250);
+    const result = await settlement.calculateCommission('5000.00');
+    expect(result).toEqual({ percent: '5', commissionAmount: '250.00' });
   });
 
   test('FR-47: reservation settlement computes exact decimal-string amounts from item price only', () => {
@@ -26,6 +25,11 @@ describe('settlement.service', () => {
       sellerNetAmount: '0.05',
       refundedItemAmount: '0.00',
     });
+  });
+
+  test('FR-47: monetary inputs reject JavaScript numbers', () => {
+    expect(() => settlement.calculateReservationSettlement(1250.5, '5.00'))
+      .toThrow(ValidationError);
   });
 
   test('FR-46, FR-46a: commission is calculated on the item price only at 5%', () => {
@@ -80,8 +84,12 @@ describe('settlement.service', () => {
       rows: [{ order_id: 'order-1', commission_percent: 5, commission_amount: 40, seller_net_payout: 760, refunded_item_amount: 200 }],
     });
 
-    const record = await settlement.calculateSettlement('order-1', { agreedItemPrice: 1000, resolutionAmountToBuyer: 200 });
+    const record = await settlement.calculateSettlement('order-1', {
+      agreedItemPrice: '1000.00',
+      resolutionAmountToBuyer: '200.00',
+    });
     expect(record.seller_net_payout).toBe(760);
+    expect(db.query.mock.calls[1][1]).toEqual(['order-1', '5', '40.00', '760.00', '200.00']);
   });
 
   test('FR-50a: calculateSettlement proceeds normally when resolutionAmountToBuyer is undefined (no dispute)', async () => {
@@ -90,8 +98,9 @@ describe('settlement.service', () => {
       rows: [{ order_id: 'order-1', commission_percent: 5, commission_amount: 250, seller_net_payout: 4750, refunded_item_amount: 0 }],
     }); // INSERT settlements result
 
-    const record = await settlement.calculateSettlement('order-1', { agreedItemPrice: 5000 });
+    const record = await settlement.calculateSettlement('order-1', { agreedItemPrice: '5000.00' });
     expect(record.seller_net_payout).toBe(4750);
+    expect(db.query.mock.calls[1][1]).toEqual(['order-1', '5', '250.00', '4750.00', '0.00']);
   });
 
   test('FR-50: transaction setting reads use the caller client and fail for a missing key', async () => {

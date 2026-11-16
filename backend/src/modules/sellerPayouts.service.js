@@ -186,7 +186,12 @@ async function lockOrderAndPayoutContext(client, payoutId) {
 
 /** FR-48: insert attempt 1 as initiated payout for an order. */
 async function createInitiatedPayout(client, { orderId, sellerId, amount, currency, initiatedBy }) {
-  if (!amount || Number(amount) <= 0) return null;
+  if (amount === null || amount === undefined || amount === '') return null;
+  if (typeof amount !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(amount)) {
+    throw new ValidationError('Payout amount must be a non-negative decimal string with at most two decimal places.');
+  }
+  const [whole, fraction = ''] = amount.split('.');
+  if (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0')) === 0n) return null;
   const { rows } = await client.query(
     `INSERT INTO seller_payouts
        (order_id, seller_id, attempt, status, amount, currency, initiated_by)
@@ -196,6 +201,19 @@ async function createInitiatedPayout(client, { orderId, sellerId, amount, curren
     [orderId, sellerId, amount, currency, initiatedBy]
   );
   return rows[0];
+}
+
+/** FR-69: return an order's active or paid payout state inside the caller transaction. */
+async function getOrderPayoutStatus(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT status
+     FROM seller_payouts
+     WHERE order_id = $1 AND status IN ('initiated', 'paid')
+     ORDER BY CASE status WHEN 'paid' THEN 0 ELSE 1 END, attempt DESC
+     LIMIT 1`,
+    [orderId]
+  );
+  return rows[0]?.status || null;
 }
 
 /** FR-48, FR-49: record an initiated payout as paid with transfer details and cash ledger entry. */
@@ -696,6 +714,7 @@ async function exportSellerPayoutsCsv(adminId, sessionId, filters) {
 
 module.exports = {
   createInitiatedPayout,
+  getOrderPayoutStatus,
   getSellerOrderPayoutSummaries,
   markPaid,
   approvePayout,

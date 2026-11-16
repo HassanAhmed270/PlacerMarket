@@ -286,9 +286,11 @@ purpose so the schema works whichever way this eventually gets decided.
   refund-job enqueue, and safe Admin queue/detail reads. The reads are exposed
   through the Admin-only `refund.view` permission and do not include provider
   identifiers. `users.service.js` consumes the request/decision step-up
-  grant in that transaction. `payout.service.js` owns the payout-state lookup;
-  its manual release path checks the escrow owner's open-refund guard after
-  locking the payment row. This guarded transactional check blocks payout while
+  grant in that transaction. `payout.service.js` owns the legacy payout-state
+  lookup and its manual release path checks the escrow owner's open-refund
+  guard after locking the payment row. `sellerPayouts.service.js` supplies the
+  transaction-aware initiated/paid status used to block refunds against unpaid
+  payouts and audit refunds after payment. The escrow guard blocks payout while
   a manual request is requested, approved, pending or retryable-failed; it does
   not use an order exception. Orphan-job reconciliation retries approved manual
   refunds only; it never enqueues a still-requested manual refund. A refunds

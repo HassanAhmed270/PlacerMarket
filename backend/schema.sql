@@ -2082,3 +2082,21 @@ ALTER TABLE step_up_grants
       'refund.request', 'refund.decide', 'payout.record', 'payout.approve',
       'payout.export'
     ));
+
+-- Migration: 032_partial_refunds.sql
+ALTER TABLE refunds
+  ADD COLUMN item_amount NUMERIC(12,2),
+  ADD COLUMN delivery_fee_amount NUMERIC(12,2),
+  ADD COLUMN seller_at_fault BOOLEAN NOT NULL DEFAULT FALSE,
+  ADD COLUMN decided_by UUID REFERENCES users(id),
+  ADD CONSTRAINT refunds_split_amounts_check
+    CHECK (
+      (item_amount IS NULL AND delivery_fee_amount IS NULL)
+      OR (
+        item_amount IS NOT NULL
+        AND delivery_fee_amount IS NOT NULL
+        AND item_amount >= 0
+        AND delivery_fee_amount >= 0
+        AND item_amount + delivery_fee_amount = amount
+      )
+    );

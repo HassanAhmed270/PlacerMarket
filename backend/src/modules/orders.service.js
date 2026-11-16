@@ -228,7 +228,7 @@ async function cancelExpiredReservationOrders(client, reservationIds) {
 async function lockOrderForRefund(client, orderId) {
   const { rows } = await client.query(
     `SELECT id, listing_id, buyer_id, reservation_id, agreed_item_price,
-            delivery_fee, status
+            delivery_fee, status, delivered_at
      FROM orders
      WHERE id = $1
      FOR UPDATE`,
@@ -267,7 +267,8 @@ async function lockReservationOrderForHandover(client, orderId) {
 /** FR-65: lock a reservation-backed order after its listing and buyer. */
 async function lockReservationOrderForPayout(client, orderId) {
   const { rows } = await client.query(
-    `SELECT id, listing_id, reservation_id, buyer_id, seller_id, status, delivered_at
+    `SELECT id, listing_id, reservation_id, buyer_id, seller_id, status, delivered_at,
+           agreed_item_price, delivery_fee
      FROM orders
      WHERE id = $1
      FOR UPDATE`,

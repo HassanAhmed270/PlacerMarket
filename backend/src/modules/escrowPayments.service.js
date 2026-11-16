@@ -41,6 +41,18 @@ const REFUND_ERROR_CODES = new Set([
   'unknown',
 ]);
 
+function moneyToMinorUnits(value, fieldName) {
+  if (typeof value !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(value)) {
+    throw new ValidationError(`${fieldName} must be a non-negative decimal string with at most two decimal places.`);
+  }
+  const [whole, fraction = ''] = value.split('.');
+  return BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+}
+
+function minorUnitsToMoney(value) {
+  return `${value / 100n}.${String(value % 100n).padStart(2, '0')}`;
+}
+
 function getRefundMaxAutoAttempts(env = process.env) {
   const raw = env.REFUND_MAX_AUTO_ATTEMPTS;
   const value = raw === undefined || raw === '' ? 6 : Number(raw);
@@ -282,7 +294,8 @@ async function lockRefundPaymentOrder(client, orderId, paymentId, refundId) {
 
   const { rows: refundRows } = await client.query(
     `SELECT id, order_id, payment_id, amount, currency, status, idempotency_key,
-            trigger, reason, approved_by, attempt_count, needs_attention_at
+            trigger, reason, approved_by, decided_by, item_amount::text,
+            delivery_fee_amount::text, seller_at_fault, attempt_count, needs_attention_at
      FROM refunds
      WHERE id = $1
      FOR UPDATE`,
@@ -333,6 +346,11 @@ async function lockManualRefundContext(client, orderId, expectedPaymentId) {
     : capturedPayments.length === 1 ? capturedPayments[0] : null;
   if (!payment || capturedPayments.length !== 1) {
     throw new ConflictError('The order must have exactly one captured payment.');
+  }
+  if (moneyToMinorUnits(String(order.agreed_item_price), 'itemPrice') +
+      moneyToMinorUnits(String(order.delivery_fee), 'deliveryFee') !==
+      moneyToMinorUnits(String(payment.amount), 'capturedAmount')) {
+    throw new ConflictError('Order item price and delivery fee do not match the captured total.');
   }
   return { order, payment };
 }
@@ -401,25 +419,39 @@ async function expireManualRefundRequests(client, orderId, paymentId, actorId, r
 
 async function getRefundableAmount(client, order, payment) {
   const { rows } = await client.query(
-    `WITH reserved AS (
-       SELECT COALESCE(SUM(amount) FILTER (
-                WHERE status = ANY($2::text[])
-              ), 0) AS amount
+    `WITH refunded AS (
+       SELECT COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[])), 0) AS total,
+              COALESCE(SUM(item_amount) FILTER (WHERE status = ANY($2::text[])), 0) AS item_amount,
+              COALESCE(SUM(delivery_fee_amount) FILTER (WHERE status = ANY($2::text[])), 0) AS delivery_fee_amount,
+              COALESCE(SUM(amount) FILTER (
+                WHERE status = ANY($2::text[]) AND item_amount IS NULL
+              ), 0) AS unallocated_amount
        FROM refunds
        WHERE payment_id = $1
-     ), balance AS (
-       SELECT GREATEST($3::numeric - amount, 0)::numeric(12,2) AS total
-       FROM reserved
      ), split AS (
-       SELECT total,
-              ROUND(total * $4::numeric / NULLIF($3::numeric, 0), 2)::numeric(12,2) AS item_price
-       FROM balance
+       SELECT GREATEST($3::numeric - total, 0)::numeric(12,2) AS total,
+              GREATEST(
+                $4::numeric - item_amount -
+                  LEAST(unallocated_amount, GREATEST($4::numeric - item_amount, 0)),
+                0
+              )::numeric(12,2) AS item_price,
+              GREATEST(
+                $5::numeric - delivery_fee_amount -
+                  GREATEST(unallocated_amount - GREATEST($4::numeric - item_amount, 0), 0),
+                0
+              )::numeric(12,2) AS delivery_fee
+       FROM refunded
      )
-     SELECT total::text AS total,
-            item_price::text AS item_price,
-            (total - item_price)::numeric(12,2)::text AS delivery_fee
+     SELECT total::text AS total, item_price::text AS item_price,
+            delivery_fee::text AS delivery_fee
      FROM split`,
-    [payment.id, MANUAL_REFUND_RESERVED_STATUSES, payment.amount, order.agreed_item_price]
+    [
+      payment.id,
+      MANUAL_REFUND_RESERVED_STATUSES,
+      payment.amount,
+      order.agreed_item_price,
+      order.delivery_fee,
+    ]
   );
   return rows[0];
 }
@@ -537,17 +569,12 @@ async function getAdminManualRefund(refundId, actorId) {
   return { ...refund, requestedByMe: refund.requestedBy === actorId };
 }
 
-/** FR-69, SEC-39: create a full-balance manual request with a one-use request grant. */
-async function requestManualRefund(orderId, actorId, sessionId, input, { isOrderPayoutReleased }) {
+/** FR-69, SEC-39: create a full or partial manual request with a one-use request grant. */
+async function requestManualRefund(orderId, actorId, sessionId, input) {
   const reason = normalizeManualRefundNote(input?.reason);
-  if (typeof isOrderPayoutReleased !== 'function') throw new TypeError('Payout-state owner is required.');
   const result = await db.withTransaction(async (client) => {
     const { order, payment } = await lockManualRefundContext(client, orderId);
     const expiredRefunds = await expireManualRefundRequests(client, orderId, payment.id, actorId);
-    if (await isOrderPayoutReleased(client, orderId)) {
-      throw new ConflictError('A refund cannot be requested after payout release.');
-    }
-
     const { rows: openRows } = await client.query(
       `SELECT id
        FROM refunds
@@ -559,7 +586,14 @@ async function requestManualRefund(orderId, actorId, sessionId, input, { isOrder
     if (openRows[0]) throw new ConflictError('An open manual refund request already exists.');
 
     const balance = await getRefundableAmount(client, order, payment);
-    if (Number(balance.total) <= 0) throw new ConflictError('No refundable balance remains.');
+    const remaining = moneyToMinorUnits(balance.total, 'refundableAmount');
+    if (remaining === 0n) throw new ConflictError('No refundable balance remains.');
+    const amount = input.amount === undefined
+      ? balance.total
+      : minorUnitsToMoney(moneyToMinorUnits(input.amount, 'amount'));
+    const amountMinor = moneyToMinorUnits(amount, 'amount');
+    if (amountMinor === 0n) throw new ValidationError('amount must be greater than zero.');
+    if (amountMinor > remaining) throw new ConflictError('Refund amount exceeds the remaining refundable balance.');
 
     await users.consumeStepUpGrantWithClient(client, actorId, sessionId, 'refund.request', input.stepUpGrant);
     const refundId = randomUUID();
@@ -569,7 +603,7 @@ async function requestManualRefund(orderId, actorId, sessionId, input, { isOrder
          (id, payment_id, order_id, trigger, amount, currency, status, idempotency_key,
           requested_by, reason)
        VALUES ($1, $2, $3, 'manual_admin', $4::numeric, $5, 'requested', $6, $7, $8)`,
-      [refundId, payment.id, orderId, balance.total, payment.currency, idempotencyKey, actorId, reason]
+      [refundId, payment.id, orderId, amount, payment.currency, idempotencyKey, actorId, reason]
     );
     await moneyAudit.recordMoneyAuditEvent(client, {
       actorId,
@@ -579,11 +613,11 @@ async function requestManualRefund(orderId, actorId, sessionId, input, { isOrder
       refundId,
       requestedBy: actorId,
       reason,
-      metadata: { trigger: 'manual_admin' },
+      metadata: { trigger: 'manual_admin', amount },
     });
     return {
       expiredRefunds,
-      response: { refundId, status: 'requested', amount: balance.total, currency: payment.currency },
+      response: { refundId, status: 'requested', amount, currency: payment.currency },
     };
   });
   notifyRefundStatusChanges(result.expiredRefunds);
@@ -591,7 +625,10 @@ async function requestManualRefund(orderId, actorId, sessionId, input, { isOrder
 }
 
 /** FR-69, SEC-39: approve or reject a pending manual request with a separate Admin grant. */
-async function decideManualRefund(refundId, actorId, sessionId, input, { isOrderPayoutReleased }) {
+async function decideManualRefund(refundId, actorId, sessionId, input, {
+  isOrderPayoutReleased,
+  getOrderPayoutStatus,
+}) {
   if (typeof refundId !== 'string' || !UUID.test(refundId)) {
     throw new ValidationError('refundId must be a UUID.');
   }
@@ -613,7 +650,8 @@ async function decideManualRefund(refundId, actorId, sessionId, input, { isOrder
     const { order, payment } = await lockManualRefundContext(client, initial.order_id, initial.payment_id);
     const expiredRefunds = await expireManualRefundRequests(client, order.id, payment.id, actorId, refundId);
     const { rows: refundRows } = await client.query(
-      `SELECT id, order_id, payment_id, requested_by, status
+      `SELECT id, order_id, payment_id, requested_by, status, amount::text,
+              seller_at_fault, item_amount::text, delivery_fee_amount::text
        FROM refunds
        WHERE id = $1 AND trigger = 'manual_admin'
        FOR UPDATE`,
@@ -628,8 +666,59 @@ async function decideManualRefund(refundId, actorId, sessionId, input, { isOrder
     if (refund.requested_by === actorId) {
       throw new ForbiddenError('The requester cannot decide their own refund.');
     }
-    if (input.decision === 'approved' && await isOrderPayoutReleased(client, order.id)) {
-      throw new ConflictError('A refund cannot be approved after payout release.');
+    let payoutStatus = null;
+    let paidAfterPayout = false;
+    let itemAmount = null;
+    let deliveryFeeAmount = null;
+    const sellerAtFault = input.sellerAtFault === true;
+    if (input.sellerAtFault !== undefined && typeof input.sellerAtFault !== 'boolean') {
+      throw new ValidationError('sellerAtFault must be a boolean.');
+    }
+    if (input.decision === 'approved') {
+      if (typeof getOrderPayoutStatus !== 'function') throw new TypeError('Payout-state owner is required.');
+      payoutStatus = await getOrderPayoutStatus(client, order.id);
+      if (payoutStatus === 'initiated') {
+        throw new ConflictError('Refund approval is blocked while an initiated payout remains unpaid.');
+      }
+
+      const { rows: reservedRows } = await client.query(
+        `SELECT COALESCE(SUM(amount), 0)::text AS reserved_amount
+         FROM refunds
+         WHERE payment_id = $1 AND status = ANY($2::text[]) AND id <> $3`,
+        [payment.id, MANUAL_REFUND_RESERVED_STATUSES, refundId]
+      );
+      if (moneyToMinorUnits(reservedRows[0].reserved_amount, 'reservedAmount') +
+          moneyToMinorUnits(refund.amount, 'amount') >
+          moneyToMinorUnits(String(payment.amount), 'capturedAmount')) {
+        throw new ConflictError('Refund amount exceeds the remaining refundable balance.');
+      }
+
+      const { rows: priorRefundRows } = await client.query(
+        `SELECT COALESCE(SUM(COALESCE(item_amount, amount)), 0)::text AS refunded_item_amount,
+                COALESCE(SUM(COALESCE(delivery_fee_amount, 0)), 0)::text AS refunded_delivery_fee
+         FROM refunds
+         WHERE order_id = $1 AND status = ANY($3::text[])
+           AND id <> $2`,
+        [order.id, refundId, MANUAL_REFUND_RESERVED_STATUSES]
+      );
+      const itemPrice = moneyToMinorUnits(String(order.agreed_item_price), 'itemPrice');
+      const deliveryFee = moneyToMinorUnits(String(order.delivery_fee), 'deliveryFee');
+      const alreadyRefundedItem = moneyToMinorUnits(priorRefundRows[0].refunded_item_amount, 'refundedItemAmount');
+      const alreadyRefundedDelivery = moneyToMinorUnits(priorRefundRows[0].refunded_delivery_fee, 'refundedDeliveryFee');
+      const itemRemaining = itemPrice > alreadyRefundedItem ? itemPrice - alreadyRefundedItem : 0n;
+      const deliveryRemaining = deliveryFee > alreadyRefundedDelivery ? deliveryFee - alreadyRefundedDelivery : 0n;
+      const amountMinor = moneyToMinorUnits(refund.amount, 'amount');
+      const deliveryAllowed = sellerAtFault || !order.delivered_at;
+      itemAmount = amountMinor < itemRemaining ? amountMinor : itemRemaining;
+      deliveryFeeAmount = amountMinor - itemAmount;
+      if (deliveryFeeAmount > 0n &&
+          (!deliveryAllowed || deliveryFeeAmount !== deliveryRemaining)) {
+        throw new ConflictError('The delivery fee can only be refunded in full when the seller is at fault or the item was never delivered.');
+      }
+      itemAmount = minorUnitsToMoney(itemAmount);
+      deliveryFeeAmount = minorUnitsToMoney(deliveryFeeAmount);
+      paidAfterPayout = payoutStatus === 'paid' ||
+        await isOrderPayoutReleased(client, order.id);
     }
 
     await users.consumeStepUpGrantWithClient(client, actorId, sessionId, 'refund.decide', input.stepUpGrant);
@@ -640,9 +729,13 @@ async function decideManualRefund(refundId, actorId, sessionId, input, { isOrder
            approved_at = CASE WHEN $2 = 'approved' THEN now() ELSE approved_at END,
            decided_at = now(),
            decision_note = $4,
+           item_amount = CASE WHEN $2 = 'approved' THEN $5::numeric ELSE item_amount END,
+           delivery_fee_amount = CASE WHEN $2 = 'approved' THEN $6::numeric ELSE delivery_fee_amount END,
+           seller_at_fault = CASE WHEN $2 = 'approved' THEN $7 ELSE seller_at_fault END,
+           decided_by = $3,
            updated_at = now()
        WHERE id = $1 AND status = 'requested'`,
-      [refundId, input.decision, actorId, decisionNote]
+      [refundId, input.decision, actorId, decisionNote, itemAmount, deliveryFeeAmount, sellerAtFault]
     );
     if (input.decision === 'approved') await enqueueRefundJob(client, refundId);
     await moneyAudit.recordMoneyAuditEvent(client, {
@@ -654,14 +747,47 @@ async function decideManualRefund(refundId, actorId, sessionId, input, { isOrder
       requestedBy: refund.requested_by,
       approvedBy: actorId,
       reason: decisionNote,
-      metadata: { trigger: 'manual_admin', decision: input.decision },
+      metadata: {
+        trigger: 'manual_admin',
+        decision: input.decision,
+        ...(input.decision === 'approved' ? {
+          amount: refund.amount,
+          itemAmount,
+          deliveryFeeAmount,
+          sellerAtFault,
+          paidAfterPayout,
+        } : {}),
+      },
     });
+    if (input.decision === 'approved' && paidAfterPayout) {
+      await moneyAudit.recordMoneyAuditEvent(client, {
+        actorId,
+        action: 'refund_after_payout',
+        orderId: order.id,
+        paymentId: payment.id,
+        refundId,
+        approvedBy: actorId,
+        reason: decisionNote,
+        metadata: { amount: refund.amount, itemAmount, deliveryFeeAmount, sellerAtFault },
+      });
+    }
     return {
       expiredRefunds,
       refund: input.decision === 'rejected'
         ? { id: refundId, order_id: order.id, status: 'rejected' }
         : null,
-      response: { refundId, status: input.decision, decision: input.decision },
+      response: {
+        refundId,
+        status: input.decision,
+        decision: input.decision,
+        ...(input.decision === 'approved' ? {
+          amount: refund.amount,
+          itemAmount,
+          deliveryFeeAmount,
+          sellerAtFault,
+          refundAfterPayout: paidAfterPayout,
+        } : {}),
+      },
     };
   });
 
@@ -978,9 +1104,15 @@ async function processRefundJob({ refundId, gateway } = {}) {
       orderId: order.id,
       paymentId: payment.id,
       refundId: refund.id,
+      approvedBy: refund.decided_by || refund.approved_by,
       reason: refund.reason,
       metadata: {
         trigger: refund.trigger,
+        amount: String(refund.amount),
+        itemAmount: refund.item_amount,
+        deliveryFeeAmount: refund.delivery_fee_amount,
+        sellerAtFault: refund.seller_at_fault,
+        decidedBy: refund.decided_by || refund.approved_by,
         providerRefundRef: gatewayResult.providerRefundRef,
       },
     });

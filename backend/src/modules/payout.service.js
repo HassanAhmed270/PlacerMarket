@@ -412,7 +412,7 @@ async function releaseReservationPayout(orderId, adminId, input) {
 
     let payoutRow = null;
     let heldFundsRow = null;
-    if (amounts && Number(amounts.sellerNetAmount) > 0) {
+    if (amounts && amounts.sellerNetAmount !== '0.00') {
       if (await users.isSellerIdVerifiedWithClient(client, order.seller_id)) {
         payoutRow = await sellerPayouts.createInitiatedPayout(client, {
           orderId,
