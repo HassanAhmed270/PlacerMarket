@@ -1109,7 +1109,7 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
     });
   });
 
-  test('FR-69: a refund after payout is audited and returned for human handling', async () => {
+  test('FR-69: a refund requested and approved after payout does not claw back ledger entries and is audited', async () => {
     await db.query(
       `INSERT INTO payout_holds (order_id, hold_started_at, state, released_at)
        VALUES ($1, now() - INTERVAL '1 day', 'released', now())`,
@@ -1129,6 +1129,13 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
        VALUES ($1, $2, 'PKR', '-100.00', 'seller_payout_manual', $3)`,
       [scenario.orderId, scenario.paymentId, `seller_payout_manual:${scenario.orderId}`]
     );
+    const { rows: ledgerBefore } = await db.query(
+      `SELECT id, entry_type, amount::text AS amount
+       FROM ledger_entries
+       WHERE order_id = $1
+       ORDER BY id`,
+      [scenario.orderId]
+    );
     const requested = await createRequest();
     const response = await sendDecision(staff.second, requested.body.refundId, 'approve', {
       reason: 'Second administrator approved this refund.',
@@ -1146,6 +1153,14 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
       actor_id: staff.second.id,
       metadata: { amount: '1550.50' },
     });
+    const { rows: ledgerAfter } = await db.query(
+      `SELECT id, entry_type, amount::text AS amount
+       FROM ledger_entries
+       WHERE order_id = $1
+       ORDER BY id`,
+      [scenario.orderId]
+    );
+    expect(ledgerAfter).toEqual(ledgerBefore);
     const { rows: payoutLedgerRows } = await db.query(
       `SELECT count(*)::int AS count
        FROM ledger_entries

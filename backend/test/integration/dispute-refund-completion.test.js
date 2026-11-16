@@ -169,7 +169,7 @@ async function requestRefund(target, admin = admins.first, useAuthenticator = fa
     });
 }
 
-async function approveRefund(refundId, admin = admins.second, useAuthenticator = false) {
+async function approveRefund(refundId, admin = admins.second, useAuthenticator = false, sellerAtFault = false) {
   const stepUpGrant = useAuthenticator
     ? (await createStepUpGrant(admin, 'refund.decide')).grant
     : await createStoredStepUpGrant(admin, 'refund.decide');
@@ -178,6 +178,7 @@ async function approveRefund(refundId, admin = admins.second, useAuthenticator =
     .set('Authorization', staffHeader(admin))
     .send({
       reason: 'Second administrator approved the full buyer refund.',
+      ...(sellerAtFault ? { sellerAtFault: true } : {}),
       stepUpGrant,
     });
 }
@@ -228,7 +229,7 @@ async function exceptionResolutionAuditCount(target) {
 async function completeManualRefund(target, useAuthenticator = false) {
   const requested = await requestRefund(target, admins.first, useAuthenticator);
   expect(requested.status).toBe(201);
-  const approved = await approveRefund(requested.body.refundId, admins.second, useAuthenticator);
+  const approved = await approveRefund(requested.body.refundId, admins.second, useAuthenticator, true);
   expect(approved.status).toBe(200);
   expect(approved.body.status).toBe('approved');
   const gateway = succeededGateway();

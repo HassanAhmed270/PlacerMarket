@@ -12,6 +12,19 @@ describe('settlement.service', () => {
     expect(result).toEqual({ percent: '5', commissionAmount: '250.00' });
   });
 
+  test('FR-46, FR-50a: legacy commission and settlement reject JavaScript number amounts', async () => {
+    db.query.mockResolvedValue({ rows: [{ value: '5' }] });
+    await expect(settlement.calculateCommission(5000)).rejects.toThrow(ValidationError);
+    await expect(settlement.calculateSettlement('order-1', {
+      agreedItemPrice: 1000,
+    })).rejects.toThrow(ValidationError);
+    await expect(settlement.calculateSettlement('order-1', {
+      agreedItemPrice: '1000.00',
+      resolutionAmountToBuyer: 200,
+    })).rejects.toThrow(ValidationError);
+    expect(db.query).toHaveBeenCalledTimes(3);
+  });
+
   test('FR-47: reservation settlement computes exact decimal-string amounts from item price only', () => {
     expect(settlement.calculateReservationSettlement('1250.50', '5.00')).toEqual({
       commissionPercent: '5.00',
