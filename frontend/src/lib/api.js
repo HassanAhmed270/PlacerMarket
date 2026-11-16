@@ -78,7 +78,25 @@ export function createApiClient({
     return result
   }
 
+  async function sendText(method, path, body, { authenticated = false } = {}) {
+    const headers = { Accept: 'text/csv, text/plain;q=0.9, application/json;q=0.8', 'Content-Type': 'application/json' }
+    if (authenticated && accessTokenInMemory) headers.Authorization = `Bearer ${accessTokenInMemory}`
+    const response = await authenticatedFetch(`${normalizedBaseUrl}/${path.replace(/^\/+/, '')}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }, authenticated)
+    const text = await response.text()
+    if (!response.ok) {
+      let payload = null
+      try { payload = text ? JSON.parse(text) : null } catch { /* Non-JSON error response. */ }
+      throw Object.assign(new ApiError(response.status), { payload })
+    }
+    return text
+  }
+
   const post = (path, body, options) => send('POST', path, body, options)
+  const postText = (path, body, options) => sendText('POST', path, body, options)
 
   async function refresh() {
     if (!refreshPromise) {
@@ -215,6 +233,17 @@ export function createApiClient({
     getAdminPayouts: () => get('admin/payouts', { authenticated: true }),
     setPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold`, { reason }, { authenticated: true }),
     clearPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold/clear`, { reason }, { authenticated: true }),
+    getAdminPayoutSettings: () => get('admin/payout-settings', { authenticated: true }),
+    updateAdminCommission: (percent) => send('PATCH', 'admin/fees/commission', { percent }, { authenticated: true }),
+    getAdminSellerPayouts: (filters = {}) => get(`admin/seller-payouts${queryString(filters)}`, { authenticated: true }),
+    getAdminSellerPayout: (id) => get(`admin/seller-payouts/${encodeURIComponent(id)}`, { authenticated: true }),
+    approveAdminSellerPayout: (id, input) => post(`admin/seller-payouts/${encodeURIComponent(id)}/approve`, input, { authenticated: true }),
+    markAdminSellerPayoutPaid: (id, input) => post(`admin/seller-payouts/${encodeURIComponent(id)}/paid`, input, { authenticated: true }),
+    markAdminSellerPayoutFailed: (id, input) => post(`admin/seller-payouts/${encodeURIComponent(id)}/failed`, input, { authenticated: true }),
+    retryAdminSellerPayout: (id, input) => post(`admin/seller-payouts/${encodeURIComponent(id)}/retry`, input, { authenticated: true }),
+    exportAdminSellerPayouts: (input) => postText('admin/seller-payouts/export', input, { authenticated: true }),
+    getAdminHeldFunds: (filters = {}) => get(`admin/held-funds${queryString(filters)}`, { authenticated: true }),
+    decideAdminHeldFunds: (id, input) => post(`admin/held-funds/${encodeURIComponent(id)}/decision`, input, { authenticated: true }),
     getAdminOrders: (filters = {}) => get(`admin/orders${queryString(filters)}`, { authenticated: true }),
     getAdminOrder: (id) => get(`admin/orders/${encodeURIComponent(id)}`, { authenticated: true }),
     getAdminManualRefunds: (filters = {}) => get(`admin/refunds${queryString(filters)}`, { authenticated: true }),

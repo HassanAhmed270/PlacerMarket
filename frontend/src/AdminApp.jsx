@@ -10,6 +10,10 @@ import AdminDeliveryCities from './AdminDeliveryCities.jsx'
 import AdminRefunds from './AdminRefunds.jsx'
 import AdminRefundRequest from './AdminRefundRequest.jsx'
 import AdminRefundDecision from './AdminRefundDecision.jsx'
+import AdminSellerPayouts from './AdminSellerPayouts.jsx'
+import AdminSellerPayoutDetail from './AdminSellerPayoutDetail.jsx'
+import AdminHeldFunds from './AdminHeldFunds.jsx'
+import AdminPayoutSettings from './AdminPayoutSettings.jsx'
 import './AdminWorkspace.css'
 
 function isAdminOrderAccessError(error) {
@@ -26,9 +30,28 @@ function refundIdFromPath(path) {
   return match && match[1] !== 'request' ? match[1] : ''
 }
 
+function sellerPayoutIdFromPath(path) {
+  const match = /^\/admin\/seller-payouts\/([^/]+)$/.exec(path)
+  return match ? match[1] : ''
+}
+
+function adminIdFromAccessToken(token) {
+  try {
+    const payload = token.split('.')[1]
+    if (!payload) return null
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/')
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')
+    const claims = JSON.parse(atob(padded))
+    return typeof claims.sub === 'string' ? claims.sub : null
+  } catch {
+    return null
+  }
+}
+
 export default function AdminApp({ path }) {
   const [sessionState, setSessionState] = useState('checking')
   const [sessionMessage, setSessionMessage] = useState('')
+  const [currentAdminId, setCurrentAdminId] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -37,6 +60,7 @@ export default function AdminApp({ path }) {
         const session = await api.refresh()
         if (!active) return
         api.setAccessToken(session.accessToken)
+        setCurrentAdminId(adminIdFromAccessToken(session.accessToken))
         await api.getAdminOrders({ limit: 1 })
         if (active) setSessionState('ready')
       } catch (error) {
@@ -50,11 +74,13 @@ export default function AdminApp({ path }) {
           }
           if (!active) return
           api.clearAccessToken()
+          setCurrentAdminId(null)
           setSessionState('signed-out')
           setSessionMessage(`This account cannot use the Admin area.${logoutMessage}`)
           return
         }
         api.clearAccessToken()
+        setCurrentAdminId(null)
         if (isAdminOrderAccessError(error)) {
           setSessionState('signed-out')
           setSessionMessage('Sign in with an Admin account to continue.')
@@ -70,6 +96,7 @@ export default function AdminApp({ path }) {
 
   async function acceptAuthenticatedToken(token) {
     api.setAccessToken(token)
+    setCurrentAdminId(adminIdFromAccessToken(token))
     try {
       await api.getAdminOrders({ limit: 1 })
       setSessionState('ready')
@@ -78,6 +105,7 @@ export default function AdminApp({ path }) {
     } catch (error) {
       if (!isAdminOrderAccessError(error)) {
         api.clearAccessToken()
+        setCurrentAdminId(null)
         throw error
       }
       let logoutMessage = ''
@@ -87,6 +115,7 @@ export default function AdminApp({ path }) {
         logoutMessage = ` Sign-out could not be completed: ${adminErrorMessage(logoutError)}`
       }
       api.clearAccessToken()
+      setCurrentAdminId(null)
       return {
         allowed: false,
         message: `This account cannot use the Admin area.${logoutMessage}`,
@@ -102,6 +131,7 @@ export default function AdminApp({ path }) {
       message = `Your local session was cleared, but server sign-out could not be confirmed: ${adminErrorMessage(error)}`
     }
     api.clearAccessToken()
+    setCurrentAdminId(null)
     setSessionState('signed-out')
     setSessionMessage(message)
   }
@@ -124,11 +154,16 @@ export default function AdminApp({ path }) {
 
   const orderId = orderIdFromPath(path)
   const refundId = refundIdFromPath(path)
+  const sellerPayoutId = sellerPayoutIdFromPath(path)
   let page
   if (orderId) page = <AdminOrders orderId={orderId} />
   else if (path === '/admin/refunds/request') page = <AdminRefundRequest />
   else if (refundId) page = <AdminRefundDecision refundId={refundId} />
   else if (path === '/admin/refunds') page = <AdminRefunds />
+  else if (sellerPayoutId) page = <AdminSellerPayoutDetail payoutId={sellerPayoutId} currentAdminId={currentAdminId} />
+  else if (path === '/admin/seller-payouts') page = <AdminSellerPayouts />
+  else if (path === '/admin/held-funds') page = <AdminHeldFunds />
+  else if (path === '/admin/payout-settings') page = <AdminPayoutSettings />
   else if (path === '/admin/exceptions') page = <AdminExceptions />
   else if (path === '/admin/disputes') page = <AdminDisputes />
   else if (path === '/admin/delivery-cities') page = <AdminDeliveryCities />

@@ -273,6 +273,105 @@ test('Admin APIs call the existing protected routes with their exact methods and
   assert.ok(calls.every(({ options }) => options.headers.Authorization?.startsWith('Bearer ')))
 })
 
+test('FR-48, FR-58, FR-65: payout Admin APIs use protected paths and keep step-up grants in JSON bodies', async () => {
+  const calls = []
+  const csv = 'payout_id,status,amount\r\npayout-1,paid,125.00\r\n'
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        text: async () => csv,
+      }
+    },
+  })
+  client.setAccessToken('short-lived-memory-token')
+  await client.getAdminPayoutSettings()
+  await client.getAdminSellerPayouts({ status: 'failed', limit: 20 })
+  await client.getAdminSellerPayout('payout-1')
+  await client.approveAdminSellerPayout('payout-1', { stepUpGrant: 'approve-grant' })
+  await client.markAdminSellerPayoutPaid('payout-1', {
+    method: 'bank',
+    transferReference: 'BANK-123',
+    paidOn: '2026-11-16',
+    note: 'Transfer recorded',
+    stepUpGrant: 'paid-grant',
+  })
+  await client.markAdminSellerPayoutFailed('payout-1', { reason: 'Transfer returned', stepUpGrant: 'failed-grant' })
+  await client.retryAdminSellerPayout('payout-1', { stepUpGrant: 'retry-grant' })
+  assert.equal(await client.exportAdminSellerPayouts({
+    status: 'paid',
+    from: '2026-11-01',
+    to: '2026-11-16',
+    stepUpGrant: 'export-grant',
+  }), csv)
+  await client.getAdminHeldFunds({ state: 'held', needsDecision: 'true', limit: 100 })
+  await client.decideAdminHeldFunds('held-1', {
+    decision: 'keep_held',
+    note: 'Identity review is pending.',
+    stepUpGrant: 'held-grant',
+  })
+  await client.updateAdminCommission('6.50')
+  client.clearAccessToken()
+
+  assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
+    ['https://api.example.test/api/admin/payout-settings', 'GET'],
+    ['https://api.example.test/api/admin/seller-payouts?status=failed&limit=20', 'GET'],
+    ['https://api.example.test/api/admin/seller-payouts/payout-1', 'GET'],
+    ['https://api.example.test/api/admin/seller-payouts/payout-1/approve', 'POST'],
+    ['https://api.example.test/api/admin/seller-payouts/payout-1/paid', 'POST'],
+    ['https://api.example.test/api/admin/seller-payouts/payout-1/failed', 'POST'],
+    ['https://api.example.test/api/admin/seller-payouts/payout-1/retry', 'POST'],
+    ['https://api.example.test/api/admin/seller-payouts/export', 'POST'],
+    ['https://api.example.test/api/admin/held-funds?state=held&needsDecision=true&limit=100', 'GET'],
+    ['https://api.example.test/api/admin/held-funds/held-1/decision', 'POST'],
+    ['https://api.example.test/api/admin/fees/commission', 'PATCH'],
+  ])
+  assert.deepEqual(JSON.parse(calls[3].options.body), { stepUpGrant: 'approve-grant' })
+  assert.deepEqual(JSON.parse(calls[4].options.body), {
+    method: 'bank',
+    transferReference: 'BANK-123',
+    paidOn: '2026-11-16',
+    note: 'Transfer recorded',
+    stepUpGrant: 'paid-grant',
+  })
+  assert.deepEqual(JSON.parse(calls[7].options.body), {
+    status: 'paid',
+    from: '2026-11-01',
+    to: '2026-11-16',
+    stepUpGrant: 'export-grant',
+  })
+  assert.deepEqual(JSON.parse(calls[9].options.body), {
+    decision: 'keep_held',
+    note: 'Identity review is pending.',
+    stepUpGrant: 'held-grant',
+  })
+  assert.deepEqual(JSON.parse(calls[10].options.body), { percent: '6.50' })
+  assert.ok(calls.every(({ options }) => options.headers.Authorization === 'Bearer short-lived-memory-token'))
+  assert.ok(calls.every(({ url }) => !url.includes('grant')))
+  assert.equal(calls[7].options.headers.Accept.includes('text/csv'), true)
+})
+
+test('FR-48: payout CSV errors preserve structured API messages', async () => {
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async () => ({
+      ok: false,
+      status: 409,
+      text: async () => JSON.stringify({ error: 'Export limit exceeded.' }),
+    }),
+  })
+
+  await assert.rejects(client.exportAdminSellerPayouts({ stepUpGrant: 'export-grant' }), (error) => {
+    assert.equal(error.status, 409)
+    assert.deepEqual(error.payload, { error: 'Export limit exceeded.' })
+    return true
+  })
+})
+
 test('FR-34: seller order APIs use authenticated reads and cursor query parameters', async () => {
   const calls = []
   const client = createApiClient({
