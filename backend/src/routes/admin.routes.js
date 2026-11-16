@@ -2,12 +2,13 @@ const { Router } = require('express');
 const admin = require('../modules/admin.service');
 const listingSearch = require('../modules/listingSearch.service');
 const payout = require('../modules/payout.service');
+const settlement = require('../modules/settlement.service');
 const sellerPayouts = require('../modules/sellerPayouts.service');
 const sellerHeldFunds = require('../modules/sellerHeldFunds.service');
 const reservations = require('../modules/reservations.service');
 const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
-const { ValidationError } = require('../lib/errors');
+const { ValidationError, NotFoundError } = require('../lib/errors');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 const deliveryRoutes = require('./delivery.routes');
 
@@ -191,6 +192,32 @@ router.post(
   limiters.adminOps,
   async (req, res) => {
     res.json(await payout.releaseReservationPayout(req.params.orderId, req.user.id, req.body)); // FR-65
+  }
+);
+
+router.get(
+  '/payout-settings',
+  noStoreOrderResponses,
+  requirePermission('payout.record'),
+  limiters.adminOps,
+  async (_req, res) => {
+    const values = {};
+    for (const [key, alias] of [
+      ['commission_percent', 'commissionPercent'],
+      ['payout_two_admin_threshold', 'payoutTwoAdminThreshold'],
+    ]) {
+      try {
+        values[alias] = await settlement.getSetting(key);
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+        values[alias] = null;
+      }
+    }
+    res.json({
+      commissionPercent: values.commissionPercent,
+      payoutTwoAdminThreshold: values.payoutTwoAdminThreshold,
+      currency: 'PKR',
+    });
   }
 );
 

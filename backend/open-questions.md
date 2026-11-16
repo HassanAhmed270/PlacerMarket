@@ -14,6 +14,7 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 
 ### Needed by Stage P5-S2c
 - 2026-11-15 · FR-65 · Forfeiture of long-held unverified seller funds is undecided; the default is no forfeiture, and no automatic refund to buyers or automatic release is allowed. Resolve before any forfeiture workflow is designed. P7, P10, and P3 remain open.
+- 2026-11-16 · D1 · Commission change has no step-up grant; hardening candidate. The current UI must not add one without a product decision.
 
 ### Needed by Phase 0a follow-up / Phase 1
 

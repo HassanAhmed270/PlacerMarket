@@ -52,6 +52,38 @@ async function setSetting(key, value, adminId) {
   return rows[0];
 }
 
+/** FR-49: return settlement snapshots for each seller order in a single pass. */
+async function getSellerOrderSettlements(orderIds) {
+  if (!Array.isArray(orderIds)) {
+    throw new ValidationError('orderIds must be an array of UUIDs.');
+  }
+  if (orderIds.length === 0) return [];
+  if (orderIds.length > 50) {
+    throw new ValidationError('orderIds must contain at most 50 UUIDs.');
+  }
+  for (const orderId of orderIds) {
+    if (typeof orderId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) {
+      throw new ValidationError('Each orderId must be a valid UUID.');
+    }
+  }
+
+  const { rows } = await db.read(
+    `SELECT order_id, commission_percent::text AS commission_percent,
+            commission_amount::text AS commission_amount,
+            seller_net_payout::text AS seller_net_amount
+     FROM settlements
+     WHERE order_id = ANY($1::uuid[])`,
+    [orderIds]
+  );
+
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    commissionPercent: row.commission_percent,
+    commissionAmount: row.commission_amount,
+    sellerNetAmount: row.seller_net_amount,
+  }));
+}
+
 // ---- FR-46, FR-46a: commission ----
 
 /** FR-46, FR-46a: single global % (admin-adjustable), applied to item price ONLY — delivery fee excluded. */
@@ -248,6 +280,7 @@ module.exports = {
   getSetting,
   getSettingsForTransaction,
   setSetting,
+  getSellerOrderSettlements,
   calculateCommission,
   calculateReservationSettlement,
   recordReservationSettlement,

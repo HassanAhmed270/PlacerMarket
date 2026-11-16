@@ -489,6 +489,42 @@ async function retryPayout(payoutId, adminId, sessionId, input) {
   return formatPayoutRow(result);
 }
 
+/** FR-49: return the latest payout snapshot for each seller order in a single lookup. */
+async function getSellerOrderPayoutSummaries(orderIds) {
+  if (!Array.isArray(orderIds)) {
+    throw new ValidationError('orderIds must be an array of UUIDs.');
+  }
+  if (orderIds.length === 0) return [];
+  if (orderIds.length > 50) {
+    throw new ValidationError('orderIds must contain at most 50 UUIDs.');
+  }
+  for (const orderId of orderIds) {
+    if (typeof orderId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) {
+      throw new ValidationError('Each orderId must be a valid UUID.');
+    }
+  }
+
+  const { rows } = await db.read(
+    `SELECT DISTINCT ON (order_id)
+        order_id, status, amount::text AS amount, currency,
+        method, transfer_reference AS transfer_reference, paid_on
+     FROM seller_payouts
+     WHERE order_id = ANY($1::uuid[])
+     ORDER BY order_id, attempt DESC, initiated_at DESC, id DESC`,
+    [orderIds]
+  );
+
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    status: row.status,
+    amount: row.amount,
+    currency: row.currency,
+    method: row.status === 'paid' ? row.method : null,
+    transferReference: row.status === 'paid' ? row.transfer_reference : null,
+    paidOn: row.status === 'paid' && row.paid_on ? String(row.paid_on).slice(0, 10) : null,
+  }));
+}
+
 /** FR-48: list seller payouts with optional status filter and limit. */
 async function listSellerPayouts(query = {}) {
   let statusFilter = null;
@@ -650,6 +686,7 @@ async function exportSellerPayoutsCsv(adminId, sessionId, filters) {
 
 module.exports = {
   createInitiatedPayout,
+  getSellerOrderPayoutSummaries,
   markPaid,
   approvePayout,
   markFailed,

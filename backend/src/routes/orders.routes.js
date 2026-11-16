@@ -4,6 +4,9 @@ const reservations = require('../modules/reservations.service');
 const listings = require('../modules/listings.service');
 const escrowPayments = require('../modules/escrowPayments.service');
 const payout = require('../modules/payout.service');
+const settlement = require('../modules/settlement.service');
+const sellerPayouts = require('../modules/sellerPayouts.service');
+const sellerHeldFunds = require('../modules/sellerHeldFunds.service');
 const disputes = require('../modules/disputes.service');
 const { requireAuth } = require('../middleware/auth');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
@@ -19,16 +22,23 @@ function noStore(_req, res, next) {
 }
 
 async function sellerOrderResponses(ordersForSeller) {
-  const [listingSummaries, reservationCities, holdStates, disputeStatuses] = await Promise.all([
+  const orderIds = ordersForSeller.map((order) => order.orderId);
+  const [listingSummaries, reservationCities, holdStates, disputeStatuses, orderSettlements, orderPayouts, orderHeldFlags] = await Promise.all([
     listings.getSellerOrderListingSummaries(ordersForSeller.map((order) => order.listingId)),
     reservations.getSellerOrderDeliveryCities(ordersForSeller.map((order) => order.reservationId)),
-    payout.getSellerOrderHoldStates(ordersForSeller.map((order) => order.orderId)),
-    disputes.getSellerOrderDisputeStatuses(ordersForSeller.map((order) => order.orderId)),
+    payout.getSellerOrderHoldStates(orderIds),
+    disputes.getSellerOrderDisputeStatuses(orderIds),
+    settlement.getSellerOrderSettlements(orderIds),
+    sellerPayouts.getSellerOrderPayoutSummaries(orderIds),
+    sellerHeldFunds.getSellerOrderHeldFlags(orderIds),
   ]);
   const listingsById = new Map(listingSummaries.map((listing) => [listing.listingId, listing]));
   const reservationsById = new Map(reservationCities.map((reservation) => [reservation.reservationId, reservation]));
   const holdStatesByOrderId = new Map(holdStates.map((hold) => [hold.orderId, hold.state]));
   const disputeStatusesByOrderId = new Map(disputeStatuses.map((dispute) => [dispute.orderId, dispute.status]));
+  const settlementsByOrderId = new Map(orderSettlements.map((settlementRow) => [settlementRow.orderId, settlementRow]));
+  const payoutsByOrderId = new Map(orderPayouts.map((payoutRow) => [payoutRow.orderId, payoutRow]));
+  const heldFlagsByOrderId = new Map(orderHeldFlags.map((heldFlag) => [heldFlag.orderId, heldFlag]));
 
   return ordersForSeller.map((order) => {
     const listing = listingsById.get(order.listingId);
@@ -36,6 +46,9 @@ async function sellerOrderResponses(ordersForSeller) {
     if (!listing || !reservation) {
       throw new ConfigurationError('Seller order references unavailable listing or reservation data.');
     }
+    const earningsValues = settlementsByOrderId.get(order.orderId);
+    const payoutValues = payoutsByOrderId.get(order.orderId);
+
     return {
       orderId: order.orderId,
       listingId: order.listingId,
@@ -50,6 +63,20 @@ async function sellerOrderResponses(ordersForSeller) {
       handedOverAt: order.handedOverAt,
       deliveredAt: order.deliveredAt,
       cancelledAt: order.cancelledAt,
+      earnings: earningsValues ? {
+        commissionPercent: earningsValues.commissionPercent,
+        commissionAmount: earningsValues.commissionAmount,
+        sellerNetAmount: earningsValues.sellerNetAmount,
+      } : null,
+      payout: payoutValues ? {
+        status: payoutValues.status,
+        amount: payoutValues.amount,
+        currency: payoutValues.currency,
+        method: payoutValues.method,
+        transferReference: payoutValues.transferReference,
+        paidOn: payoutValues.paidOn,
+      } : null,
+      fundsHeldForVerification: Boolean(heldFlagsByOrderId.get(order.orderId)),
       payoutHoldState: holdStatesByOrderId.get(order.orderId) ?? null,
       disputeStatus: disputeStatusesByOrderId.get(order.orderId) ?? null,
     };

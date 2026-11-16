@@ -131,6 +131,34 @@ async function listHeldFunds(query = {}) {
   return { heldFunds: rows };
 }
 
+/** FR-65: return the held-funds state for each seller order in a single lookup. */
+async function getSellerOrderHeldFlags(orderIds) {
+  if (!Array.isArray(orderIds)) {
+    throw new ValidationError('orderIds must be an array of UUIDs.');
+  }
+  if (orderIds.length === 0) return [];
+  if (orderIds.length > 50) {
+    throw new ValidationError('orderIds must contain at most 50 UUIDs.');
+  }
+  for (const orderId of orderIds) {
+    if (typeof orderId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(orderId)) {
+      throw new ValidationError('Each orderId must be a valid UUID.');
+    }
+  }
+
+  const { rows } = await db.read(
+    `SELECT order_id, state
+     FROM seller_held_funds
+     WHERE state = 'held' AND order_id = ANY($1::uuid[])`,
+    [orderIds]
+  );
+
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    state: row.state,
+  }));
+}
+
 /** FR-65: release verified held funds or record an Admin decision to keep them held. */
 async function decideHeldFunds(id, adminId, sessionId, input) {
   assertUuid(id, 'id');
@@ -318,6 +346,7 @@ async function processReminders() {
 
 module.exports = {
   holdFundsForUnverifiedSeller,
+  getSellerOrderHeldFlags,
   listHeldFunds,
   decideHeldFunds,
   processReminders,

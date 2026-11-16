@@ -10,6 +10,7 @@ Stage P5-S1 (2026-11-13): Settlement core implemented with 5% launch commission 
 Stage P5-S2a (2026-11-15): Payout lifecycle implemented with migration 029 (seller_payouts), release initiating attempt 1 without cash ledger, paid/failed/retry state transitions, Admin-only payout.record permission, money audit, and in-app/email notifications (FR-48, FR-49, FR-51, FR-65).
 Stage P5-S2b (2026-11-15): Two-Admin approval is required strictly above the configured PKR threshold; retries need fresh approval and invalid thresholds fail closed. Unverified sellers' proceeds are held, reminded at 7/30/90 days, and listed for Admin decision at 180 days (migration 031); forfeiture is undecided and defaults to none. P7, P10, and P3 remain open.
 Stage P5-S2b-3 (2026-11-15): Admin-only payout CSV export supports status/date filters, is capped at 5,000 rows, requires step-up, excludes seller contact and bank/wallet details, audits each export, and escapes formula-like values.
+Stage P5-S2c (2026-11-16): Seller order read-only earnings, payout summary and held-funds flags are exposed to the seller order API, plus the admin payout-settings read endpoint. D1 note: the commission change has no step-up grant; hardening candidate.
 
 ## 0. Inspect before you propose anything
 
