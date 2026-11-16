@@ -160,7 +160,7 @@ async function getSellerOrderHeldFlags(orderIds) {
 }
 
 /** FR-65: release verified held funds or record an Admin decision to keep them held. */
-async function decideHeldFunds(id, adminId, sessionId, input) {
+async function decideHeldFunds(id, adminId, sessionId, input, payoutGuards) {
   assertUuid(id, 'id');
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ValidationError('Request body must be an object.');
@@ -208,7 +208,7 @@ async function decideHeldFunds(id, adminId, sessionId, input) {
         amount: heldFunds.amount,
         currency: heldFunds.currency,
         initiatedBy: adminId,
-      });
+      }, payoutGuards);
       if (!payout) throw new ConflictError('Held funds could not create a payout.');
 
       const { rows: updatedRows } = await client.query(

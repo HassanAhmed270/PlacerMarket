@@ -8,6 +8,7 @@ const {
 const events = require('../lib/events');
 const eventBus = require('../lib/eventBus');
 const orders = require('./orders.service');
+const disputes = require('./disputes.service');
 const listings = require('./listings.service');
 const users = require('./users.service');
 const reservations = require('./reservations.service');
@@ -143,7 +144,27 @@ function formatPayoutRow(row) {
     failedBy: row.failed_by || null,
     failedAt: row.failed_at || null,
     ...(Object.hasOwn(row, 'requires_approval') ? { requiresApproval: row.requires_approval } : {}),
+    disputeHold: row.dispute_hold === true,
   };
+}
+
+async function assertNoDisputeHold(client, orderId, guards) {
+  if (!guards || typeof guards.hasPausedDisputeHold !== 'function' ||
+      typeof guards.hasOpenDispute !== 'function' ||
+      typeof guards.hasOpenDisputeRefund !== 'function') {
+    throw new TypeError('Payout hold and dispute owners are required to record a payout.');
+  }
+  if (!(await orders.lockReservationOrderForPayout(client, orderId))) {
+    throw new NotFoundError('order', orderId);
+  }
+  const hasPausedHold = await guards.hasPausedDisputeHold(client, orderId);
+  const hasOpenDispute = await guards.hasOpenDispute(client, orderId);
+  if (hasPausedHold || hasOpenDispute) {
+    throw new ConflictError('Payout is paused while an unresolved dispute hold exists.');
+  }
+  if (await guards.hasOpenDisputeRefund(client, orderId)) {
+    throw new ConflictError('Payout is blocked while the dispute refund is unresolved.');
+  }
 }
 
 async function lockOrderAndPayoutContext(client, payoutId) {
@@ -185,13 +206,18 @@ async function lockOrderAndPayoutContext(client, payoutId) {
 }
 
 /** FR-48: insert attempt 1 as initiated payout for an order. */
-async function createInitiatedPayout(client, { orderId, sellerId, amount, currency, initiatedBy }) {
+async function createInitiatedPayout(
+  client,
+  { orderId, sellerId, amount, currency, initiatedBy },
+  guards
+) {
   if (amount === null || amount === undefined || amount === '') return null;
   if (typeof amount !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(amount)) {
     throw new ValidationError('Payout amount must be a non-negative decimal string with at most two decimal places.');
   }
   const [whole, fraction = ''] = amount.split('.');
   if (BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0')) === 0n) return null;
+  await assertNoDisputeHold(client, orderId, guards);
   const { rows } = await client.query(
     `INSERT INTO seller_payouts
        (order_id, seller_id, attempt, status, amount, currency, initiated_by)
@@ -208,8 +234,8 @@ async function getOrderPayoutStatus(client, orderId) {
   const { rows } = await client.query(
     `SELECT status
      FROM seller_payouts
-     WHERE order_id = $1 AND status IN ('initiated', 'paid')
-     ORDER BY CASE status WHEN 'paid' THEN 0 ELSE 1 END, attempt DESC
+     WHERE order_id = $1
+     ORDER BY attempt DESC
      LIMIT 1`,
     [orderId]
   );
@@ -217,7 +243,7 @@ async function getOrderPayoutStatus(client, orderId) {
 }
 
 /** FR-48, FR-49: record an initiated payout as paid with transfer details and cash ledger entry. */
-async function markPaid(payoutId, adminId, sessionId, input) {
+async function markPaid(payoutId, adminId, sessionId, input, guards) {
   assertUuid(payoutId, 'payoutId');
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ValidationError('Request body must be an object.');
@@ -264,6 +290,7 @@ async function markPaid(payoutId, adminId, sessionId, input) {
     if (payout.status !== 'initiated') {
       throw new ConflictError('Payout is not in initiated status.');
     }
+    await assertNoDisputeHold(client, payout.order_id, guards);
 
     const approvalRequirement = await getApprovalRequirement(client, payout.amount);
     if (!approvalRequirement.valid) {
@@ -334,7 +361,7 @@ async function markPaid(payoutId, adminId, sessionId, input) {
 }
 
 /** FR-48: require a different Admin to approve payouts strictly above the configured threshold. */
-async function approvePayout(payoutId, adminId, sessionId, input) {
+async function approvePayout(payoutId, adminId, sessionId, input, guards) {
   assertUuid(payoutId, 'payoutId');
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ValidationError('Request body must be an object.');
@@ -349,6 +376,7 @@ async function approvePayout(payoutId, adminId, sessionId, input) {
     if (payout.status !== 'initiated') {
       throw new ConflictError('Payout is not in initiated status.');
     }
+    await assertNoDisputeHold(client, payout.order_id, guards);
     if (payout.approved_by) {
       throw new ConflictError('Payout has already been approved.');
     }
@@ -462,7 +490,7 @@ async function markFailed(payoutId, adminId, sessionId, input) {
 }
 
 /** FR-48: retry a failed payout creating attempt + 1 as initiated. */
-async function retryPayout(payoutId, adminId, sessionId, input) {
+async function retryPayout(payoutId, adminId, sessionId, input, guards) {
   assertUuid(payoutId, 'payoutId');
   const stepUpGrant = input?.stepUpGrant;
   if (!stepUpGrant || typeof stepUpGrant !== 'string') {
@@ -474,6 +502,7 @@ async function retryPayout(payoutId, adminId, sessionId, input) {
     if (payout.status !== 'failed') {
       throw new ConflictError('Only a failed payout can be retried.');
     }
+    await assertNoDisputeHold(client, payout.order_id, guards);
 
     const { rows: activeSiblings } = await client.query(
       `SELECT id, status FROM seller_payouts
@@ -586,7 +615,19 @@ async function listSellerPayouts(query = {}) {
              WHEN $1::text ~ '${NUMERIC_SETTING_PATTERN}' THEN
                CASE WHEN $1::numeric > 0 THEN amount::numeric > $1::numeric ELSE true END
              ELSE true
-           END AS requires_approval
+           END AS requires_approval,
+           (
+             EXISTS (
+               SELECT 1 FROM payout_holds hold
+               WHERE hold.order_id = seller_payouts.order_id
+                 AND hold.state = 'paused_for_dispute'
+             )
+             OR EXISTS (
+               SELECT 1 FROM disputes dispute
+               WHERE dispute.order_id = seller_payouts.order_id
+                 AND dispute.status IN ('open', 'seller_responded')
+             )
+           ) AS dispute_hold
     FROM seller_payouts
   `;
   if (statusFilter) {
@@ -596,13 +637,17 @@ async function listSellerPayouts(query = {}) {
   values.push(limit);
   sql += ` ORDER BY initiated_at DESC, id DESC LIMIT $${values.length}`;
 
+  // cross-module read: payout_holds (owned by payout.service.js), disputes (owned by disputes.service.js); batched Admin list view.
   const { rows } = await db.query(sql, values);
   return { payouts: rows.map(formatPayoutRow) };
 }
 
-/** FR-48: get single seller payout details without sensitive seller account information. */
-async function getSellerPayout(payoutId) {
+/** FR-48, FR-69: get payout details and dispute-hold status without seller account data. */
+async function getSellerPayout(payoutId, getDisputeHoldStatus) {
   assertUuid(payoutId, 'payoutId');
+  if (typeof getDisputeHoldStatus !== 'function') {
+    throw new TypeError('The payout hold owner is required to read dispute status.');
+  }
   const threshold = await getPayoutApprovalThreshold();
   const { rows } = await db.query(
     `SELECT id, order_id, seller_id, attempt, status,
@@ -621,7 +666,10 @@ async function getSellerPayout(payoutId) {
     [payoutId, threshold]
   );
   if (!rows[0]) throw new NotFoundError('seller_payout', payoutId);
-  return formatPayoutRow(rows[0]);
+  return formatPayoutRow({
+    ...rows[0],
+    dispute_hold: await getDisputeHoldStatus(rows[0].order_id),
+  });
 }
 
 /** FR-48: export a capped, step-up-protected payout CSV without account details. */

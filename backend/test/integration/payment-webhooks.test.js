@@ -209,8 +209,12 @@ afterEach(async () => {
           await db.query(
             `UPDATE refunds
              SET requested_at = now() + INTERVAL '1 day',
+                 approved_at = CASE WHEN status = 'approved'
+                                    THEN now() + INTERVAL '1 day' ELSE approved_at END,
+                 last_attempt_at = CASE WHEN status = 'failed'
+                                        THEN now() + INTERVAL '1 day' ELSE last_attempt_at END,
                  updated_at = now() + INTERVAL '1 day'
-             WHERE order_id = $1 AND status IN ('requested', 'pending', 'failed')`,
+             WHERE order_id = $1 AND status IN ('requested', 'approved', 'pending', 'failed')`,
             [record.orderId]
           );
         }

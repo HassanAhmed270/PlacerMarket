@@ -3,6 +3,8 @@
  * Tables owned: money_audit_events
  */
 
+const db = require('../db.service');
+
 /** FR-69: write money and identity audit events in the caller's transaction. */
 async function recordMoneyAuditEvent(client, {
   actorId = null,
@@ -66,4 +68,20 @@ async function recordMoneyAuditEventOnce(client, {
   return rows.length > 0;
 }
 
-module.exports = { recordMoneyAuditEvent, recordMoneyAuditEventOnce };
+/** FR-69: report whether an order has a post-payout dispute audit event. */
+async function hasDisputeAfterPayout(orderId) {
+  const { rows } = await db.read(
+    `SELECT EXISTS (
+       SELECT 1 FROM money_audit_events
+       WHERE order_id = $1 AND action = 'dispute_after_payout'
+     ) AS present`,
+    [orderId]
+  );
+  return rows[0]?.present === true;
+}
+
+module.exports = {
+  recordMoneyAuditEvent,
+  recordMoneyAuditEventOnce,
+  hasDisputeAfterPayout,
+};

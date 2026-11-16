@@ -1,5 +1,7 @@
 const { Router } = require('express');
 const disputes = require('../modules/disputes.service');
+const payout = require('../modules/payout.service');
+const sellerPayouts = require('../modules/sellerPayouts.service');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
@@ -8,7 +10,10 @@ const limiters = createConfiguredRateLimiters();
 router.use(requireAuth);
 
 router.post('/orders/:id', async (req, res) => {
-  res.status(201).json(await disputes.fileDispute(req.params.id, req.user.id, req.body)); // FR-43
+  res.status(201).json(await disputes.fileDispute(req.params.id, req.user.id, req.body, {
+    getOrderPayoutStatus: sellerPayouts.getOrderPayoutStatus,
+    pausePayoutHold: payout.pausePayoutHoldForDispute,
+  })); // FR-43
 });
 
 router.post('/:id/counter-evidence', async (req, res) => {
@@ -24,9 +29,11 @@ router.get('/:id/evidence', requirePermission('dispute.review'), async (req, res
 });
 
 router.post('/:id/resolve', requirePermission('dispute.resolve'), limiters.adminOps, async (req, res) => {
-  // FR-45a guard lives inside disputes.service.resolveDispute() — will
-  // throw NotYetSpecifiedError(501) on any partial-refund attempt.
-  res.json(await disputes.resolveDispute(req.params.id, { ...req.body, resolvedBy: req.user.id })); // FR-45
+  res.json(await disputes.resolveDispute(req.params.id, {
+    ...req.body,
+    resolvedBy: req.user.id,
+    sessionId: req.authSessionId,
+  })); // FR-45
 });
 
 module.exports = router;

@@ -35,7 +35,7 @@ async function sellerOrderResponses(ordersForSeller) {
   const listingsById = new Map(listingSummaries.map((listing) => [listing.listingId, listing]));
   const reservationsById = new Map(reservationCities.map((reservation) => [reservation.reservationId, reservation]));
   const holdStatesByOrderId = new Map(holdStates.map((hold) => [hold.orderId, hold.state]));
-  const disputeStatusesByOrderId = new Map(disputeStatuses.map((dispute) => [dispute.orderId, dispute.status]));
+  const disputesByOrderId = new Map(disputeStatuses.map((dispute) => [dispute.orderId, dispute]));
   const settlementsByOrderId = new Map(orderSettlements.map((settlementRow) => [settlementRow.orderId, settlementRow]));
   const payoutsByOrderId = new Map(orderPayouts.map((payoutRow) => [payoutRow.orderId, payoutRow]));
   const heldFlagsByOrderId = new Map(orderHeldFlags.map((heldFlag) => [heldFlag.orderId, heldFlag]));
@@ -48,6 +48,7 @@ async function sellerOrderResponses(ordersForSeller) {
     }
     const earningsValues = settlementsByOrderId.get(order.orderId);
     const payoutValues = payoutsByOrderId.get(order.orderId);
+    const disputeValues = disputesByOrderId.get(order.orderId);
 
     return {
       orderId: order.orderId,
@@ -78,7 +79,10 @@ async function sellerOrderResponses(ordersForSeller) {
       } : null,
       fundsHeldForVerification: Boolean(heldFlagsByOrderId.get(order.orderId)),
       payoutHoldState: holdStatesByOrderId.get(order.orderId) ?? null,
-      disputeStatus: disputeStatusesByOrderId.get(order.orderId) ?? null,
+      disputeStatus: disputeValues?.status ?? null,
+      disputeOutcome: disputeValues?.outcome ?? null,
+      disputeReason: disputeValues?.reason ?? null,
+      disputeDecidedAt: disputeValues?.decidedAt ?? null,
     };
   });
 }

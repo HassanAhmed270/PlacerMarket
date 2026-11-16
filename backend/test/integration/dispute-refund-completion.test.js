@@ -11,31 +11,14 @@ const {
   request,
   restoreHandoverTestEnvironment,
 } = require('./delivery-handover.helpers');
-const eventBus = require('../../src/lib/eventBus');
-const events = require('../../src/lib/events');
 const { signAccessToken } = require('../../src/lib/jwt');
-const {
-  encryptStaffTotpSecret,
-  generateTotpCode,
-  generateTotpSecret,
-} = require('../../src/lib/totp');
 const escrowPayments = require('../../src/modules/escrowPayments.service');
-const users = require('../../src/modules/users.service');
 
 const JWT_SECRET = 'delivery-handover-integration-secret';
-const STAFF_TOTP_KEY = 'dispute-refund-completion-staff-totp-key';
-const originalStaffTotpKey = process.env.STAFF_TOTP_ENCRYPTION_SECRET;
-const ADDRESS = {
-  recipientName: 'Dispute Refund Recipient',
-  phone: '+15551234567',
-  cityId: '',
-  addressLine1: '12 Dispute Refund Street',
-};
 
 let harness;
 let scenario;
 let admins;
-const additionalScenarios = [];
 
 function staffHeader(admin) {
   const token = signAccessToken(admin.id, { secret: JWT_SECRET, sessionId: admin.sessionId });
@@ -43,14 +26,6 @@ function staffHeader(admin) {
 }
 
 async function createStaffAccount(userId) {
-  const secret = generateTotpSecret();
-  const encrypted = encryptStaffTotpSecret(secret);
-  await db.query(
-    `INSERT INTO staff_totp_credentials
-       (user_id, encrypted_secret, nonce, auth_tag, key_version, enabled_at)
-     VALUES ($1, $2, $3, $4, $5, now())`,
-    [userId, encrypted.encryptedSecret, encrypted.nonce, encrypted.authTag, encrypted.keyVersion]
-  );
   const sessionId = crypto.randomUUID();
   await db.query(
     `INSERT INTO auth_sessions
@@ -63,32 +38,7 @@ async function createStaffAccount(userId) {
       crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex'),
     ]
   );
-  return { id: userId, sessionId, secret };
-}
-
-async function createAdditionalAdmin() {
-  const suffix = crypto.randomUUID();
-  const { rows } = await db.query(
-    `INSERT INTO users (full_name, phone, password_hash, city_id, role)
-     VALUES ($1, $2, 'dispute-refund-test-hash', $3, 'admin')
-     RETURNING id`,
-    [
-      `Dispute refund Admin ${suffix}`,
-      `+1559${Date.now().toString().slice(-8)}${suffix.replace(/\D/g, '').slice(0, 4)}`,
-      harness.fixture.cityId,
-    ]
-  );
-  harness.extraUserIds.push(rows[0].id);
-  return createStaffAccount(rows[0].id);
-}
-
-async function createStepUpGrant(admin, action) {
-  return users.createStepUpGrant(
-    admin.id,
-    admin.sessionId,
-    action,
-    generateTotpCode(admin.secret)
-  );
+  return { id: userId, sessionId };
 }
 
 async function createStoredStepUpGrant(admin, action) {
@@ -106,14 +56,7 @@ async function createStoredStepUpGrant(admin, action) {
   return grant;
 }
 
-function resolveException(exceptionId, admin = admins.first) {
-  return request(getApp())
-    .post(`/api/admin/order-exceptions/${exceptionId}/resolve`)
-    .set('Authorization', staffHeader(admin))
-    .send({ resolutionNote: 'Refund decision recorded.' });
-}
-
-async function createDisputeRefundException(target) {
+async function createDisputeRefundIntent(target) {
   await db.query(
     `UPDATE orders
      SET status = 'handed_to_delivery', handed_over_at = now() - INTERVAL '5 minutes'
@@ -136,51 +79,19 @@ async function createDisputeRefundException(target) {
     .expect(201);
   await global.drainIntegrationListeners(5000);
 
-  await request(getApp())
+  const stepUpGrant = await createStoredStepUpGrant(admins.first, 'refund.decide');
+  const decided = await request(getApp())
     .post(`/api/disputes/${filed.body.id}/resolve`)
     .set('Authorization', staffHeader(admins.first))
     .send({
-      resolutionAmountToBuyer: '1250.50',
-      resolutionNote: 'The buyer is entitled to a full refund.',
+      outcome: 'buyer_favor',
+      amount: '1250.50',
+      reason: 'The buyer is entitled to an item refund.',
+      stepUpGrant,
     })
     .expect(200);
-
-  const { rows } = await db.query(
-    `SELECT id
-     FROM order_exceptions
-     WHERE order_id = $1 AND kind = 'dispute_refund_required'
-       AND resolved_at IS NULL`,
-    [target.orderId]
-  );
-  expect(rows).toHaveLength(1);
-  return rows[0].id;
-}
-
-async function requestRefund(target, admin = admins.first, useAuthenticator = false) {
-  const stepUpGrant = useAuthenticator
-    ? (await createStepUpGrant(admin, 'refund.request')).grant
-    : await createStoredStepUpGrant(admin, 'refund.request');
-  return request(getApp())
-    .post(`/api/admin/orders/${target.orderId}/refunds`)
-    .set('Authorization', staffHeader(admin))
-    .send({
-      reason: 'Customer service reviewed the delivery issue.',
-      stepUpGrant,
-    });
-}
-
-async function approveRefund(refundId, admin = admins.second, useAuthenticator = false, sellerAtFault = false) {
-  const stepUpGrant = useAuthenticator
-    ? (await createStepUpGrant(admin, 'refund.decide')).grant
-    : await createStoredStepUpGrant(admin, 'refund.decide');
-  return request(getApp())
-    .post(`/api/admin/refunds/${refundId}/approve`)
-    .set('Authorization', staffHeader(admin))
-    .send({
-      reason: 'Second administrator approved the full buyer refund.',
-      ...(sellerAtFault ? { sellerAtFault: true } : {}),
-      stepUpGrant,
-    });
+  target.disputeRefundId = decided.body.refund.refundId;
+  return target.disputeRefundId;
 }
 
 function succeededGateway() {
@@ -206,255 +117,115 @@ async function getRefundState(target, refundId) {
   return rows[0];
 }
 
-async function getExceptionState(target) {
-  const { rows } = await db.query(
-    `SELECT id, resolved_at, resolved_by, resolution_note
-     FROM order_exceptions
-     WHERE order_id = $1 AND kind = 'dispute_refund_required'`,
-    [target.orderId]
-  );
-  return rows[0];
-}
-
-async function exceptionResolutionAuditCount(target) {
-  const { rows } = await db.query(
-    `SELECT count(*)::int AS count
-     FROM money_audit_events
-     WHERE order_id = $1 AND action = 'order_exception_resolved'`,
-    [target.orderId]
-  );
-  return rows[0].count;
-}
-
-async function completeManualRefund(target, useAuthenticator = false) {
-  const requested = await requestRefund(target, admins.first, useAuthenticator);
-  expect(requested.status).toBe(201);
-  const approved = await approveRefund(requested.body.refundId, admins.second, useAuthenticator, true);
-  expect(approved.status).toBe(200);
-  expect(approved.body.status).toBe('approved');
-  const gateway = succeededGateway();
-  const processed = await escrowPayments.processRefundJob({
-    refundId: requested.body.refundId,
-    gateway,
-  });
-  return { requested, gateway, processed };
-}
-
 beforeAll(async () => {
-  process.env.STAFF_TOTP_ENCRYPTION_SECRET = STAFF_TOTP_KEY;
   harness = await createHarness();
   admins = {
     first: await createStaffAccount(harness.adminId),
-    second: await createAdditionalAdmin(),
   };
 });
 
 beforeEach(async () => {
   scenario = await createScenario(harness);
-  scenario.disputeExceptionId = await createDisputeRefundException(scenario);
+  scenario.disputeRefundId = await createDisputeRefundIntent(scenario);
 });
 
 afterEach(async () => {
   await global.drainIntegrationListeners(5000);
   if (scenario) await cleanupScenario(harness, scenario);
-  for (const target of additionalScenarios.splice(0)) {
-    await cleanupScenario(harness, target);
-  }
 });
 
 afterAll(async () => {
   await cleanupHarness(harness);
   restoreHandoverTestEnvironment();
-  if (originalStaffTotpKey === undefined) delete process.env.STAFF_TOTP_ENCRYPTION_SECRET;
-  else process.env.STAFF_TOTP_ENCRYPTION_SECRET = originalStaffTotpKey;
 });
 
 describe('FR-69 dispute refund completion', () => {
-  test('FR-69: full manual refund closes the buyer-favour exception in the refund transaction', async () => {
+  test('FR-69: approved dispute refund records exact cash ledger amount and decision audit', async () => {
+    expect(scenario.disputeRefundId).toBeTruthy();
     const { rows: before } = await db.query(
       'SELECT state FROM payout_holds WHERE order_id = $1',
       [scenario.orderId]
     );
-    expect(before).toEqual([{ state: 'paused_for_dispute' }]);
+    expect(before).toEqual([{ state: 'held' }]);
 
-    const { requested, gateway, processed } = await completeManualRefund(scenario, true);
-    expect(requested.body.amount).toBe('1550.50');
-    expect(processed).toEqual({ outcome: 'succeeded', refundId: requested.body.refundId });
-    expect(gateway.createRefund).toHaveBeenCalledTimes(1);
-
-    const state = await getRefundState(scenario, requested.body.refundId);
-    expect(state).toMatchObject({
+    const processed = await escrowPayments.processRefundJob({
+      refundId: scenario.disputeRefundId,
+      gateway: succeededGateway(),
+    });
+    expect(processed).toEqual({ outcome: 'succeeded', refundId: scenario.disputeRefundId });
+    expect(await getRefundState(scenario, scenario.disputeRefundId)).toMatchObject({
       refund_status: 'succeeded',
-      approved_by: admins.second.id,
-      payment_status: 'refunded',
+      approved_by: admins.first.id,
+      payment_status: 'succeeded',
     });
-    const exception = await getExceptionState(scenario);
-    expect(exception).toMatchObject({
-      id: scenario.disputeExceptionId,
-      resolved_by: admins.second.id,
-      resolution_note: `Manual refund ${requested.body.refundId} succeeded.`,
-    });
-    expect(exception.resolved_at).toBeTruthy();
-    expect(await exceptionResolutionAuditCount(scenario)).toBe(1);
-
-    const { rows: after } = await db.query(
-      'SELECT state FROM payout_holds WHERE order_id = $1',
+    const { rows: refundRows } = await db.query(
+      `SELECT trigger, amount::text, item_amount::text, delivery_fee_amount::text,
+              decided_by
+       FROM refunds WHERE id = $1`,
+      [scenario.disputeRefundId]
+    );
+    expect(refundRows).toEqual([{
+      trigger: 'dispute_admin',
+      amount: '1250.50',
+      item_amount: '1250.50',
+      delivery_fee_amount: '0.00',
+      decided_by: admins.first.id,
+    }]);
+    const { rows: ledgerRows } = await db.query(
+      `SELECT entry_type, amount::text
+       FROM ledger_entries
+       WHERE order_id = $1
+       ORDER BY entry_type`,
       [scenario.orderId]
     );
-    expect(after).toEqual(before);
+    expect(ledgerRows).toEqual([
+      { entry_type: 'refund', amount: '-1250.50' },
+    ]);
+    const { rows: auditRows } = await db.query(
+      `SELECT actor_id, action, approved_by, metadata
+       FROM money_audit_events
+       WHERE order_id = $1 AND action IN ('dispute_outcome_decided', 'system_refund_succeeded')
+       ORDER BY action`,
+      [scenario.orderId]
+    );
+    expect(auditRows).toHaveLength(2);
+    const decisionAudit = auditRows.find((row) => row.action === 'dispute_outcome_decided');
+    const refundAudit = auditRows.find((row) => row.action === 'system_refund_succeeded');
+    expect(decisionAudit).toMatchObject({
+      actor_id: admins.first.id,
+      approved_by: admins.first.id,
+      metadata: {
+      outcome: 'buyer_favor',
+      amount: '1250.50',
+      },
+    });
+    expect(refundAudit).toMatchObject({
+      actor_id: null,
+      approved_by: admins.first.id,
+      metadata: {
+      trigger: 'dispute_admin',
+      itemAmount: '1250.50',
+      deliveryFeeAmount: '0.00',
+      decidedBy: admins.first.id,
+      },
+    });
+  });
 
-    await request(getApp())
-      .post(`/api/admin/orders/${scenario.orderId}/payout/release`)
-      .set('Authorization', staffHeader(admins.first))
-      .send({ payoutReference: 'refund-completion-payout', note: 'Release after full refund.' })
-      .expect(409);
-
+  test('FR-69: dispute refund job retries are idempotent and do not create a clawback', async () => {
+    const gateway = succeededGateway();
+    await escrowPayments.processRefundJob({ refundId: scenario.disputeRefundId, gateway });
     const repeated = await escrowPayments.processRefundJob({
-      refundId: requested.body.refundId,
+      refundId: scenario.disputeRefundId,
       gateway,
     });
     expect(repeated).toEqual({ outcome: 'skipped', status: 'succeeded' });
     expect(gateway.createRefund).toHaveBeenCalledTimes(1);
-    expect(await exceptionResolutionAuditCount(scenario)).toBe(1);
-    await resolveException(scenario.disputeExceptionId).expect(409);
-  });
-
-  test('FR-69: manual exception resolution refuses an unrefunded order and changes nothing', async () => {
-    await resolveException(scenario.disputeExceptionId)
-      .expect(409)
-      .expect(({ body }) => expect(body.error).toMatch(/refund the buyer first/i));
-    expect(await getExceptionState(scenario)).toMatchObject({
-      resolved_at: null,
-      resolved_by: null,
-      resolution_note: null,
-    });
-    expect(await exceptionResolutionAuditCount(scenario)).toBe(0);
-    const { rows: payments } = await db.query(
-      'SELECT status FROM payments WHERE id = $1',
-      [scenario.paymentId]
-    );
-    expect(payments).toEqual([{ status: 'succeeded' }]);
-
-    const { requested } = await completeManualRefund(scenario);
-    expect(await getRefundState(scenario, requested.body.refundId)).toMatchObject({
-      refund_status: 'succeeded',
-      payment_status: 'refunded',
-    });
-    await resolveException(scenario.disputeExceptionId)
-      .expect(409)
-      .expect(({ body }) => expect(body.error).toMatch(/already been resolved/i));
-    expect(await exceptionResolutionAuditCount(scenario)).toBe(1);
-  });
-
-  test('FR-69: rejected and expired refunds leave the exception open for a new full request', async () => {
-    const rejected = await requestRefund(scenario);
-    expect(rejected.status).toBe(201);
-    const rejectionGrant = await createStoredStepUpGrant(admins.second, 'refund.decide');
-    await request(getApp())
-      .post(`/api/admin/refunds/${rejected.body.refundId}/reject`)
-      .set('Authorization', staffHeader(admins.second))
-      .send({
-        reason: 'The second administrator rejected this refund request.',
-        stepUpGrant: rejectionGrant,
-      })
-      .expect(200);
-
-    const afterRejected = await getExceptionState(scenario);
-    expect(afterRejected.resolved_at).toBeNull();
-    const expired = await requestRefund(scenario);
-    expect(expired.status).toBe(201);
-    await db.query(
-      `UPDATE refunds
-       SET requested_at = now() - INTERVAL '49 hours'
-       WHERE id = $1`,
-      [expired.body.refundId]
-    );
-    const replacement = await requestRefund(scenario);
-    expect(replacement.status).toBe(201);
-    expect(replacement.body.status).toBe('requested');
-
-    const { rows: refundRows } = await db.query(
-      `SELECT id, status
-       FROM refunds
-       WHERE order_id = $1
-       ORDER BY created_at, id`,
+    const { rows: payoutRows } = await db.query(
+      `SELECT count(*)::int AS count
+       FROM ledger_entries
+       WHERE order_id = $1 AND entry_type = 'seller_payout_manual'`,
       [scenario.orderId]
     );
-    expect(refundRows).toEqual([
-      { id: rejected.body.refundId, status: 'rejected' },
-      { id: expired.body.refundId, status: 'expired' },
-      { id: replacement.body.refundId, status: 'requested' },
-    ]);
-    expect((await getExceptionState(scenario)).resolved_at).toBeNull();
-  });
-
-  test('FR-69: approval and manual exception resolution serialize safely across ten orders', async () => {
-    const targets = [scenario];
-    for (let index = 1; index < 10; index += 1) {
-      const target = await createScenario(harness);
-      target.disputeExceptionId = await createDisputeRefundException(target);
-      targets.push(target);
-      additionalScenarios.push(target);
-    }
-
-    for (const target of targets) {
-      const requested = await requestRefund(target);
-      expect(requested.status).toBe(201);
-      const grant = await createStoredStepUpGrant(admins.second, 'refund.decide');
-      const [approval, manualResolution] = await Promise.all([
-        request(getApp())
-          .post(`/api/admin/refunds/${requested.body.refundId}/approve`)
-          .set('Authorization', staffHeader(admins.second))
-          .send({
-            reason: 'Second administrator approved the full buyer refund.',
-            stepUpGrant: grant,
-          }),
-        resolveException(target.disputeExceptionId),
-      ]);
-
-      expect(approval.status).toBe(200);
-      expect(manualResolution.status).toBe(409);
-      expect((await getExceptionState(target)).resolved_at).toBeNull();
-      expect(await exceptionResolutionAuditCount(target)).toBe(0);
-      expect(await getRefundState(target, requested.body.refundId)).toMatchObject({
-        refund_status: 'approved',
-        payment_status: 'succeeded',
-      });
-
-      const processed = await escrowPayments.processRefundJob({
-        refundId: requested.body.refundId,
-        gateway: succeededGateway(),
-      });
-      expect(processed.outcome).toBe('succeeded');
-      expect((await getRefundState(target, requested.body.refundId)).payment_status).toBe('refunded');
-      expect((await getExceptionState(target)).resolved_by).toBe(admins.second.id);
-      expect(await exceptionResolutionAuditCount(target)).toBe(1);
-    }
-  });
-
-  test('FR-69: a refund-completion listener failure rolls back refund and exception updates', async () => {
-    const requested = await requestRefund(scenario);
-    expect(requested.status).toBe(201);
-    const approved = await approveRefund(requested.body.refundId);
-    expect(approved.status).toBe(200);
-    const failListener = async () => {
-      throw new Error('Forced manual refund completion listener failure.');
-    };
-    eventBus.addListener(events.MANUAL_REFUND_SUCCEEDED, failListener);
-    try {
-      await expect(escrowPayments.processRefundJob({
-        refundId: requested.body.refundId,
-        gateway: succeededGateway(),
-      })).rejects.toThrow('Forced manual refund completion listener failure.');
-    } finally {
-      eventBus.removeListener(events.MANUAL_REFUND_SUCCEEDED, failListener);
-    }
-
-    expect(await getRefundState(scenario, requested.body.refundId)).toMatchObject({
-      refund_status: 'pending',
-      payment_status: 'succeeded',
-    });
-    expect((await getExceptionState(scenario)).resolved_at).toBeNull();
-    expect(await exceptionResolutionAuditCount(scenario)).toBe(0);
+    expect(payoutRows[0].count).toBe(0);
   });
 });

@@ -282,7 +282,15 @@ describe('FR-68 Admin reservation-backed order reads', () => {
         },
         hasOpenDispute: true,
         hasUnresolvedException: true,
-        disputes: [{ id: disputeRows[0].id, status: 'open', createdAt: expect.any(String) }],
+        disputes: [{
+          id: disputeRows[0].id,
+          status: 'open',
+          outcome: null,
+          reason: null,
+          decidedAt: null,
+          createdAt: expect.any(String),
+          disputeAfterPayout: false,
+        }],
         exceptions: [{
           kind: 'handover_after_cancel',
           recordedAt: expect.any(String),

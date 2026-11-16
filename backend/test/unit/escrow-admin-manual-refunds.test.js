@@ -22,6 +22,27 @@ const decisionMakerId = '00000000-0000-4000-8000-000000000005';
 beforeEach(() => jest.clearAllMocks());
 
 describe('FR-69 Admin manual refund reads', () => {
+  test('FR-69: escrow owner reports unresolved dispute refunds', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [{ id: refundId }] }),
+    };
+
+    await expect(escrowPayments.hasOpenDisputeRefund(client, orderId)).resolves.toBe(true);
+    expect(client.query.mock.calls[0][0]).toContain("trigger = 'dispute_admin'");
+    expect(client.query.mock.calls[0][0]).toContain("status IN ('approved', 'pending', 'failed')");
+    expect(client.query.mock.calls[0][1]).toEqual([orderId]);
+  });
+
+  test('FR-69: settlement refund total uses exact item amounts from succeeded refunds', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({ rows: [{ refunded_item_amount: '1250.50' }] }),
+    };
+
+    await expect(escrowPayments.getSucceededRefundedItemAmount(client, orderId)).resolves.toBe('1250.50');
+    expect(client.query.mock.calls[0][0]).toContain('SUM(COALESCE(item_amount, amount))');
+    expect(client.query.mock.calls[0][1]).toEqual([orderId]);
+  });
+
   test('FR-69: queue returns only manual requests with full-balance metadata and requester eligibility', async () => {
     const requestedAt = new Date('2026-11-08T10:00:00.000Z');
     db.read.mockResolvedValue({ rows: [

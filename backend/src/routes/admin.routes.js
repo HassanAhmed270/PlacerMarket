@@ -256,7 +256,10 @@ router.get(
   requirePermission('payout.record'),
   limiters.adminOps,
   async (req, res) => {
-    res.json(await sellerPayouts.getSellerPayout(req.params.payoutId));
+    res.json(await sellerPayouts.getSellerPayout(
+      req.params.payoutId,
+      payout.getDisputeHoldStatus
+    ));
   }
 );
 
@@ -270,7 +273,8 @@ router.post(
       req.params.payoutId,
       req.user.id,
       req.authSessionId,
-      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {},
+      payout.getDisputePayoutGuards()
     ));
   }
 );
@@ -285,7 +289,8 @@ router.post(
       req.params.payoutId,
       req.user.id,
       req.authSessionId,
-      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {},
+      payout.getDisputePayoutGuards()
     ));
   }
 );
@@ -315,7 +320,8 @@ router.post(
       req.params.payoutId,
       req.user.id,
       req.authSessionId,
-      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {},
+      payout.getDisputePayoutGuards()
     ));
   }
 );
@@ -340,7 +346,8 @@ router.post(
       req.params.id,
       req.user.id,
       req.authSessionId,
-      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {}
+      req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {},
+      payout.getDisputePayoutGuards()
     ));
   }
 );
@@ -415,7 +422,11 @@ router.get('/queue/health', requirePermission('operations.view'), async (_req, r
 });
 
 router.post('/disputes/:id/resolve', requirePermission('dispute.resolve'), limiters.adminOps, async (req, res) => {
-  res.json(await admin.resolveDispute(req.params.id, { ...req.body, resolvedBy: req.user.id })); // FR-56
+  res.json(await admin.resolveDispute(req.params.id, {
+    ...req.body,
+    resolvedBy: req.user.id,
+    sessionId: req.authSessionId,
+  })); // FR-56
 });
 
 router.post('/delivery-partners', requirePermission('delivery_partner.configure'), limiters.adminOps, async (req, res) => {

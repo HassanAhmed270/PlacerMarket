@@ -409,7 +409,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
     });
   });
 
-  test('FR-43, FR-65: release and dispute filing race has exactly one winner across 20 orders', async () => {
+  test('FR-43, FR-65: dispute filing races payout release and pauses an initiated payout', async () => {
     const { rows: originalWindowRows } = await db.query(
       "SELECT value FROM platform_settings WHERE key = 'complaint_window_days'"
     );
@@ -444,12 +444,8 @@ describe('FR-65 manual reservation-backed payout release', () => {
                 evidenceUrls: ['https://media.example.test/dispute-evidence.jpg'],
               }),
           ]);
-          if (releaseResponse.status === 200) {
-            expect(disputeResponse.status).toBe(409);
-          } else {
-            expect(releaseResponse.status).toBe(409);
-            expect(disputeResponse.status).toBe(201);
-          }
+          expect([200, 409]).toContain(releaseResponse.status);
+          expect(disputeResponse.status).toBe(201);
           await global.drainIntegrationListeners(5000);
           const { rows: orderRows } = await db.query(
             `SELECT status,
@@ -458,18 +454,34 @@ describe('FR-65 manual reservation-backed payout release', () => {
              FROM orders WHERE id = $1`,
             [target.orderId]
           );
-          if (releaseResponse.status === 200) {
-            expect(orderRows).toEqual([{
-              status: 'completed',
-              hold_state: 'released',
-              disputes: 0,
-            }]);
-          } else {
+          if (releaseResponse.status === 409) {
             expect(orderRows).toEqual([{
               status: 'held',
               hold_state: 'paused_for_dispute',
               disputes: 1,
             }]);
+            await deleteDisputes(target.orderId);
+          } else {
+            expect(orderRows).toEqual([{
+              status: 'completed',
+              hold_state: 'paused_for_dispute',
+              disputes: 1,
+            }]);
+            const { rows: afterPayoutAudit } = await db.query(
+              `SELECT count(*)::int AS count
+               FROM money_audit_events
+               WHERE order_id = $1 AND action = 'dispute_after_payout'`,
+              [target.orderId]
+            );
+            expect(afterPayoutAudit[0].count).toBe(0);
+            const { rows: moneyRows } = await db.query(
+              `SELECT
+                 (SELECT count(*)::int FROM refunds WHERE order_id = $1) AS refunds,
+                 (SELECT count(*)::int FROM seller_payouts
+                  WHERE order_id = $1 AND status = 'initiated') AS initiated_payouts`,
+              [target.orderId]
+            );
+            expect(moneyRows[0]).toEqual({ refunds: 0, initiated_payouts: 1 });
             await deleteDisputes(target.orderId);
           }
         } finally {

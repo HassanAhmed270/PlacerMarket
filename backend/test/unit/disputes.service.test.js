@@ -11,23 +11,69 @@ const users = require('../../src/modules/users.service');
 const reservations = require('../../src/modules/reservations.service');
 const escrowPayments = require('../../src/modules/escrowPayments.service');
 const settlement = require('../../src/modules/settlement.service');
+const moneyAudit = require('../../src/modules/moneyAudit.service');
 const eventBus = require('../../src/lib/eventBus');
-const { NotYetSpecifiedError } = require('../../src/lib/errors');
+
+function fileDispute(orderId, buyerId, input, dependencies = {}) {
+  return disputes.fileDispute(orderId, buyerId, input, {
+    getOrderPayoutStatus: jest.fn().mockResolvedValue(null),
+    pausePayoutHold: jest.fn().mockResolvedValue(undefined),
+    ...dependencies,
+  });
+}
 
 describe('FR-68 Admin order dispute summary', () => {
-  test('FR-68: returns dispute ids, status and time without evidence or reason text', async () => {
+  test('FR-69: money audit owner reads the post-payout dispute marker', async () => {
+    db.read.mockResolvedValue({ rows: [{ present: true }] });
+
+    await expect(moneyAudit.hasDisputeAfterPayout('order-1')).resolves.toBe(true);
+    expect(db.read.mock.calls[0][0]).toContain("action = 'dispute_after_payout'");
+    expect(db.read.mock.calls[0][1]).toEqual(['order-1']);
+  });
+
+  test('FR-68: returns decision outcome and post-payout status without Admin identity or evidence', async () => {
+    const decidedAt = new Date('2026-11-06T13:00:00Z');
     db.read.mockResolvedValue({ rows: [
       { id: 'dispute-1', status: 'open', created_at: new Date('2026-11-06T12:00:00Z') },
-      { id: 'dispute-2', status: 'resolved_release', created_at: new Date('2026-11-06T13:00:00Z') },
+      {
+        id: 'dispute-2',
+        status: 'resolved_release',
+        outcome: 'seller_favor',
+        resolution_note: 'Reviewed evidence and released payout.',
+        created_at: decidedAt,
+        resolved_at: decidedAt,
+      },
     ] });
-    await expect(disputes.getAdminOrderDisputes('order-1')).resolves.toEqual({
-      disputes: [
-        { id: 'dispute-1', status: 'open', createdAt: new Date('2026-11-06T12:00:00Z') },
-        { id: 'dispute-2', status: 'resolved_release', createdAt: new Date('2026-11-06T13:00:00Z') },
-      ],
-      hasOpenDispute: true,
-    });
-    expect(db.read.mock.calls[0][0]).not.toMatch(/reason_text|resolution_note|evidence/i);
+    const afterPayoutSpy = jest.spyOn(moneyAudit, 'hasDisputeAfterPayout').mockResolvedValue(true);
+    try {
+      await expect(disputes.getAdminOrderDisputes('order-1')).resolves.toEqual({
+        disputes: [
+          {
+            id: 'dispute-1',
+            status: 'open',
+            outcome: null,
+            reason: null,
+            decidedAt: null,
+            createdAt: new Date('2026-11-06T12:00:00Z'),
+            disputeAfterPayout: true,
+          },
+          {
+            id: 'dispute-2',
+            status: 'resolved_release',
+            outcome: 'seller_favor',
+            reason: 'Reviewed evidence and released payout.',
+            decidedAt,
+            createdAt: decidedAt,
+            disputeAfterPayout: true,
+          },
+        ],
+        hasOpenDispute: true,
+      });
+      expect(db.read.mock.calls[0][0]).not.toMatch(/reason_text|evidence|resolved_by/i);
+      expect(afterPayoutSpy).toHaveBeenCalledWith('order-1');
+    } finally {
+      afterPayoutSpy.mockRestore();
+    }
   });
 });
 
@@ -76,43 +122,56 @@ beforeEach(() => {
 // under test needs, without a live Postgres connection. Extend this same
 // pattern for other modules/*.service.js functions.
 
-describe('disputes.service.resolveDispute — FR-45a guard', () => {
-  const disputeId = 'dispute-1';
+describe('Dispute decision status and exact money inputs', () => {
+  const disputeId = '00000000-0000-4000-8000-000000000001';
   const orderId = 'order-1';
-  const agreedItemPrice = 5000;
 
-  function mockDisputeLookup() {
-    db.query.mockResolvedValueOnce({
-      rows: [{ id: disputeId, order_id: orderId, agreed_item_price: agreedItemPrice }],
-    });
-  }
-
-  test('full refund to buyer (amount = order total) is allowed', async () => {
-    mockDisputeLookup();
+  test('FR-69: a resolved buyer-favor dispute cannot be decided again', async () => {
+    db.read.mockResolvedValue({ rows: [{ order_id: orderId }] });
     db.withTransaction.mockImplementationOnce(async (callback) => callback({ query: jest.fn()
-      .mockResolvedValueOnce({ rows: [{ id: disputeId, status: 'resolved_refund' }] }) }));
+      .mockResolvedValueOnce({ rows: [{ id: disputeId, order_id: orderId, status: 'resolved_refund' }] }) }));
 
     await expect(
-      disputes.resolveDispute(disputeId, { resolutionAmountToBuyer: agreedItemPrice, resolvedBy: 'admin-1' })
-    ).resolves.toBeDefined();
+      disputes.resolveDispute(disputeId, {
+        outcome: 'buyer_favor',
+        amount: '5000.00',
+        reason: 'Reviewed buyer evidence.',
+        resolvedBy: 'admin-1',
+        sessionId: 'session-1',
+        stepUpGrant: 'grant-1',
+      })
+    ).rejects.toMatchObject({ statusCode: 409 });
   });
 
-  test('full release to seller (amount = 0) is allowed', async () => {
-    mockDisputeLookup();
+  test('FR-69: a resolved seller-favor dispute cannot be decided again', async () => {
+    db.read.mockResolvedValue({ rows: [{ order_id: orderId }] });
     db.withTransaction.mockImplementationOnce(async (callback) => callback({ query: jest.fn()
-      .mockResolvedValueOnce({ rows: [{ id: disputeId, status: 'resolved_release' }] }) }));
+      .mockResolvedValueOnce({ rows: [{ id: disputeId, order_id: orderId, status: 'resolved_release' }] }) }));
 
     await expect(
-      disputes.resolveDispute(disputeId, { resolutionAmountToBuyer: 0, resolvedBy: 'admin-1' })
-    ).resolves.toBeDefined();
+      disputes.resolveDispute(disputeId, {
+        outcome: 'seller_favor',
+        reason: 'Reviewed seller evidence.',
+        resolvedBy: 'admin-1',
+        sessionId: 'session-1',
+        stepUpGrant: 'grant-1',
+      })
+    ).rejects.toMatchObject({ statusCode: 409 });
   });
 
-  test('partial amount (neither 0 nor full) is refused with NotYetSpecifiedError(FR-45a)', async () => {
-    mockDisputeLookup();
+  test('FR-69: dispute refund amounts must be decimal strings, not JavaScript numbers', async () => {
 
     await expect(
-      disputes.resolveDispute(disputeId, { resolutionAmountToBuyer: 2500, resolvedBy: 'admin-1' })
-    ).rejects.toThrow(NotYetSpecifiedError);
+      disputes.resolveDispute(disputeId, {
+        outcome: 'split',
+        amount: 25,
+        reason: 'Partially refund the buyer.',
+        resolvedBy: 'admin-1',
+        sessionId: 'session-1',
+        stepUpGrant: 'grant-1',
+      })
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(db.withTransaction).not.toHaveBeenCalled();
   });
 });
 
@@ -136,7 +195,7 @@ describe('FR-43 delivered reservation-order compatibility', () => {
   });
 
   test('FR-43a: filing rejects more evidence URLs than the server limit', async () => {
-    await expect(disputes.fileDispute('order-1', 'buyer-1', {
+    await expect(fileDispute('order-1', 'buyer-1', {
       reasonText: 'The delivered item differs from the listing',
       evidenceUrls: [
         'https://example.test/one',
@@ -148,7 +207,7 @@ describe('FR-43 delivered reservation-order compatibility', () => {
   });
 
   test('FR-43a: filing rejects non-HTTPS evidence URLs', async () => {
-    await expect(disputes.fileDispute('order-1', 'buyer-1', {
+    await expect(fileDispute('order-1', 'buyer-1', {
       reasonText: 'The delivered item differs from the listing',
       evidenceUrls: ['javascript:alert(1)'],
     })).rejects.toMatchObject({ statusCode: 400 });
@@ -156,7 +215,7 @@ describe('FR-43 delivered reservation-order compatibility', () => {
   });
 
   test('FR-43b: filing rejects a blank free-text reason', async () => {
-    await expect(disputes.fileDispute('order-1', 'buyer-1', {
+    await expect(fileDispute('order-1', 'buyer-1', {
       reasonText: '  ',
       evidenceUrls: ['https://example.test/evidence'],
     })).rejects.toMatchObject({ statusCode: 400 });
@@ -168,18 +227,22 @@ describe('FR-43 delivered reservation-order compatibility', () => {
     const client = {
       query: jest.fn()
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [dispute] })
-        .mockResolvedValueOnce({ rows: [] }),
+        .mockResolvedValueOnce({ rows: [dispute] }),
     };
     db.withTransaction.mockImplementationOnce(async (callback) => callback(client));
     const emit = jest.spyOn(eventBus, 'emit').mockImplementation(() => true);
+    const pausePayoutHold = jest.fn().mockResolvedValue(undefined);
     try {
-      await expect(disputes.fileDispute('order-1', 'buyer-1', {
+      await expect(fileDispute('order-1', 'buyer-1', {
         reasonText: 'The delivered item differs from the listing',
         evidenceUrls: ['https://example.test/evidence.jpg'],
-      })).resolves.toEqual(dispute);
-      expect(client.query).toHaveBeenCalledTimes(3);
+      }, { pausePayoutHold })).resolves.toEqual(dispute);
+      expect(client.query).toHaveBeenCalledTimes(2);
       expect(client.query.mock.calls[1][0]).toContain("VALUES ($1, $2, $3, 'open')");
+      expect(pausePayoutHold).toHaveBeenCalledWith(client, expect.objectContaining({
+        orderId: 'order-1',
+        disputeId: dispute.id,
+      }));
       expect(emit).toHaveBeenCalled();
     } finally {
       emit.mockRestore();
@@ -193,7 +256,7 @@ describe('FR-43 delivered reservation-order compatibility', () => {
     db.withTransaction.mockImplementationOnce(async (callback) => callback(client));
     const emit = jest.spyOn(eventBus, 'emit').mockImplementation(() => true);
     try {
-      await expect(disputes.fileDispute('order-1', 'buyer-1', {
+      await expect(fileDispute('order-1', 'buyer-1', {
         reasonText: 'The delivered item differs from the listing',
         evidenceUrls: ['https://example.test/evidence.jpg'],
       })).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been filed') });
@@ -204,7 +267,7 @@ describe('FR-43 delivered reservation-order compatibility', () => {
     }
   });
 
-  test('FR-65: a dispute cannot be filed after the order is completed by payout release', async () => {
+  test('FR-69: a dispute after paid payout is audited without pausing the payout hold', async () => {
     jest.spyOn(orders, 'lockReservationOrderForHandover').mockResolvedValue({
       id: 'order-1',
       listing_id: 'listing-1',
@@ -213,16 +276,28 @@ describe('FR-43 delivered reservation-order compatibility', () => {
       status: 'completed',
       delivered_at: new Date(),
     });
-    const client = { query: jest.fn().mockResolvedValueOnce({ rows: [] }) };
+    const dispute = { id: 'dispute-1', order_id: 'order-1', status: 'open' };
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [dispute] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
     db.withTransaction.mockImplementationOnce(async (callback) => callback(client));
     const emit = jest.spyOn(eventBus, 'emit').mockImplementation(() => true);
+    const pausePayoutHold = jest.fn();
+    const getOrderPayoutStatus = jest.fn().mockResolvedValue('paid');
     try {
-      await expect(disputes.fileDispute('order-1', 'buyer-1', {
+      await expect(fileDispute('order-1', 'buyer-1', {
         reasonText: 'The delivered item differs from the listing',
         evidenceUrls: ['https://example.test/evidence.jpg'],
-      })).rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('already been released') });
-      expect(client.query).toHaveBeenCalledTimes(1);
-      expect(emit).not.toHaveBeenCalled();
+      }, { getOrderPayoutStatus, pausePayoutHold })).resolves.toEqual({
+        ...dispute,
+        dispute_after_payout: true,
+      });
+      expect(getOrderPayoutStatus).toHaveBeenCalledWith(client, 'order-1');
+      expect(pausePayoutHold).not.toHaveBeenCalled();
+      expect(emit).toHaveBeenCalled();
     } finally {
       emit.mockRestore();
     }
@@ -253,7 +328,7 @@ describe('FR-43, FR-45g dispute filing event transaction order', () => {
     });
 
     try {
-      await expect(disputes.fileDispute('order-1', 'buyer-1', {
+      await expect(fileDispute('order-1', 'buyer-1', {
         reasonText: 'The delivered item differs from the listing',
         evidenceUrls: ['https://example.test/evidence.jpg'],
       })).resolves.toEqual(dispute);
@@ -269,21 +344,21 @@ describe('FR-43, FR-45g dispute filing event transaction order', () => {
   });
 
   test('FR-45g: DISPUTE_FILED is not emitted when the transaction callback throws', async () => {
-    const transactionError = new Error('evidence insert failed');
+    const transactionError = new Error('payout hold write failed');
     const client = {
       query: jest.fn()
         .mockResolvedValueOnce({ rows: [] })
-        .mockResolvedValueOnce({ rows: [dispute] })
-        .mockRejectedValueOnce(transactionError),
+        .mockResolvedValueOnce({ rows: [dispute] }),
     };
     db.withTransaction.mockImplementationOnce(async (callback) => callback(client));
     const emit = jest.spyOn(eventBus, 'emit').mockImplementation(() => true);
+    const pausePayoutHold = jest.fn().mockRejectedValue(transactionError);
 
     try {
-      await expect(disputes.fileDispute('order-1', 'buyer-1', {
+      await expect(fileDispute('order-1', 'buyer-1', {
         reasonText: 'The delivered item differs from the listing',
         evidenceUrls: ['https://example.test/evidence.jpg'],
-      })).rejects.toBe(transactionError);
+      }, { pausePayoutHold })).rejects.toBe(transactionError);
       expect(emit).not.toHaveBeenCalled();
     } finally {
       emit.mockRestore();

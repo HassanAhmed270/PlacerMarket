@@ -1,167 +1,68 @@
 jest.mock('../../src/db.service', () => ({
   query: jest.fn(),
 }));
-jest.mock('../../src/modules/orders.service', () => ({
-  getMoneyLockContext: jest.fn(),
-}));
-jest.mock('../../src/modules/escrowPayments.service', () => ({
-  recordDisputeResolutionAuditEvent: jest.fn(),
-}));
+jest.mock('../../src/modules/orders.service', () => ({}));
+jest.mock('../../src/modules/escrowPayments.service', () => ({}));
 
-const orders = require('../../src/modules/orders.service');
-const escrowPayments = require('../../src/modules/escrowPayments.service');
 const payout = require('../../src/modules/payout.service');
-const eventBus = require('../../src/lib/eventBus');
-const events = require('../../src/lib/events');
 
-describe('FR-65 reservation payout hold dispute-resolution listener', () => {
+describe('FR-69 durable dispute payout-hold release', () => {
   const payload = {
     disputeId: 'dispute-1',
     orderId: 'order-1',
-    resolutionStatus: 'resolved_release',
+    resolutionStatus: 'resolved_other',
   };
-  const resolvedBy = 'admin-1';
   let transaction;
 
   beforeEach(() => {
-    jest.clearAllMocks();
     transaction = { query: jest.fn() };
-    orders.getMoneyLockContext.mockResolvedValue({
-      listing_id: 'listing-1',
-      buyer_id: 'buyer-1',
-      reservation_id: 'reservation-1',
-    });
-    escrowPayments.recordDisputeResolutionAuditEvent.mockResolvedValue(true);
-    jest.spyOn(eventBus, 'emitAsync').mockResolvedValue(true);
   });
 
-  afterEach(() => {
-    jest.restoreAllMocks();
-  });
-
-  test('FR-65: seller resolution resumes a paused hold and retains its dispute id', async () => {
+  test('FR-69: every decided outcome clears the matching paused hold transactionally', async () => {
     transaction.query
-      .mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] })
-      .mockResolvedValueOnce({ rows: [{ order_id: payload.orderId }] });
+      .mockResolvedValueOnce({
+        rows: [{ state: 'paused_for_dispute', dispute_id: payload.disputeId }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1 });
 
-    await payout.handleDisputeResolved(payload, { transaction, resolvedBy });
+    await payout.handleDisputeResolved(payload, { transaction });
 
     expect(transaction.query.mock.calls[0][0]).toMatch(/FOR UPDATE/i);
     expect(transaction.query.mock.calls[1][0]).toMatch(/SET state = 'held'/);
-    expect(escrowPayments.recordDisputeResolutionAuditEvent).toHaveBeenCalledWith(
-      transaction,
-      expect.objectContaining({
-        disputeId: payload.disputeId,
-        adminId: resolvedBy,
-        resolutionStatus: 'resolved_release',
-      })
-    );
-    expect(eventBus.emitAsync).not.toHaveBeenCalled();
+    expect(transaction.query.mock.calls[1][0]).toMatch(/dispute_id = \$2/);
+    expect(transaction.query.mock.calls[1][1]).toEqual([payload.orderId, payload.disputeId]);
   });
 
-  test('FR-72e: buyer resolution records one audit and requests one manual exception in the same transaction', async () => {
-    transaction.query.mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] });
-    escrowPayments.recordDisputeResolutionAuditEvent.mockResolvedValueOnce(true);
-
-    await payout.handleDisputeResolved(
-      { ...payload, resolutionStatus: 'resolved_refund' },
-      { transaction, resolvedBy }
-    );
-
-    expect(transaction.query).toHaveBeenCalledTimes(1);
-    expect(escrowPayments.recordDisputeResolutionAuditEvent).toHaveBeenCalledWith(
-      transaction,
-      expect.objectContaining({ adminId: resolvedBy, resolutionStatus: 'resolved_refund' })
-    );
-    expect(eventBus.emitAsync).toHaveBeenCalledWith(
-      events.DISPUTE_REFUND_EXCEPTION_REQUIRED,
-      { orderId: payload.orderId, disputeId: payload.disputeId, resolvedBy },
-      { transaction }
-    );
-  });
-
-  test('FR-45g: buyer resolution pauses a held payout before recording the exception', async () => {
+  test('FR-69: an absent, released, or mismatched hold is not changed', async () => {
     transaction.query
-      .mockResolvedValueOnce({ rows: [{ state: 'held' }] })
-      .mockResolvedValueOnce({ rows: [{ order_id: payload.orderId }] });
-
-    await payout.handleDisputeResolved(
-      { ...payload, resolutionStatus: 'resolved_refund' },
-      { transaction, resolvedBy }
-    );
-
-    expect(transaction.query.mock.calls[0][0]).toMatch(/FOR UPDATE/i);
-    expect(transaction.query.mock.calls[1][0]).toMatch(/SET state = 'paused_for_dispute', dispute_id = \$1/);
-    expect(transaction.query.mock.calls[1][1]).toEqual([payload.disputeId, payload.orderId]);
-    expect(escrowPayments.recordDisputeResolutionAuditEvent).toHaveBeenCalledWith(
-      transaction,
-      expect.objectContaining({
-        disputeId: payload.disputeId,
-        adminId: resolvedBy,
-        resolutionStatus: 'resolved_refund',
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({
+        rows: [{ state: 'released', dispute_id: payload.disputeId }],
       })
-    );
-    expect(eventBus.emitAsync).toHaveBeenCalledWith(
-      events.DISPUTE_REFUND_EXCEPTION_REQUIRED,
-      { orderId: payload.orderId, disputeId: payload.disputeId, resolvedBy },
-      { transaction }
-    );
+      .mockResolvedValueOnce({
+        rows: [{ state: 'paused_for_dispute', dispute_id: 'another-dispute' }],
+      });
+
+    await payout.handleDisputeResolved(payload, { transaction });
+    await payout.handleDisputeResolved(payload, { transaction });
+    await payout.handleDisputeResolved(payload, { transaction });
+    expect(transaction.query).toHaveBeenCalledTimes(3);
   });
 
-  test('FR-45g: buyer resolution records the audit and exception when no payout hold exists', async () => {
-    transaction.query.mockResolvedValueOnce({ rows: [] });
-
-    await payout.handleDisputeResolved(
-      { ...payload, resolutionStatus: 'resolved_refund' },
-      { transaction, resolvedBy }
-    );
-
-    expect(escrowPayments.recordDisputeResolutionAuditEvent).toHaveBeenCalledWith(
-      transaction,
-      expect.objectContaining({
-        disputeId: payload.disputeId,
-        adminId: resolvedBy,
-        resolutionStatus: 'resolved_refund',
-      })
-    );
-    expect(eventBus.emitAsync).toHaveBeenCalledWith(
-      events.DISPUTE_REFUND_EXCEPTION_REQUIRED,
-      { orderId: payload.orderId, disputeId: payload.disputeId, resolvedBy },
-      { transaction }
-    );
-  });
-
-  test('FR-72e: repeated buyer-resolution events do not request another exception or audit', async () => {
-    transaction.query
-      .mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] })
-      .mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] });
-    escrowPayments.recordDisputeResolutionAuditEvent
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false);
-
-    const refundPayload = { ...payload, resolutionStatus: 'resolved_refund' };
-    await payout.handleDisputeResolved(refundPayload, { transaction, resolvedBy });
-    await payout.handleDisputeResolved(refundPayload, { transaction, resolvedBy });
-
-    expect(eventBus.emitAsync).toHaveBeenCalledTimes(1);
-    expect(escrowPayments.recordDisputeResolutionAuditEvent).toHaveBeenCalledTimes(2);
-  });
-
-  test('FR-65: a non-paused hold or legacy order has no resolution side effects', async () => {
-    transaction.query.mockResolvedValueOnce({ rows: [{ state: 'released' }] });
-    await payout.handleDisputeResolved(payload, { transaction, resolvedBy });
-    expect(escrowPayments.recordDisputeResolutionAuditEvent).not.toHaveBeenCalled();
-    expect(eventBus.emitAsync).not.toHaveBeenCalled();
-
-    orders.getMoneyLockContext.mockResolvedValueOnce({ reservation_id: null });
-    await payout.handleDisputeResolved(payload, { transaction, resolvedBy });
-    expect(transaction.query).toHaveBeenCalledTimes(1);
-    expect(escrowPayments.recordDisputeResolutionAuditEvent).not.toHaveBeenCalled();
-  });
-
-  test('FR-65: a missing transaction is surfaced as an error', async () => {
+  test('FR-69: a missing transaction is surfaced as an error', async () => {
     await expect(payout.handleDisputeResolved(payload)).rejects.toThrow(
       'Dispute resolution payout effects require the resolution transaction.'
     );
+  });
+
+  test('FR-69: payout owner reports only a persisted paused dispute hold', async () => {
+    transaction.query
+      .mockResolvedValueOnce({ rows: [{ state: 'paused_for_dispute' }] })
+      .mockResolvedValueOnce({ rows: [{ state: 'held' }] })
+      .mockResolvedValueOnce({ rows: [] });
+
+    await expect(payout.hasPausedDisputeHold(transaction, payload.orderId)).resolves.toBe(true);
+    await expect(payout.hasPausedDisputeHold(transaction, payload.orderId)).resolves.toBe(false);
+    await expect(payout.hasPausedDisputeHold(transaction, payload.orderId)).resolves.toBe(false);
   });
 });

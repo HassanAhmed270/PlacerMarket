@@ -22,6 +22,9 @@ const SELLER_ORDER_KEYS = [
   'currency',
   'deliveredAt',
   'deliveryCity',
+  'disputeDecidedAt',
+  'disputeOutcome',
+  'disputeReason',
   'disputeStatus',
   'earnings',
   'fundedAt',
@@ -146,6 +149,9 @@ describe('FR-34 seller reservation-backed order reads', () => {
       fundsHeldForVerification: false,
       payoutHoldState: null,
       disputeStatus: null,
+      disputeOutcome: null,
+      disputeReason: null,
+      disputeDecidedAt: null,
     });
     expect(detail.body).toEqual(list.body.orders[0]);
 

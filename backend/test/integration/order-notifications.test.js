@@ -24,15 +24,29 @@ const notifications = require('../../src/modules/notifications.service');
 const moneyAudit = require('../../src/modules/moneyAudit.service');
 const payout = require('../../src/modules/payout.service');
 const disputes = require('../../src/modules/disputes.service');
+const sellerPayouts = require('../../src/modules/sellerPayouts.service');
 const listings = require('../../src/modules/listings.service');
 const queue = require('../../src/lib/queue');
 const { buildSignedFakeEvent } = require('../../src/lib/adapters/fakePaymentGateway');
 
 let harness;
 let scenario;
+let adminSessionId;
 
 beforeAll(async () => {
   harness = await createHarness();
+  adminSessionId = crypto.randomUUID();
+  await db.query(
+    `INSERT INTO auth_sessions
+       (id, family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at)
+     VALUES ($1, $2, $3, $4, now() + INTERVAL '1 hour', now() + INTERVAL '1 day')`,
+    [
+      adminSessionId,
+      crypto.randomUUID(),
+      harness.adminId,
+      crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex'),
+    ]
+  );
 });
 
 afterEach(async () => {
@@ -177,6 +191,20 @@ async function createRefundIntent(orderScenario, trigger) {
     ]
   );
   return rows[0].id;
+}
+
+async function createDisputeDecisionGrant() {
+  const grant = crypto.randomBytes(32).toString('base64url');
+  await db.query(
+    `INSERT INTO step_up_grants (token_hash, user_id, session_id, action, expires_at)
+     VALUES ($1, $2, $3, 'refund.decide', now() + INTERVAL '5 minutes')`,
+    [
+      crypto.createHash('sha256').update(grant).digest('hex'),
+      harness.adminId,
+      adminSessionId,
+    ]
+  );
+  return grant;
 }
 
 async function completeRefund(refundId) {
@@ -387,6 +415,9 @@ test('FR-51: the seller receives a dispute-filed notification', async () => {
   const dispute = await disputes.fileDispute(scenario.orderId, scenario.buyerId, {
     reasonText: 'The item arrived damaged.',
     evidenceUrls: ['https://example.test/evidence.jpg'],
+  }, {
+    getOrderPayoutStatus: sellerPayouts.getOrderPayoutStatus,
+    pausePayoutHold: payout.pausePayoutHoldForDispute,
   });
   await processQueuedNotification(
     events.DISPUTE_FILED,
@@ -407,22 +438,29 @@ test('FR-51: the seller receives a dispute-filed notification', async () => {
 });
 
 test.each([
-  ['seller', '0', 'A dispute on your sale was resolved.'],
-  ['buyer', '0', 'A dispute on your order was resolved.'],
-  ['seller', '1250.50', 'A dispute on your sale was resolved.'],
-  ['buyer', '1250.50', 'A dispute on your order was resolved.'],
-])('FR-51: %s receives a notification when a dispute is resolved', async (role, amount, message) => {
+  ['seller', 'seller_favor', undefined, 'A dispute on your sale was resolved.'],
+  ['buyer', 'seller_favor', undefined, 'A dispute on your order was resolved.'],
+  ['seller', 'buyer_favor', '1250.50', 'A dispute on your sale was resolved.'],
+  ['buyer', 'buyer_favor', '1250.50', 'A dispute on your order was resolved.'],
+])('FR-51: %s receives a notification when a dispute is resolved', async (role, outcome, amount, message) => {
   scenario = await createScenario(harness);
   await recordDelivery(scenario);
   const dispute = await disputes.fileDispute(scenario.orderId, scenario.buyerId, {
     reasonText: 'The item arrived damaged.',
     evidenceUrls: ['https://example.test/evidence.jpg'],
+  }, {
+    getOrderPayoutStatus: sellerPayouts.getOrderPayoutStatus,
+    pausePayoutHold: payout.pausePayoutHoldForDispute,
   });
   await global.drainIntegrationListeners(5000);
   await disputes.resolveDispute(dispute.id, {
-    resolutionAmountToBuyer: amount,
+    outcome,
+    ...(amount === undefined ? {} : { amount }),
+    reason: 'Resolution recorded for integration test.',
+    sellerAtFault: false,
     resolvedBy: harness.adminId,
-    resolutionNote: 'Resolution recorded for integration test.',
+    sessionId: adminSessionId,
+    stepUpGrant: await createDisputeDecisionGrant(),
   });
   const recipientId = role === 'seller' ? scenario.sellerId : scenario.buyerId;
   await processQueuedNotification(

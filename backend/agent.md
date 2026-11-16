@@ -187,8 +187,8 @@ add a guard where one isn't needed, and don't remove the two that exist.
 | FR | What's open | How the code handles it right now |
 |---|---|---|
 | **FR-33b** | COD refusal-at-the-door flow — undefined | `orders.service.handleRefusalAtDoor()` throws `NotYetSpecifiedError('FR-33b', ...)` unconditionally. Do not implement a guess. |
-| **FR-45a** | Dispute resolution granularity (partial refund) — undefined | `disputes.service.resolveDispute()` throws `NotYetSpecifiedError('FR-45a', ...)` if the amount is anything other than 0 or the full order total. Binary resolution works normally. |
-| **FR-50a** | Settlement math for a partial refund — blocked on FR-45a | `settlement.service.calculateSettlement()` carries the same guard defensively, fed by `resolutionAmountToBuyer` passed in from `payout.service.js` (not queried directly — see "Cross-module dependency map" below). |
+| **FR-45a** | Dispute outcome granularity — decided in Stage 5.4 | `disputes.service.resolveDispute()` supports Admin-only buyer_favor, seller_favor, and split outcomes with an action-bound step-up grant and exact-decimal refund amount. |
+| **FR-50a** | Settlement math for a partial refund — implemented in Stage 5.4 | `settlement.service.calculateSettlement()` receives the resolved amount from `payout.service.js` and computes exact decimal-string settlement values. |
 | **FR-18a** | Verified-badge criteria — undefined | **No guard.** `listings.service.setVerifiedBadge()` is a plain manual boolean a moderator sets after reviewing evidence — that IS the decided interim behavior. |
 | **FR-08b** | High-value listing pending registered-email verification under the temporary policy | Address verification is implemented in Phase 0 through an encrypted queue and single-use codes; live provider delivery remains pending. Current listing code blocks publication above the configured threshold. No manual identity-review path or `held_pending_id` status is used. Email verification confirms control of the address, not legal identity, and must not set `seller_profiles.id_verified`. |
 
@@ -209,17 +209,18 @@ purpose so the schema works whichever way this eventually gets decided.
   calls `disputes.service.hasOpenDispute()` **synchronously, directly** —
   never via the event bus. This gates an admin decision inside one request;
   it must not depend on whether an async event has been processed.
-- **FR-45g (auto-pause on dispute filed)**: the opposite case —
-  `payout.service.js` listens for `events.DISPUTE_FILED` on the event bus
-  and reactively pauses the hold. This IS appropriate here because it's a
-  side effect, not a gate on an in-flight decision. If you're adding new
-  cross-module behavior, use this same test: gating a decision in the same
-  request → direct call; reacting to something that already happened →
-  event.
+- **FR-45g (durable dispute pause)**: `disputes.routes.js` injects
+  `payout.service.pausePayoutHoldForDispute()` into `fileDispute()`, which writes
+  `payout_holds.state = 'paused_for_dispute'` in the same transaction as the
+  dispute. `sellerPayouts.service.js` checks that persisted hold before payout
+  creation, approval, payment, and retry; resolution clears the hold in its
+  transaction. Do not rely on an in-memory event for payout eligibility.
 - **FR-43 dispute filing**: `disputes.service.fileDispute()` uses the owning
   `listings`, `users`, `orders`, and `reservations` service functions for
   canonical lock order, then checks for an existing dispute while the order
-  is locked.
+  is locked. It reads payout status through `sellerPayouts.service.js` and
+  receives the `payout.service.js` hold-write function from the route, avoiding
+  a circular service dependency.
 - **FR-45 dispute resolution**: reservation-backed resolutions acquire the
   canonical listing, buyer, order, reservation and payment locks before
   updating the dispute. `payout.service.js` handles the awaited

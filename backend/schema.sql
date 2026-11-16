@@ -2100,3 +2100,16 @@ ALTER TABLE refunds
         AND item_amount + delivery_fee_amount = amount
       )
     );
+
+-- Migration: 033_dispute_outcomes.sql
+ALTER TABLE disputes
+  ADD COLUMN outcome TEXT
+    CHECK (outcome IN ('buyer_favor', 'seller_favor', 'split'));
+
+ALTER TABLE refunds
+  DROP CONSTRAINT refunds_trigger_check,
+  ADD CONSTRAINT refunds_trigger_check
+    CHECK (trigger IN (
+      'system_cancel', 'system_expiry', 'system_handover_timeout',
+      'manual_admin', 'dispute_admin'
+    ));

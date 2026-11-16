@@ -456,6 +456,58 @@ async function getRefundableAmount(client, order, payment) {
   return rows[0];
 }
 
+async function allocateRefundSplit(
+  client,
+  order,
+  payment,
+  amount,
+  sellerAtFault,
+  excludedRefundId = null,
+  mustBePartial = false
+) {
+  const amountMinor = moneyToMinorUnits(amount, 'amount');
+  if (mustBePartial && amountMinor >= moneyToMinorUnits(String(payment.amount), 'capturedAmount')) {
+    throw new ValidationError('A split outcome must refund less than the captured total.');
+  }
+  const { rows: reservedRows } = await client.query(
+    `SELECT COALESCE(SUM(amount), 0)::text AS reserved_amount
+     FROM refunds
+     WHERE payment_id = $1 AND status = ANY($2::text[])
+       AND ($3::uuid IS NULL OR id <> $3)`,
+    [payment.id, MANUAL_REFUND_RESERVED_STATUSES, excludedRefundId]
+  );
+  if (moneyToMinorUnits(reservedRows[0].reserved_amount, 'reservedAmount') + amountMinor >
+      moneyToMinorUnits(String(payment.amount), 'capturedAmount')) {
+    throw new ConflictError('Refund amount exceeds the remaining refundable balance.');
+  }
+
+  const { rows: priorRefundRows } = await client.query(
+    `SELECT COALESCE(SUM(COALESCE(item_amount, amount)), 0)::text AS refunded_item_amount,
+            COALESCE(SUM(COALESCE(delivery_fee_amount, 0)), 0)::text AS refunded_delivery_fee
+     FROM refunds
+     WHERE payment_id = $1 AND status = ANY($2::text[])
+       AND ($3::uuid IS NULL OR id <> $3)`,
+    [payment.id, MANUAL_REFUND_RESERVED_STATUSES, excludedRefundId]
+  );
+  const itemPrice = moneyToMinorUnits(String(order.agreed_item_price), 'itemPrice');
+  const deliveryFee = moneyToMinorUnits(String(order.delivery_fee), 'deliveryFee');
+  const alreadyRefundedItem = moneyToMinorUnits(priorRefundRows[0].refunded_item_amount, 'refundedItemAmount');
+  const alreadyRefundedDelivery = moneyToMinorUnits(priorRefundRows[0].refunded_delivery_fee, 'refundedDeliveryFee');
+  const itemRemaining = itemPrice > alreadyRefundedItem ? itemPrice - alreadyRefundedItem : 0n;
+  const deliveryRemaining = deliveryFee > alreadyRefundedDelivery ? deliveryFee - alreadyRefundedDelivery : 0n;
+  const itemAmount = amountMinor < itemRemaining ? amountMinor : itemRemaining;
+  const deliveryFeeAmount = amountMinor - itemAmount;
+  if (deliveryFeeAmount > 0n &&
+      (!(sellerAtFault || !order.delivered_at) || deliveryFeeAmount !== deliveryRemaining)) {
+    throw new ConflictError('The delivery fee can only be refunded in full when the seller is at fault or the item was never delivered.');
+  }
+  return {
+    amount: minorUnitsToMoney(amountMinor),
+    itemAmount: minorUnitsToMoney(itemAmount),
+    deliveryFeeAmount: minorUnitsToMoney(deliveryFeeAmount),
+  };
+}
+
 /** FR-69, SEC-39: calculate the full captured balance and expire stale requests atomically. */
 async function getRefundableBalance(orderId, actorId) {
   const result = await db.withTransaction(async (client) => {
@@ -670,6 +722,7 @@ async function decideManualRefund(refundId, actorId, sessionId, input, {
     let paidAfterPayout = false;
     let itemAmount = null;
     let deliveryFeeAmount = null;
+    let refundAmount = null;
     const sellerAtFault = input.sellerAtFault === true;
     if (input.sellerAtFault !== undefined && typeof input.sellerAtFault !== 'boolean') {
       throw new ValidationError('sellerAtFault must be a boolean.');
@@ -681,42 +734,17 @@ async function decideManualRefund(refundId, actorId, sessionId, input, {
         throw new ConflictError('Refund approval is blocked while an initiated payout remains unpaid.');
       }
 
-      const { rows: reservedRows } = await client.query(
-        `SELECT COALESCE(SUM(amount), 0)::text AS reserved_amount
-         FROM refunds
-         WHERE payment_id = $1 AND status = ANY($2::text[]) AND id <> $3`,
-        [payment.id, MANUAL_REFUND_RESERVED_STATUSES, refundId]
+      const split = await allocateRefundSplit(
+        client,
+        order,
+        payment,
+        refund.amount,
+        sellerAtFault,
+        refundId
       );
-      if (moneyToMinorUnits(reservedRows[0].reserved_amount, 'reservedAmount') +
-          moneyToMinorUnits(refund.amount, 'amount') >
-          moneyToMinorUnits(String(payment.amount), 'capturedAmount')) {
-        throw new ConflictError('Refund amount exceeds the remaining refundable balance.');
-      }
-
-      const { rows: priorRefundRows } = await client.query(
-        `SELECT COALESCE(SUM(COALESCE(item_amount, amount)), 0)::text AS refunded_item_amount,
-                COALESCE(SUM(COALESCE(delivery_fee_amount, 0)), 0)::text AS refunded_delivery_fee
-         FROM refunds
-         WHERE order_id = $1 AND status = ANY($3::text[])
-           AND id <> $2`,
-        [order.id, refundId, MANUAL_REFUND_RESERVED_STATUSES]
-      );
-      const itemPrice = moneyToMinorUnits(String(order.agreed_item_price), 'itemPrice');
-      const deliveryFee = moneyToMinorUnits(String(order.delivery_fee), 'deliveryFee');
-      const alreadyRefundedItem = moneyToMinorUnits(priorRefundRows[0].refunded_item_amount, 'refundedItemAmount');
-      const alreadyRefundedDelivery = moneyToMinorUnits(priorRefundRows[0].refunded_delivery_fee, 'refundedDeliveryFee');
-      const itemRemaining = itemPrice > alreadyRefundedItem ? itemPrice - alreadyRefundedItem : 0n;
-      const deliveryRemaining = deliveryFee > alreadyRefundedDelivery ? deliveryFee - alreadyRefundedDelivery : 0n;
-      const amountMinor = moneyToMinorUnits(refund.amount, 'amount');
-      const deliveryAllowed = sellerAtFault || !order.delivered_at;
-      itemAmount = amountMinor < itemRemaining ? amountMinor : itemRemaining;
-      deliveryFeeAmount = amountMinor - itemAmount;
-      if (deliveryFeeAmount > 0n &&
-          (!deliveryAllowed || deliveryFeeAmount !== deliveryRemaining)) {
-        throw new ConflictError('The delivery fee can only be refunded in full when the seller is at fault or the item was never delivered.');
-      }
-      itemAmount = minorUnitsToMoney(itemAmount);
-      deliveryFeeAmount = minorUnitsToMoney(deliveryFeeAmount);
+      refundAmount = split.amount;
+      itemAmount = split.itemAmount;
+      deliveryFeeAmount = split.deliveryFeeAmount;
       paidAfterPayout = payoutStatus === 'paid' ||
         await isOrderPayoutReleased(client, order.id);
     }
@@ -751,7 +779,7 @@ async function decideManualRefund(refundId, actorId, sessionId, input, {
         trigger: 'manual_admin',
         decision: input.decision,
         ...(input.decision === 'approved' ? {
-          amount: refund.amount,
+          amount: refundAmount,
           itemAmount,
           deliveryFeeAmount,
           sellerAtFault,
@@ -798,19 +826,167 @@ async function decideManualRefund(refundId, actorId, sessionId, input, {
   return result.response;
 }
 
+/** FR-69: create an Admin-decided dispute refund through the captured-refund path. */
+async function createDisputeRefund(client, {
+  orderId,
+  disputeId,
+  actorId,
+  amount,
+  reason,
+  sellerAtFault = false,
+  mustBePartial = false,
+}) {
+  if (typeof amount !== 'string') {
+    throw new ValidationError('amount must be a positive decimal string with at most two decimal places.');
+  }
+  const amountMinor = moneyToMinorUnits(amount, 'amount');
+  if (amountMinor === 0n) throw new ValidationError('amount must be greater than zero.');
+  if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 300) {
+    throw new ValidationError('reason must be 3 to 300 characters.');
+  }
+  if (typeof sellerAtFault !== 'boolean') {
+    throw new ValidationError('sellerAtFault must be a boolean.');
+  }
+
+  const { order, payment } = await lockManualRefundContext(client, orderId);
+  const split = await allocateRefundSplit(
+    client,
+    order,
+    payment,
+    minorUnitsToMoney(amountMinor),
+    sellerAtFault,
+    null,
+    mustBePartial
+  );
+  const { rows: payoutRows } = await client.query(
+    `SELECT
+       EXISTS (
+         SELECT 1 FROM seller_payouts
+         WHERE order_id = $1 AND status = 'initiated'
+       ) AS unpaid_payout,
+       EXISTS (
+         SELECT 1 FROM seller_payouts
+         WHERE order_id = $1 AND status = 'paid'
+       ) OR EXISTS (
+         SELECT 1 FROM payout_holds
+         WHERE order_id = $1 AND state IN ('released', 'force_released')
+       ) AS paid_after_payout`,
+    [orderId]
+  );
+  if (payoutRows[0].unpaid_payout) {
+    throw new ConflictError('Refund approval is blocked while an initiated payout remains unpaid.');
+  }
+
+  const refundId = randomUUID();
+  const normalizedReason = reason.trim();
+  await client.query(
+    `INSERT INTO refunds
+       (id, payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+        approved_by, approved_at, reason, decision_note, item_amount, delivery_fee_amount,
+        seller_at_fault, decided_by)
+     VALUES ($1, $2, $3, 'dispute_admin', $4::numeric, $5, 'approved', $6,
+             $7, now(), $8, $8, $9::numeric, $10::numeric, $11, $7)`,
+    [
+      refundId,
+      payment.id,
+      orderId,
+      split.amount,
+      payment.currency,
+      `refund:${payment.id}:dispute:${disputeId}`,
+      actorId,
+      normalizedReason,
+      split.itemAmount,
+      split.deliveryFeeAmount,
+      sellerAtFault,
+    ]
+  );
+  await enqueueRefundJob(client, refundId);
+  await moneyAudit.recordMoneyAuditEvent(client, {
+    actorId,
+    action: 'dispute_refund_approved',
+    orderId,
+    paymentId: payment.id,
+    refundId,
+    approvedBy: actorId,
+    reason: normalizedReason,
+    metadata: {
+      disputeId,
+      amount: split.amount,
+      itemAmount: split.itemAmount,
+      deliveryFeeAmount: split.deliveryFeeAmount,
+      sellerAtFault,
+      decidedBy: actorId,
+    },
+  });
+  if (payoutRows[0].paid_after_payout) {
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId,
+      action: 'refund_after_payout',
+      orderId,
+      paymentId: payment.id,
+      refundId,
+      approvedBy: actorId,
+      reason: normalizedReason,
+      metadata: {
+        disputeId,
+        amount: split.amount,
+        itemAmount: split.itemAmount,
+        deliveryFeeAmount: split.deliveryFeeAmount,
+        sellerAtFault,
+      },
+    });
+  }
+  return {
+    refundId,
+    amount: split.amount,
+    itemAmount: split.itemAmount,
+    deliveryFeeAmount: split.deliveryFeeAmount,
+    sellerAtFault,
+    refundAfterPayout: payoutRows[0].paid_after_payout,
+    capturedAmount: String(payment.amount),
+  };
+}
+
 /** FR-69: expire stale requests and block seller payout while a manual refund is unresolved. */
 async function assertNoOpenManualRefund(client, orderId, actorId) {
   const expiredRefunds = await expireManualRefundRequests(client, orderId, null, actorId);
   const { rows } = await client.query(
     `SELECT id
      FROM refunds
-     WHERE order_id = $1 AND trigger = 'manual_admin'
-       AND status IN ('requested', 'approved', 'pending', 'failed')
+     WHERE order_id = $1
+       AND (
+         (trigger = 'manual_admin' AND status IN ('requested', 'approved', 'pending', 'failed'))
+         OR (trigger = 'dispute_admin' AND status IN ('approved', 'pending', 'failed'))
+       )
      LIMIT 1`,
     [orderId]
   );
-  if (rows[0]) throw new ConflictError('An open manual refund request blocks payout release.');
+  if (rows[0]) throw new ConflictError('An open refund blocks payout release.');
   return expiredRefunds;
+}
+
+/** FR-69: check whether a dispute refund still blocks seller payout. */
+async function hasOpenDisputeRefund(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT id
+     FROM refunds
+     WHERE order_id = $1 AND trigger = 'dispute_admin'
+       AND status IN ('approved', 'pending', 'failed')
+     LIMIT 1`,
+    [orderId]
+  );
+  return rows.length > 0;
+}
+
+/** FR-69: return succeeded item-refund amount as a decimal string for settlement. */
+async function getSucceededRefundedItemAmount(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT COALESCE(SUM(COALESCE(item_amount, amount)), 0)::text AS refunded_item_amount
+     FROM refunds
+     WHERE order_id = $1 AND status = 'succeeded'`,
+    [orderId]
+  );
+  return rows[0].refunded_item_amount;
 }
 
 /** FR-69: publish committed refund status changes through the notification event path. */
@@ -2004,9 +2180,9 @@ async function reenqueueOrphanRefund(refundContext) {
       `SELECT id
        FROM refunds
        WHERE id = $1 AND (
-         (trigger <> 'manual_admin' AND status = 'requested'
+         (trigger NOT IN ('manual_admin', 'dispute_admin') AND status = 'requested'
            AND requested_at <= now() - INTERVAL '2 minutes')
-         OR (trigger = 'manual_admin' AND status = 'approved'
+         OR (trigger IN ('manual_admin', 'dispute_admin') AND status = 'approved'
            AND approved_at <= now() - INTERVAL '2 minutes')
          OR (status = 'pending' AND updated_at <= now() - INTERVAL '10 minutes')
          OR (status = 'failed'
@@ -2111,9 +2287,9 @@ async function reconcileMoneyState({ limit = 100, timeBudgetMs = 20000, logger =
   const { rows: refundRows } = await db.read(
     `SELECT id, order_id, payment_id
      FROM refunds
-     WHERE (trigger <> 'manual_admin' AND status = 'requested'
+     WHERE (trigger NOT IN ('manual_admin', 'dispute_admin') AND status = 'requested'
               AND requested_at <= now() - INTERVAL '2 minutes')
-        OR (trigger = 'manual_admin' AND status = 'approved'
+        OR (trigger IN ('manual_admin', 'dispute_admin') AND status = 'approved'
               AND approved_at <= now() - INTERVAL '2 minutes')
         OR (status = 'pending' AND updated_at <= now() - INTERVAL '10 minutes')
         OR (status = 'failed'
@@ -2170,7 +2346,10 @@ module.exports = {
   getAdminManualRefund,
   requestManualRefund,
   decideManualRefund,
+  createDisputeRefund,
   assertNoOpenManualRefund,
+  hasOpenDisputeRefund,
+  getSucceededRefundedItemAmount,
   notifyRefundStatusChanges,
   createOrReusePayment,
   getPaymentStatus,

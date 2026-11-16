@@ -578,6 +578,9 @@ describe('known schema and service mismatches', () => {
   test('FR-84, SEC-09/10: one-time bootstrap creates an Argon2id admin with encrypted, verified TOTP and refuses reruns', async () => {
     const email = `bootstrap-${Date.now()}@example.test`;
     registrationPhone = `+1888${Date.now().toString().slice(-9)}`;
+    const { rows: previousAdmins } = await db.query(
+      "UPDATE users SET role = 'buyer' WHERE role = 'admin' RETURNING id"
+    );
     const previousTotpKey = process.env.STAFF_TOTP_ENCRYPTION_SECRET;
     process.env.STAFF_TOTP_ENCRYPTION_SECRET = 'integration-staff-totp-encryption-key-material';
     const secret = generateTotpSecret();
@@ -585,8 +588,10 @@ describe('known schema and service mismatches', () => {
       name: 'Bootstrap Admin', email, phone: registrationPhone,
       password: 'bootstrap-admin-password-2026', totpSecret: secret, totpCode: generateTotpCode(secret),
     };
+    let createdAdminId;
     try {
       const result = await users.createInitialAdmin(input);
+      createdAdminId = result.id;
       expect(result).toMatchObject({ email, role: 'admin' });
       const { rows } = await db.query(`SELECT u.password_hash, t.encrypted_secret, t.enabled_at
         FROM users u JOIN staff_totp_credentials t ON t.user_id = u.id WHERE u.id = $1`, [result.id]);
@@ -595,8 +600,24 @@ describe('known schema and service mismatches', () => {
       expect(rows[0].enabled_at).not.toBeNull();
       await expect(users.createInitialAdmin(input)).rejects.toThrow('one-time only');
     } finally {
-      if (previousTotpKey === undefined) delete process.env.STAFF_TOTP_ENCRYPTION_SECRET;
-      else process.env.STAFF_TOTP_ENCRYPTION_SECRET = previousTotpKey;
+      try {
+        try {
+          if (createdAdminId) {
+            await db.query('DELETE FROM staff_totp_credentials WHERE user_id = $1', [createdAdminId]);
+            await db.query('DELETE FROM users WHERE id = $1', [createdAdminId]);
+          }
+        } finally {
+          if (previousAdmins.length) {
+            await db.query(
+              "UPDATE users SET role = 'admin' WHERE id = ANY($1::uuid[])",
+              [previousAdmins.map((user) => user.id)]
+            );
+          }
+        }
+      } finally {
+        if (previousTotpKey === undefined) delete process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+        else process.env.STAFF_TOTP_ENCRYPTION_SECRET = previousTotpKey;
+      }
     }
   });
 

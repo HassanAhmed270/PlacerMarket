@@ -18,11 +18,8 @@
  *   in settlement.service.calculateSettlement().
  * - settlement.service.calculateSettlement() at release time (FR-47).
  *
- * FR-45g (auto-pause on dispute filed) is the one place this module reacts
- * to an EVENT rather than a direct call — see the eventBus.on() below. This
- * is intentionally different from FR-45f: pausing a hold when a dispute is
- * filed is a reactive side effect, not a gate on an in-flight decision, so
- * the async event bus is an appropriate fit here (see lib/eventBus.js).
+ * Opening and deciding disputes update payout_holds in their own database
+ * transactions; payout eligibility never relies on an in-process event.
  *
  * startHold() is called ONLY from payments.service.confirmCodCollection()
  * (FR-38's trigger). Do not call it from anywhere else.
@@ -43,86 +40,79 @@ const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const { NotFoundError, ValidationError, ForbiddenError, ConflictError } = require('../lib/errors');
 
-// ---- FR-45g: reactive pause on dispute filed ----
-
-eventBus.on(events.DISPUTE_FILED, async ({ orderId, disputeId }) => {
-  try {
-    await db.query(
-      `UPDATE payout_holds SET state = 'paused_for_dispute', dispute_id = $1
-       WHERE order_id = $2 AND state = 'held'`,
-      [disputeId, orderId]
-    );
-  } catch (err) {
-    // Listener must never throw back into the emitter (see lib/eventBus.js) — log and move on.
-    // eslint-disable-next-line no-console
-    console.error('Failed to pause payout hold for dispute', { orderId, disputeId, err });
-  }
-});
-
-/** FR-45: resume or block a reservation payout atomically with dispute resolution. */
-async function handleDisputeResolved({
-  disputeId, orderId, resolutionStatus,
-}, context = {}) {
-  const { transaction: client, resolvedBy } = context;
+/** FR-45, FR-69: release the durable order hold atomically with dispute decision. */
+async function handleDisputeResolved({ disputeId, orderId }, context = {}) {
+  const { transaction: client } = context;
   if (!client) {
     throw new TypeError('Dispute resolution payout effects require the resolution transaction.');
   }
 
-  const order = await orders.getMoneyLockContext(client, orderId);
-  if (!order || !order.reservation_id) return;
-
   const { rows: holdRows } = await client.query(
-    `SELECT state
+    `SELECT state, dispute_id
      FROM payout_holds
      WHERE order_id = $1
      FOR UPDATE`,
     [orderId]
   );
   const hold = holdRows[0];
-
-  if (resolutionStatus === 'resolved_release') {
-    if (!hold || hold.state !== 'paused_for_dispute') return;
-    const { rows: resumedRows } = await client.query(
-      `UPDATE payout_holds
-       SET state = 'held'
-       WHERE order_id = $1 AND state = 'paused_for_dispute'
-       RETURNING order_id`,
-      [orderId]
-    );
-    if (!resumedRows[0]) return;
-    await escrowPayments.recordDisputeResolutionAuditEvent(client, {
-      orderId, adminId: resolvedBy, disputeId, resolutionStatus,
-    });
-    return;
-  }
-
-  if (resolutionStatus !== 'resolved_refund') return;
-
-  if (hold && hold.state === 'held') {
-    await client.query(
-      `UPDATE payout_holds
-       SET state = 'paused_for_dispute', dispute_id = $1
-       WHERE order_id = $2 AND state = 'held'`,
-      [disputeId, orderId]
-    );
-  }
-
-  const auditRecorded = await escrowPayments.recordDisputeResolutionAuditEvent(client, {
-    orderId, adminId: resolvedBy, disputeId, resolutionStatus,
-  });
-  if (!auditRecorded) return;
-
-  const exceptionListenerRegistered = await eventBus.emitAsync(
-    events.DISPUTE_REFUND_EXCEPTION_REQUIRED,
-    { orderId, disputeId, resolvedBy },
-    { transaction: client }
+  if (!hold || hold.state !== 'paused_for_dispute' || hold.dispute_id !== disputeId) return;
+  await client.query(
+    `UPDATE payout_holds
+     SET state = 'held'
+     WHERE order_id = $1 AND state = 'paused_for_dispute' AND dispute_id = $2`,
+    [orderId, disputeId]
   );
-  if (!exceptionListenerRegistered) {
-    throw new TypeError('The delivery exception owner is not listening for dispute refund exceptions.');
-  }
 }
 
 eventBus.on(events.DISPUTE_RESOLVED, handleDisputeResolved);
+
+/** FR-69: report whether the order has a durable unresolved-dispute payout hold. */
+async function hasPausedDisputeHold(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT state
+     FROM payout_holds
+     WHERE order_id = $1`,
+    [orderId]
+  );
+  return rows[0]?.state === 'paused_for_dispute';
+}
+
+/** FR-69: bundle owner checks for payout operations without service cycles. */
+function getDisputePayoutGuards() {
+  return {
+    hasPausedDisputeHold,
+    hasOpenDispute: disputes.hasOpenDisputeInTransaction,
+    hasOpenDisputeRefund: escrowPayments.hasOpenDisputeRefund,
+  };
+}
+
+/** FR-69: expose the durable dispute hold state to an Admin payout detail read. */
+async function getDisputeHoldStatus(orderId) {
+  const hasPausedHold = await hasPausedDisputeHold(db, orderId);
+  const hasOpenDispute = await disputes.hasOpenDispute(orderId);
+  return hasPausedHold || hasOpenDispute;
+}
+
+/** FR-45g: persist a dispute hold inside the transaction that opens the dispute. */
+async function pausePayoutHoldForDispute(client, {
+  orderId,
+  payoutHoldDays,
+  complaintWindowDays,
+  disputeId,
+}) {
+  const { rows } = await client.query(
+    `INSERT INTO payout_holds
+       (order_id, hold_started_at, hold_window_days, complaint_window_days, state, dispute_id)
+     VALUES ($1, now(), $2, $3, 'paused_for_dispute', $4)
+     ON CONFLICT (order_id) DO UPDATE
+     SET state = 'paused_for_dispute', dispute_id = EXCLUDED.dispute_id, released_at = NULL
+     RETURNING state, dispute_id`,
+    [orderId, payoutHoldDays, complaintWindowDays, disputeId]
+  );
+  if (rows[0]?.state !== 'paused_for_dispute' || rows[0].dispute_id !== disputeId) {
+    throw new ConflictError('The order hold could not be paused for the dispute.');
+  }
+}
 
 // ---- FR-45b, FR-45c: start hold ----
 
@@ -225,7 +215,7 @@ async function releasePayout(orderId, { releasedVia = 'scheduled' } = {}) {
   const settlementRecord = await settlement.calculateSettlement(orderId, {
     agreedItemPrice,
     resolutionAmountToBuyer,
-  }); // FR-47; throws NotYetSpecifiedError('FR-50a', ...) if a partial-refund case slips through
+  }); // FR-47; the settlement helper applies the exact resolved refund amount.
 
   const { rows } = await db.query(
     `UPDATE payout_holds SET state = $1, released_at = now() WHERE order_id = $2 RETURNING *`,
@@ -254,7 +244,7 @@ async function checkAndReleaseDuePayouts() {
   );
   const results = [];
   for (const { order_id: orderId } of due) {
-    if (await disputes.hasOpenDispute(orderId)) continue; // defensive; FR-45g should have already paused this
+    if (await disputes.hasOpenDispute(orderId)) continue; // defensive; fileDispute also persists the hold.
     results.push(await releasePayout(orderId, { releasedVia: 'scheduled' }));
   }
   return results;
@@ -380,13 +370,7 @@ async function releaseReservationPayout(orderId, adminId, input) {
       );
     }
 
-    const { rows: refundRows } = await client.query(
-      `SELECT COALESCE(SUM(amount), 0)::text AS refunded_item_amount
-       FROM refunds
-       WHERE order_id = $1 AND status = 'succeeded'`,
-      [orderId]
-    );
-    const refundedItemAmount = refundRows[0]?.refunded_item_amount || '0.00';
+    const refundedItemAmount = await escrowPayments.getSucceededRefundedItemAmount(client, orderId);
     const amounts = settlement.calculateReservationSettlement(
       reservation.item_price_snapshot,
       reservation.commission_percent_snapshot,
@@ -420,7 +404,7 @@ async function releaseReservationPayout(orderId, adminId, input) {
           amount: amounts.sellerNetAmount,
           currency: reservation.currency,
           initiatedBy: adminId,
-        });
+        }, getDisputePayoutGuards());
       } else {
         heldFundsRow = await sellerHeldFunds.holdFundsForUnverifiedSeller(client, {
           orderId,
@@ -502,6 +486,7 @@ async function isOrderPayoutReleased(client, orderId) {
 
 /** FR-45h, FR-44: HELD orders + open dispute status in ONE view, not two separate screens. */
 async function getHeldOrdersWithDisputeStatus() {
+  // cross-module read: disputes (owned by disputes.service.js) in the combined Admin queue.
   const { rows } = await db.query(
     `SELECT ph.*, d.id AS open_dispute_id, d.status AS dispute_status
      FROM payout_holds ph
@@ -515,6 +500,10 @@ async function getHeldOrdersWithDisputeStatus() {
 module.exports = {
   startHold,
   startHoldForReservationOrder,
+  pausePayoutHoldForDispute,
+  hasPausedDisputeHold,
+  getDisputePayoutGuards,
+  getDisputeHoldStatus,
   getReservationOrderHold,
   getSellerOrderHoldStates,
   getAdminOrderHoldSnapshot,
