@@ -32,6 +32,52 @@ describe('FR-77d: notification event listeners enqueue durable jobs', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 
+  test('FR-43c: evidence notification jobs are idempotent and identify only the submitting party', async () => {
+    const payload = {
+      disputeId: 'dispute-1',
+      orderId: 'order-1',
+      evidenceId: 'evidence-1',
+      submittedBy: 'buyer',
+    };
+    eventBus.emit(events.DISPUTE_EVIDENCE_ADDED, payload);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(queue.enqueue).toHaveBeenCalledWith('notifications', {
+      eventName: events.DISPUTE_EVIDENCE_ADDED,
+      payload,
+    }, {
+      idempotencyKey: 'dispute-evidence:evidence-1',
+      orderingKey: 'dispute:dispute-1',
+    });
+    expect(JSON.stringify(payload)).not.toContain('buyer-id');
+  });
+
+  test('FR-43c: evidence notification goes only to the other order party with generic content', async () => {
+    const transactionDb = { executeSql: jest.fn()
+      .mockResolvedValueOnce({ rows: [{ buyer_id: 'buyer-1', seller_id: 'seller-1' }] })
+      .mockResolvedValueOnce({ rows: [] }) };
+    const payload = {
+      disputeId: 'dispute-1',
+      orderId: 'order-1',
+      evidenceId: 'evidence-1',
+      submittedBy: 'buyer',
+    };
+
+    await notifications.processNotificationJob({
+      eventName: events.DISPUTE_EVIDENCE_ADDED,
+      payload,
+    }, transactionDb);
+
+    const notification = JSON.parse(transactionDb.executeSql.mock.calls[1][1][1]);
+    expect(transactionDb.executeSql.mock.calls[1][1][0]).toBe('seller-1');
+    expect(notification).toEqual({
+      orderId: 'order-1',
+      message: 'New evidence was added to the dispute.',
+      href: '/orders/order-1',
+    });
+    expect(JSON.stringify(notification)).not.toContain('buyer-1');
+  });
+
   test('FR-77a: mapped business events enqueue using the caller transaction', async () => {
     const transaction = { query: jest.fn() };
     const payload = { listingId: 'listing-42', status: 'published' };

@@ -25,6 +25,7 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.DELIVERY_STATUS_CHANGED,
   events.DISPUTE_RESOLVED,
   events.DISPUTE_FILED,
+  events.DISPUTE_EVIDENCE_ADDED,
   events.DISPUTE_RESOLUTION_COMMITTED,
   events.RETURN_REQUESTED,
   events.RETURN_SELLER_RESPONDED,
@@ -72,6 +73,16 @@ function jobKeys(eventName, payload) {
     return {
       idempotencyKey: `held-funds-reminder:${payload.heldFundsId}:${Number(payload.milestone)}`,
       orderingKey: `order:${payload.orderId}`,
+    };
+  }
+  if (eventName === events.DISPUTE_EVIDENCE_ADDED) {
+    if (!payload.disputeId || !payload.orderId || !payload.evidenceId ||
+        !['buyer', 'seller'].includes(payload.submittedBy)) {
+      throw new TypeError('Dispute evidence notification is missing its evidence or party details.');
+    }
+    return {
+      idempotencyKey: `dispute-evidence:${payload.evidenceId}`,
+      orderingKey: `dispute:${payload.disputeId}`,
     };
   }
   if ([events.DISPUTE_FILED, events.DISPUTE_RESOLUTION_COMMITTED].includes(eventName)) {
@@ -199,6 +210,28 @@ async function processNotificationJob(job, transactionDb) {
       transaction: transactionDb,
       startAfter: '15 minutes',
     });
+    return;
+  }
+
+  if (job.eventName === events.DISPUTE_EVIDENCE_ADDED) {
+    const { rows } = await transactionDb.executeSql(
+      'SELECT buyer_id, seller_id FROM orders WHERE id = $1',
+      [job.payload.orderId]
+    );
+    const order = rows[0];
+    if (!order) return;
+    const recipientId = job.payload.submittedBy === 'buyer' ? order.seller_id : order.buyer_id;
+    const href = `/orders/${encodeURIComponent(job.payload.orderId)}`;
+    await transactionDb.executeSql(
+      `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
+       VALUES ($1, 'dispute_evidence_added', $2, $3)
+       ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+      [
+        recipientId,
+        JSON.stringify({ orderId: job.payload.orderId, message: 'New evidence was added to the dispute.', href }),
+        `dispute_evidence_added:${job.payload.evidenceId}`,
+      ]
+    );
     return;
   }
 

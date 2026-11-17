@@ -31,9 +31,32 @@ const {
 } = require('../lib/errors');
 
 const MAX_EVIDENCE_URLS = 2;
+const MAX_DISPUTE_EVIDENCE_ITEMS = 10;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DISPUTE_OUTCOMES = new Set(['buyer_favor', 'seller_favor', 'split']);
 
+function validateDisputeId(disputeId) {
+  if (typeof disputeId !== 'string' || !UUID.test(disputeId)) {
+    throw new ValidationError('disputeId must be a UUID.');
+  }
+}
+
+function normalizeAdditionalEvidence(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new ValidationError('Evidence must contain a note or mediaReference.');
+  }
+  const keys = Object.keys(input);
+  if (keys.some((key) => !['note', 'mediaReference'].includes(key)) || keys.length !== 1) {
+    throw new ValidationError('Evidence must contain exactly one note or mediaReference.');
+  }
+  if (Object.hasOwn(input, 'note')) {
+    if (typeof input.note !== 'string' || input.note.trim().length < 3 || input.note.trim().length > 500) {
+      throw new ValidationError('Evidence notes must be 3 to 500 characters.');
+    }
+    return { note: input.note.trim(), fileUrl: null };
+  }
+  return { note: null, fileUrl: normalizeEvidenceUrls([input.mediaReference])[0] };
+}
 function normalizeEvidenceUrls(evidenceUrls) {
   if (!Array.isArray(evidenceUrls) || evidenceUrls.length === 0) {
     throw new ValidationError('At least one evidence photo/file is required to file a dispute (FR-43a)');
@@ -215,32 +238,225 @@ async function getBuyerDisputeFilingStatus(order) {
  * else if that changes.
  */
 async function submitCounterEvidence(disputeId, sellerId, { responseText, evidenceUrls = [] }) {
-  const { rows: disputeRows } = await db.query(
-    "SELECT order_id FROM disputes WHERE id = $1 AND status = 'open'",
+  validateDisputeId(disputeId);
+  if (!Array.isArray(evidenceUrls) || evidenceUrls.length > MAX_EVIDENCE_URLS) {
+    throw new ValidationError(`No more than ${MAX_EVIDENCE_URLS} evidence URLs may be submitted.`);
+  }
+  const normalizedEvidenceUrls = evidenceUrls.length ? normalizeEvidenceUrls(evidenceUrls) : [];
+  const result = await db.withTransaction(async (client) => {
+    const { rows: disputeRows } = await client.query(
+      `SELECT id, order_id, status
+       FROM disputes WHERE id = $1 FOR UPDATE`,
+      [disputeId]
+    );
+    const dispute = disputeRows[0];
+    if (!dispute) throw new NotFoundError('dispute', disputeId);
+    if (dispute.status !== 'open') throw new ConflictError('This dispute is no longer open.');
+
+    const orderParties = await orders.getDeliveryOrderParties(dispute.order_id);
+    if (!orderParties || orderParties.seller_id !== sellerId) {
+      throw new NotFoundError('open dispute', disputeId);
+    }
+    const { rows: countRows } = await client.query(
+      'SELECT count(*)::int AS count FROM dispute_evidence WHERE dispute_id = $1',
+      [disputeId]
+    );
+    if (countRows[0].count + normalizedEvidenceUrls.length > MAX_DISPUTE_EVIDENCE_ITEMS) {
+      throw new ValidationError(`A dispute may contain no more than ${MAX_DISPUTE_EVIDENCE_ITEMS} evidence items.`);
+    }
+
+    const { rows } = await client.query(
+      `UPDATE disputes
+       SET seller_response_text = $1, seller_responded_at = now(), status = 'seller_responded'
+       WHERE id = $2 AND status = 'open' RETURNING *`,
+      [responseText || null, disputeId]
+    );
+    if (!rows[0]) throw new ConflictError('This dispute is no longer open.');
+    const evidenceIds = [];
+    for (const fileUrl of normalizedEvidenceUrls) {
+      const { rows: evidenceRows } = await client.query(
+        `INSERT INTO dispute_evidence (dispute_id, uploaded_by, file_url)
+         VALUES ($1, $2, $3) RETURNING id`,
+        [disputeId, sellerId, fileUrl]
+      );
+      evidenceIds.push(evidenceRows[0].id);
+    }
+    return { dispute: rows[0], evidenceIds, orderId: dispute.order_id };
+  });
+  for (const evidenceId of result.evidenceIds) {
+    eventBus.emit(events.DISPUTE_EVIDENCE_ADDED, {
+      disputeId,
+      orderId: result.orderId,
+      evidenceId,
+      submittedBy: 'seller',
+    });
+  }
+  return result.dispute;
+}
+
+/** FR-43c: append buyer or seller evidence while a dispute remains undecided. */
+async function addDisputeEvidence(disputeId, actorId, input) {
+  validateDisputeId(disputeId);
+  const evidenceInput = normalizeAdditionalEvidence(input);
+  const result = await db.withTransaction(async (client) => {
+    const { rows: disputeRows } = await client.query(
+      `SELECT id, order_id, raised_by, status
+       FROM disputes WHERE id = $1 FOR UPDATE`,
+      [disputeId]
+    );
+    const dispute = disputeRows[0];
+    if (!dispute) throw new NotFoundError('dispute', disputeId);
+    if (!['open', 'seller_responded'].includes(dispute.status)) {
+      throw new ConflictError('Evidence cannot be added after a dispute is decided.');
+    }
+    const orderParties = await orders.getDeliveryOrderParties(dispute.order_id);
+    if (!orderParties) throw new NotFoundError('order', dispute.order_id);
+    const submittedBy = actorId === dispute.raised_by
+      ? 'buyer'
+      : actorId === orderParties.seller_id ? 'seller' : null;
+    if (!submittedBy) throw new ForbiddenError('Only the order buyer or seller may add dispute evidence.');
+
+    const { rows: countRows } = await client.query(
+      'SELECT count(*)::int AS count FROM dispute_evidence WHERE dispute_id = $1',
+      [disputeId]
+    );
+    if (countRows[0].count >= MAX_DISPUTE_EVIDENCE_ITEMS) {
+      throw new ValidationError(`A dispute may contain no more than ${MAX_DISPUTE_EVIDENCE_ITEMS} evidence items.`);
+    }
+    const { rows: inserted } = await client.query(
+      `INSERT INTO dispute_evidence (dispute_id, uploaded_by, file_url, note)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, file_url, note, created_at`,
+      [disputeId, actorId, evidenceInput.fileUrl, evidenceInput.note]
+    );
+    return {
+      evidence: {
+        id: inserted[0].id,
+        mediaReference: inserted[0].file_url,
+        note: inserted[0].note,
+        createdAt: inserted[0].created_at,
+        submittedBy,
+      },
+      orderId: dispute.order_id,
+      submittedBy,
+    };
+  });
+  eventBus.emit(events.DISPUTE_EVIDENCE_ADDED, {
+    disputeId,
+    orderId: result.orderId,
+    evidenceId: result.evidence.id,
+    submittedBy: result.submittedBy,
+  });
+  return result.evidence;
+}
+
+/** FR-43c: let only an order party read evidence without exposing contributor IDs. */
+async function getPartyDisputeEvidence(disputeId, actorId) {
+  validateDisputeId(disputeId);
+  const { rows: disputeRows } = await db.read(
+    'SELECT id, order_id, raised_by FROM disputes WHERE id = $1',
     [disputeId]
   );
   const dispute = disputeRows[0];
-  if (!dispute) throw new NotFoundError('open dispute', disputeId);
-
+  if (!dispute) throw new NotFoundError('dispute', disputeId);
   const orderParties = await orders.getDeliveryOrderParties(dispute.order_id);
-  if (!orderParties || orderParties.seller_id !== sellerId) {
-    throw new NotFoundError('open dispute', disputeId);
+  if (!orderParties) throw new NotFoundError('order', dispute.order_id);
+  if (actorId !== dispute.raised_by && actorId !== orderParties.seller_id) {
+    throw new ForbiddenError('Only the order buyer or seller may read dispute evidence.');
   }
-
-  const { rows } = await db.query(
-    `UPDATE disputes SET seller_response_text = $1, seller_responded_at = now(), status = 'seller_responded'
-     WHERE id = $2 AND status = 'open' RETURNING *`,
-    [responseText || null, disputeId]
+  const { rows } = await db.read(
+    `SELECT id, uploaded_by, file_url, note, created_at
+     FROM dispute_evidence
+     WHERE dispute_id = $1
+     ORDER BY created_at, id`,
+    [disputeId]
   );
-  if (!rows[0]) throw new NotFoundError('open dispute', disputeId);
+  return rows.map((row) => ({
+    id: row.id,
+    mediaReference: row.file_url,
+    note: row.note,
+    createdAt: row.created_at,
+    submittedBy: row.uploaded_by === dispute.raised_by ? 'buyer' : 'seller',
+  }));
+}
 
-  for (const url of evidenceUrls) {
-    await db.query(
-      `INSERT INTO dispute_evidence (dispute_id, uploaded_by, file_url) VALUES ($1, $2, $3)`,
-      [disputeId, sellerId, url]
-    );
+/** FR-43: allow the filing buyer to withdraw before any seller response or decision. */
+async function withdrawDispute(disputeId, buyerId, {
+  clearPayoutHold,
+  hasOpenOtherPayoutIssue,
+} = {}) {
+  validateDisputeId(disputeId);
+  if (typeof clearPayoutHold !== 'function' || typeof hasOpenOtherPayoutIssue !== 'function') {
+    throw new TypeError('Payout hold and issue owners are required to withdraw a dispute.');
   }
-  return rows[0];
+  const { rows: initialRows } = await db.read(
+    'SELECT order_id FROM disputes WHERE id = $1',
+    [disputeId]
+  );
+  const initial = initialRows[0];
+  if (!initial) throw new NotFoundError('dispute', disputeId);
+
+  return db.withTransaction(async (client) => {
+    const context = await orders.getMoneyLockContext(client, initial.order_id);
+    if (!context) throw new NotFoundError('order', initial.order_id);
+    if (context.reservation_id) {
+      if (!(await listings.lockListingForMoneyAction(client, context.listing_id))) {
+        throw new ConflictError('The order listing is no longer available.');
+      }
+      if (!(await users.lockBuyerForMoneyAction(client, context.buyer_id))) {
+        throw new ConflictError('The order buyer is no longer available.');
+      }
+    }
+    const order = await orders.lockReservationOrderForPayout(client, initial.order_id);
+    if (!order || order.listing_id !== context.listing_id ||
+        order.buyer_id !== context.buyer_id || order.reservation_id !== context.reservation_id) {
+      throw new ConflictError('The order changed before the dispute could be withdrawn.');
+    }
+    if (context.reservation_id) {
+      const reservation = await reservations.lockReservationForPayout(client, context.reservation_id);
+      if (!reservation || reservation.listing_id !== order.listing_id) {
+        throw new ConflictError('The order reservation is no longer available.');
+      }
+      await escrowPayments.lockPaymentsForOrder(client, initial.order_id);
+    }
+    const { rows: disputeRows } = await client.query(
+      `SELECT id, order_id, raised_by, status, seller_responded_at
+       FROM disputes WHERE id = $1 FOR UPDATE`,
+      [disputeId]
+    );
+    const dispute = disputeRows[0];
+    if (!dispute) throw new NotFoundError('dispute', disputeId);
+    if (dispute.raised_by !== buyerId) {
+      throw new ForbiddenError('Only the buyer who filed the dispute may withdraw it.');
+    }
+    if (dispute.status !== 'open' || dispute.seller_responded_at) {
+      throw new ConflictError('A dispute can only be withdrawn before a seller response or decision.');
+    }
+    const { rows: updated } = await client.query(
+      `UPDATE disputes
+       SET status = 'withdrawn', withdrawn_at = now()
+       WHERE id = $1 AND status = 'open' AND seller_responded_at IS NULL
+       RETURNING id, order_id, status, withdrawn_at`,
+      [disputeId]
+    );
+    if (!updated[0]) {
+      throw new ConflictError('A dispute can only be withdrawn before a seller response or decision.');
+    }
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: buyerId,
+      action: 'dispute_withdrawn',
+      orderId: initial.order_id,
+      metadata: { disputeId },
+    });
+    const keepPaused = await hasOpenOtherPayoutIssue(client, initial.order_id);
+    await clearPayoutHold(client, initial.order_id, { keepPaused });
+    return {
+      id: updated[0].id,
+      orderId: updated[0].order_id,
+      status: updated[0].status,
+      withdrawnAt: updated[0].withdrawn_at,
+    };
+  });
 }
 
 // ---- FR-44: queue (dispute-only side; combined-with-HELD view lives in payout.service.js) ----
@@ -271,7 +487,11 @@ async function getDisputeQueue({ status } = {}) {
 
 /** FR-43a, FR-44: evidence files attached to a dispute, for admin review. */
 async function getDisputeEvidence(disputeId) {
-  const { rows } = await db.query('SELECT * FROM dispute_evidence WHERE dispute_id = $1 ORDER BY created_at ASC', [disputeId]);
+  const { rows } = await db.query(
+    `SELECT id, uploaded_by, file_url, note, created_at
+     FROM dispute_evidence WHERE dispute_id = $1 ORDER BY created_at, id`,
+    [disputeId]
+  );
   return rows;
 }
 
@@ -586,6 +806,9 @@ module.exports = {
   fileDispute,
   getBuyerDisputeFilingStatus,
   submitCounterEvidence,
+  addDisputeEvidence,
+  getPartyDisputeEvidence,
+  withdrawDispute,
   getDisputeQueue,
   getDisputeEvidence,
   getAdminOrderDisputes,

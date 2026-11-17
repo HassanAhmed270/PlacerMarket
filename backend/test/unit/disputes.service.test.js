@@ -387,3 +387,73 @@ describe('FR-43, FR-45g dispute filing event transaction order', () => {
     }
   });
 });
+
+describe('FR-43c evidence and FR-43 withdrawal', () => {
+  const disputeId = '00000000-0000-4000-8000-000000000001';
+
+  test('FR-43c: evidence notes outside 3 to 500 characters are rejected before database writes', async () => {
+    await expect(disputes.addDisputeEvidence(disputeId, 'buyer-1', { note: 'no' }))
+      .rejects.toMatchObject({ statusCode: 400 });
+    await expect(disputes.addDisputeEvidence(disputeId, 'buyer-1', { note: 'x'.repeat(501) }))
+      .rejects.toMatchObject({ statusCode: 400 });
+    expect(db.withTransaction).not.toHaveBeenCalled();
+  });
+
+  test('FR-43c: the party evidence projection omits contributor IDs', async () => {
+    const parties = jest.spyOn(orders, 'getDeliveryOrderParties').mockResolvedValue({
+      buyer_id: 'buyer-1',
+      seller_id: 'seller-1',
+    });
+    db.read
+      .mockResolvedValueOnce({ rows: [{ id: disputeId, order_id: 'order-1', raised_by: 'buyer-1' }] })
+      .mockResolvedValueOnce({ rows: [{
+        id: 'evidence-1',
+        uploaded_by: 'buyer-1',
+        file_url: null,
+        note: 'The item has a damaged seam.',
+        created_at: new Date('2026-11-06T12:00:00Z'),
+      }] });
+
+    try {
+      await expect(disputes.getPartyDisputeEvidence(disputeId, 'seller-1')).resolves.toEqual([{
+        id: 'evidence-1',
+        mediaReference: null,
+        note: 'The item has a damaged seam.',
+        createdAt: new Date('2026-11-06T12:00:00Z'),
+        submittedBy: 'buyer',
+      }]);
+    } finally {
+      parties.mockRestore();
+    }
+  });
+
+  test('FR-43: withdrawal audits and clears the shared payout hold in the transaction', async () => {
+    const client = {
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{
+          id: disputeId,
+          order_id: 'order-1',
+          raised_by: 'buyer-1',
+          status: 'open',
+          seller_responded_at: null,
+        }] })
+        .mockResolvedValueOnce({ rows: [{
+          id: disputeId,
+          order_id: 'order-1',
+          status: 'withdrawn',
+          withdrawn_at: new Date('2026-11-06T12:00:00Z'),
+        }] })
+        .mockResolvedValueOnce({ rows: [] }),
+    };
+    db.read.mockResolvedValueOnce({ rows: [{ order_id: 'order-1' }] });
+    db.withTransaction.mockImplementationOnce(async (callback) => callback(client));
+    const clearPayoutHold = jest.fn().mockResolvedValue(true);
+
+    await expect(disputes.withdrawDispute(disputeId, 'buyer-1', {
+      clearPayoutHold,
+      hasOpenOtherPayoutIssue: jest.fn().mockResolvedValue(false),
+    })).resolves.toMatchObject({ status: 'withdrawn', orderId: 'order-1' });
+    expect(client.query.mock.calls[2][1][1]).toBe('dispute_withdrawn');
+    expect(clearPayoutHold).toHaveBeenCalledWith(client, 'order-1', { keepPaused: false });
+  });
+});

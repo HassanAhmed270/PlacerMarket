@@ -2286,3 +2286,21 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- Migration: 038_dispute_evidence_withdrawal.sql
+ALTER TYPE dispute_status ADD VALUE 'withdrawn';
+
+ALTER TABLE disputes
+  ADD COLUMN withdrawn_at TIMESTAMPTZ;
+
+ALTER TABLE dispute_evidence
+  ALTER COLUMN file_url DROP NOT NULL,
+  ADD COLUMN note TEXT,
+  ADD CONSTRAINT dispute_evidence_content_check CHECK (
+    (file_url IS NOT NULL AND note IS NULL) OR
+    (file_url IS NULL AND note IS NOT NULL
+      AND char_length(btrim(note)) BETWEEN 3 AND 500)
+  );
+
+CREATE INDEX dispute_evidence_timeline_idx
+  ON dispute_evidence (dispute_id, created_at, id);

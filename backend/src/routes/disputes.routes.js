@@ -23,6 +23,21 @@ router.post('/:id/counter-evidence', async (req, res) => {
   res.json(await disputes.submitCounterEvidence(req.params.id, req.user.id, req.body)); // FR-43c
 });
 
+router.post('/:id/evidence', async (req, res) => {
+  res.status(201).json(await disputes.addDisputeEvidence(req.params.id, req.user.id, req.body)); // FR-43c
+});
+
+router.get('/:id/party-evidence', async (req, res) => {
+  res.json(await disputes.getPartyDisputeEvidence(req.params.id, req.user.id)); // FR-43c
+});
+
+router.post('/:id/withdraw', async (req, res) => {
+  res.json(await disputes.withdrawDispute(req.params.id, req.user.id, {
+    clearPayoutHold: payout.clearPayoutHoldForIssue,
+    hasOpenOtherPayoutIssue: chargebacks.hasOpenPayoutIssue,
+  })); // FR-43
+});
+
 router.get('/', requirePermission('dispute.review'), async (req, res) => {
   res.json(await disputes.getDisputeQueue(req.query)); // FR-44
 });

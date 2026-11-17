@@ -78,6 +78,25 @@ function resolveDispute(actorId, disputeId, input) {
     .send(input);
 }
 
+function addDisputeEvidence(actorId, disputeId, input) {
+  return request(getApp())
+    .post(`/api/disputes/${disputeId}/evidence`)
+    .set('Authorization', authHeader(actorId))
+    .send(input);
+}
+
+function readPartyDisputeEvidence(actorId, disputeId) {
+  return request(getApp())
+    .get(`/api/disputes/${disputeId}/party-evidence`)
+    .set('Authorization', authHeader(actorId));
+}
+
+function withdrawDispute(actorId, disputeId) {
+  return request(getApp())
+    .post(`/api/disputes/${disputeId}/withdraw`)
+    .set('Authorization', authHeader(actorId));
+}
+
 function releasePayout(actorId, orderId) {
   return request(getApp())
     .post(`/api/admin/orders/${orderId}/payout/release`)
@@ -515,6 +534,158 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
       status: 'requested',
       amount: '1.00',
       currency: 'PKR',
+    });
+  });
+
+  describe('FR-43 dispute evidence and buyer withdrawal', () => {
+    test('FR-43c: buyer and seller can append notes and existing media references', async () => {
+      const dispute = await fileBuyerDispute();
+      const buyerEvidence = await addDisputeEvidence(
+        scenario.buyerId,
+        dispute.body.id,
+        { note: 'The lining is damaged.' }
+      ).expect(201);
+      const sellerEvidence = await addDisputeEvidence(
+        scenario.sellerId,
+        dispute.body.id,
+        { mediaReference: 'https://media.example.test/seller-inspection.jpg' }
+      ).expect(201);
+
+      expect(buyerEvidence.body).toMatchObject({ note: 'The lining is damaged.', submittedBy: 'buyer' });
+      expect(sellerEvidence.body).toMatchObject({
+        mediaReference: 'https://media.example.test/seller-inspection.jpg',
+        submittedBy: 'seller',
+      });
+    });
+
+    test('FR-43c: unrelated users receive 403 when adding or reading party evidence', async () => {
+      const dispute = await fileBuyerDispute();
+
+      await addDisputeEvidence(harness.unrelatedBuyerId, dispute.body.id, {
+        note: 'This is not my order.',
+      }).expect(403);
+      await readPartyDisputeEvidence(harness.unrelatedBuyerId, dispute.body.id).expect(403);
+    });
+
+    test('FR-43c: a dispute accepts at most ten total evidence items', async () => {
+      const dispute = await fileBuyerDispute();
+      for (let index = 0; index < 9; index += 1) {
+        await addDisputeEvidence(scenario.buyerId, dispute.body.id, {
+          note: `Additional evidence item ${index}.`,
+        }).expect(201);
+      }
+
+      await addDisputeEvidence(scenario.buyerId, dispute.body.id, {
+        note: 'This exceeds the evidence limit.',
+      }).expect(400);
+      const { rows } = await db.query(
+        'SELECT count(*)::int AS count FROM dispute_evidence WHERE dispute_id = $1',
+        [dispute.body.id]
+      );
+      expect(rows[0].count).toBe(10);
+    });
+
+    test('FR-43c: evidence notes are limited to 3 through 500 characters', async () => {
+      const dispute = await fileBuyerDispute();
+      await addDisputeEvidence(scenario.buyerId, dispute.body.id, { note: 'ab' }).expect(400);
+      await addDisputeEvidence(scenario.buyerId, dispute.body.id, { note: 'x'.repeat(501) }).expect(400);
+      await addDisputeEvidence(scenario.buyerId, dispute.body.id, { note: '123' }).expect(201);
+      await addDisputeEvidence(scenario.buyerId, dispute.body.id, { note: 'x'.repeat(500) }).expect(201);
+    });
+
+    test('FR-43c: evidence is visible to both parties and the Admin without Admin IDs', async () => {
+      const dispute = await fileBuyerDispute();
+      await addDisputeEvidence(scenario.buyerId, dispute.body.id, {
+        note: 'The seam is coming apart.',
+      }).expect(201);
+      const buyerRead = await readPartyDisputeEvidence(scenario.buyerId, dispute.body.id).expect(200);
+      const sellerRead = await readPartyDisputeEvidence(scenario.sellerId, dispute.body.id).expect(200);
+      const adminRead = await request(getApp())
+        .get(`/api/disputes/${dispute.body.id}/evidence`)
+        .set('Authorization', adminHeader())
+        .expect(200);
+
+      expect(buyerRead.body).toEqual(sellerRead.body);
+      expect(buyerRead.body).toEqual(expect.arrayContaining([
+        expect.objectContaining({ note: 'The seam is coming apart.', submittedBy: 'buyer' }),
+      ]));
+      expect(JSON.stringify(buyerRead.body)).not.toContain(harness.adminId);
+      expect(JSON.stringify(buyerRead.body)).not.toContain('uploaded_by');
+      expect(adminRead.body).toEqual(expect.arrayContaining([
+        expect.objectContaining({ note: 'The seam is coming apart.' }),
+      ]));
+    });
+
+    test('FR-43c: adding evidence to a decided dispute returns 409', async () => {
+      const dispute = await fileBuyerDispute();
+      await resolveDispute(
+        harness.adminId,
+        dispute.body.id,
+        await decisionInput('seller_favor')
+      ).expect(200);
+
+      await addDisputeEvidence(scenario.buyerId, dispute.body.id, {
+        note: 'A late note must not change the decision.',
+      }).expect(409);
+    });
+
+    test('FR-43: buyer withdrawal releases the shared hold and is audited', async () => {
+      const dispute = await fileBuyerDispute();
+      await withdrawDispute(scenario.buyerId, dispute.body.id)
+        .expect(200)
+        .expect(({ body }) => expect(body).toMatchObject({ status: 'withdrawn' }));
+
+      const { rows: holdRows } = await db.query(
+        'SELECT state, dispute_id FROM payout_holds WHERE order_id = $1',
+        [scenario.orderId]
+      );
+      expect(holdRows).toEqual([{ state: 'held', dispute_id: null }]);
+      const { rows: auditRows } = await db.query(
+        `SELECT actor_id, action, metadata
+         FROM money_audit_events WHERE order_id = $1 AND action = 'dispute_withdrawn'`,
+        [scenario.orderId]
+      );
+      expect(auditRows).toHaveLength(1);
+      expect(auditRows[0]).toMatchObject({
+        actor_id: scenario.buyerId,
+        action: 'dispute_withdrawn',
+        metadata: { disputeId: dispute.body.id },
+      });
+    });
+
+    test('FR-43: a buyer cannot withdraw after the seller responds', async () => {
+      const dispute = await fileBuyerDispute();
+      await request(getApp())
+        .post(`/api/disputes/${dispute.body.id}/counter-evidence`)
+        .set('Authorization', authHeader(scenario.sellerId))
+        .send({ responseText: 'The item matched the listing.', evidenceUrls: [] })
+        .expect(200);
+
+      await withdrawDispute(scenario.buyerId, dispute.body.id).expect(409);
+    });
+
+    test('FR-43: a buyer cannot withdraw after the dispute is decided', async () => {
+      const dispute = await fileBuyerDispute();
+      await resolveDispute(
+        harness.adminId,
+        dispute.body.id,
+        await decisionInput('seller_favor')
+      ).expect(200);
+
+      await withdrawDispute(scenario.buyerId, dispute.body.id).expect(409);
+    });
+
+    test('FR-43: concurrent withdrawal and Admin decision have exactly one winner', async () => {
+      const dispute = await fileBuyerDispute();
+      const [withdrawal, decision] = await Promise.all([
+        withdrawDispute(scenario.buyerId, dispute.body.id),
+        decisionInput('seller_favor').then((input) => resolveDispute(harness.adminId, dispute.body.id, input)),
+      ]);
+
+      expect([withdrawal.status, decision.status].filter((status) => status === 200)).toHaveLength(1);
+      expect([withdrawal.status, decision.status].filter((status) => status === 409)).toHaveLength(1);
+      const { rows } = await db.query('SELECT status FROM disputes WHERE id = $1', [dispute.body.id]);
+      expect(['withdrawn', 'resolved_release']).toContain(rows[0].status);
     });
   });
 
