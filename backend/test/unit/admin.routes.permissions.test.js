@@ -60,6 +60,7 @@ const DELIVERY_ADMIN_ONLY_PATHS = [
   { method: 'patch', path: '/api/admin/orders/x/delivery' },
   { method: 'post', path: '/api/admin/orders/x/delivered' },
   { method: 'post', path: '/api/admin/orders/x/refused-delivery' },
+  { method: 'post', path: '/api/admin/orders/x/lost-delivery' },
   { method: 'get', path: '/api/admin/orders' },
   { method: 'get', path: '/api/admin/orders/x' },
   { method: 'get', path: '/api/admin/order-exceptions' },

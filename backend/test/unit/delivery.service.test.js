@@ -73,6 +73,7 @@ describe('FR-68 Admin delivery metadata summary', () => {
         recordedBy: adminId,
         note: 'Buyer refused at delivery.',
         recordedAt: '2026-11-06T12:00:00.000Z',
+        lostAfterPayout: false,
       }],
     }] });
     await expect(delivery.getAdminOrderDeliveryMetadata(orderId)).resolves.toEqual({
@@ -89,6 +90,7 @@ describe('FR-68 Admin delivery metadata summary', () => {
         recordedBy: adminId,
         note: 'Buyer refused at delivery.',
         recordedAt: '2026-11-06T12:00:00.000Z',
+        lostAfterPayout: false,
       }],
       hasUnresolvedException: true,
     });

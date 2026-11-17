@@ -48,6 +48,15 @@ adminRouter.post('/orders/:orderId/refused-delivery', noStore, requirePermission
   res.status(201).json(await delivery.recordRefusedDelivery(req.params.orderId, req.body, req.user.id)); // FR-33b
 });
 
+adminRouter.post('/orders/:orderId/lost-delivery', noStore, requirePermission('order.mark_delivered'), limiters.adminOps, async (req, res) => {
+  res.status(201).json(await delivery.markOrderDeliveryLost(
+    req.params.orderId,
+    req.body,
+    req.user.id,
+    req.authSessionId
+  )); // FR-33b
+});
+
 adminRouter.get('/orders/:orderId/delivery-outcomes', noStore, requirePermission('delivery_outcome.view'), limiters.adminOps, async (req, res) => {
   res.json({ deliveryOutcomes: await delivery.getDeliveryOutcomes(req.params.orderId) }); // FR-33b
 });

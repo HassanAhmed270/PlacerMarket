@@ -950,6 +950,71 @@ async function createDisputeRefund(client, {
   };
 }
 
+/** FR-33b: approve the remaining full captured balance for a lost parcel. */
+async function createDeliveryLostRefund(client, { orderId, actorId, reason }) {
+  if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 300) {
+    throw new ValidationError('reason must be 3 to 300 characters.');
+  }
+  const { order, payment } = await lockManualRefundContext(client, orderId);
+  await assertNoOpenManualRefund(client, orderId, actorId);
+  const balance = await getRefundableAmount(client, order, payment);
+  if (moneyToMinorUnits(balance.total, 'refundableAmount') === 0n) {
+    throw new ConflictError('The order has no remaining refundable balance.');
+  }
+  const split = await allocateRefundSplit(
+    client,
+    order,
+    payment,
+    balance.total,
+    false
+  );
+  const refundId = randomUUID();
+  const normalizedReason = reason.trim();
+  await client.query(
+    `INSERT INTO refunds
+       (id, payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+        approved_by, approved_at, reason, decision_note, item_amount, delivery_fee_amount,
+        seller_at_fault, decided_by)
+     VALUES ($1, $2, $3, 'delivery_lost', $4::numeric, $5, 'approved', $6,
+             $7, now(), $8, $8, $9::numeric, $10::numeric, false, $7)`,
+    [
+      refundId,
+      payment.id,
+      orderId,
+      split.amount,
+      payment.currency,
+      `refund:${payment.id}:delivery_lost`,
+      actorId,
+      normalizedReason,
+      split.itemAmount,
+      split.deliveryFeeAmount,
+    ]
+  );
+  await enqueueRefundJob(client, refundId);
+  await moneyAudit.recordMoneyAuditEvent(client, {
+    actorId,
+    action: 'delivery_lost_refund_approved',
+    orderId,
+    paymentId: payment.id,
+    refundId,
+    approvedBy: actorId,
+    reason: normalizedReason,
+    metadata: {
+      amount: split.amount,
+      itemAmount: split.itemAmount,
+      deliveryFeeAmount: split.deliveryFeeAmount,
+      sellerAtFault: false,
+    },
+  });
+  return {
+    refundId,
+    amount: split.amount,
+    itemAmount: split.itemAmount,
+    deliveryFeeAmount: split.deliveryFeeAmount,
+    sellerAtFault: false,
+  };
+}
+
 /** FR-69: expire stale requests and block seller payout while a manual refund is unresolved. */
 async function assertNoOpenManualRefund(client, orderId, actorId) {
   const expiredRefunds = await expireManualRefundRequests(client, orderId, null, actorId);
@@ -2350,6 +2415,7 @@ module.exports = {
   requestManualRefund,
   decideManualRefund,
   createDisputeRefund,
+  createDeliveryLostRefund,
   assertNoOpenManualRefund,
   hasOpenDisputeRefund,
   getSucceededRefundedItemAmount,

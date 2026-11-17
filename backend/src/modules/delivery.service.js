@@ -25,6 +25,7 @@ const listings = require('./listings.service');
 const users = require('./users.service');
 const escrowPayments = require('./escrowPayments.service');
 const payout = require('./payout.service');
+const sellerPayouts = require('./sellerPayouts.service');
 const disputes = require('./disputes.service');
 const moneyAudit = require('./moneyAudit.service');
 const {
@@ -481,6 +482,13 @@ async function markOrderDelivered(orderId, body, adminId) {
         order.delivered_at !== null) {
       throw new ConflictError('The order is not eligible to be marked delivered.');
     }
+    const { rows: lostRows } = await client.query(
+      `SELECT id FROM delivery_outcomes
+       WHERE order_id = $1 AND outcome = 'lost'
+       FOR UPDATE`,
+      [orderId]
+    );
+    if (lostRows[0]) throw new ConflictError('A lost delivery cannot be marked delivered.');
 
     const updatedOrder = await orders.markReservationOrderDelivered(client, orderId);
     if (!updatedOrder) {
@@ -557,12 +565,17 @@ async function recordRefusedDelivery(orderId, body, adminId) {
       throw new ConflictError('A delivery attempt must be recorded before a refusal.');
     }
     const { rows: existingRows } = await client.query(
-      `SELECT id FROM delivery_outcomes
-       WHERE order_id = $1 AND outcome = 'refused'
+      `SELECT id, outcome FROM delivery_outcomes
+       WHERE order_id = $1 AND outcome IN ('refused', 'lost')
        FOR UPDATE`,
       [orderId]
     );
-    if (existingRows[0]) throw new ConflictError('A refused-delivery record already exists.');
+    if (existingRows.some((record) => record.outcome === 'lost')) {
+      throw new ConflictError('Delivery has already been marked lost.');
+    }
+    if (existingRows.some((record) => record.outcome === 'refused')) {
+      throw new ConflictError('A refused-delivery record already exists.');
+    }
 
     const updatedOrder = await orders.markReservationOrderDeliveryRefused(client, orderId);
     if (!updatedOrder) throw new ConflictError('The order state changed before refusal was recorded.');
@@ -586,6 +599,105 @@ async function recordRefusedDelivery(orderId, body, adminId) {
       { transaction: client }
     );
     return rows[0];
+  });
+}
+
+function validateLostDeliveryRequest(orderId, body, adminId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)) {
+    throw new ValidationError('orderId must be a UUID.');
+  }
+  if (typeof adminId !== 'string' || !UUID.test(adminId)) {
+    throw new ValidationError('recordedBy must be a UUID.');
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body) ||
+      Object.keys(body).some((key) => key !== 'reason' && key !== 'stepUpGrant') ||
+      typeof body.reason !== 'string') {
+    throw new ValidationError('A reason of 3 to 300 characters and a step-up grant are required.');
+  }
+  const reason = body.reason.trim();
+  if (reason.length < 3 || reason.length > 300) {
+    throw new ValidationError('A reason of 3 to 300 characters and a step-up grant are required.');
+  }
+  return { reason, stepUpGrant: body.stepUpGrant };
+}
+
+/** FR-33b: atomically mark a lost parcel, fail unpaid payout, and approve a full refund. */
+async function markOrderDeliveryLost(orderId, body, adminId, sessionId) {
+  const { reason, stepUpGrant } = validateLostDeliveryRequest(orderId, body, adminId);
+  return db.withTransactionRetry(async (client) => {
+    const { order, reservation } = await lockHandoverOrder(client, orderId);
+    if (!['handed_to_delivery', 'out_for_delivery'].includes(order.status) ||
+        reservation.status !== 'paid' ||
+        !order.handed_over_at ||
+        order.delivered_at !== null) {
+      throw new ConflictError('The order is not eligible to be marked delivery lost.');
+    }
+    if (await disputes.hasOpenDisputeInTransaction(client, orderId)) {
+      throw new ConflictError('Resolve the open dispute before marking delivery lost.');
+    }
+    const { rows: existingRows } = await client.query(
+      `SELECT id FROM delivery_outcomes
+       WHERE order_id = $1 AND outcome = 'lost'
+       FOR UPDATE`,
+      [orderId]
+    );
+    if (existingRows[0]) throw new ConflictError('Delivery has already been marked lost.');
+
+    await users.consumeStepUpGrantWithClient(
+      client,
+      adminId,
+      sessionId,
+      'refund.decide',
+      stepUpGrant
+    );
+    const payoutResult = await sellerPayouts.failInitiatedPayoutForLostDelivery(client, {
+      orderId,
+      adminId,
+    });
+    const refund = await escrowPayments.createDeliveryLostRefund(client, {
+      orderId,
+      actorId: adminId,
+      reason,
+    });
+    const lostAfterPayout = payoutResult.paidPayoutIds.length > 0;
+    const { rows } = await client.query(
+      `INSERT INTO delivery_outcomes (order_id, outcome, recorded_by, note)
+       VALUES ($1, 'lost', $2, $3)
+       RETURNING id, order_id AS "orderId", outcome, recorded_by AS "recordedBy",
+                 note, recorded_at AS "recordedAt"`,
+      [orderId, adminId, reason]
+    );
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: adminId,
+      action: 'delivery_lost_recorded',
+      orderId,
+      reason,
+      metadata: {
+        refundId: refund.refundId,
+        failedPayoutIds: payoutResult.failedPayoutIds,
+        lostAfterPayout,
+      },
+    });
+    if (lostAfterPayout) {
+      await moneyAudit.recordMoneyAuditEvent(client, {
+        actorId: adminId,
+        action: 'lost_after_payout',
+        orderId,
+        reason,
+        metadata: { payoutIds: payoutResult.paidPayoutIds },
+      });
+    }
+    await eventBus.emitAsync(
+      events.DELIVERY_STATUS_CHANGED,
+      { orderId, status: 'delivery_lost' },
+      { transaction: client }
+    );
+    return {
+      ...rows[0],
+      refund,
+      failedPayoutIds: payoutResult.failedPayoutIds,
+      lostAfterPayout,
+    };
   });
 }
 
@@ -852,7 +964,12 @@ async function getAdminOrderDeliveryMetadata(orderId) {
                       'outcome', outcome.outcome,
                       'recordedBy', outcome.recorded_by,
                       'note', outcome.note,
-                      'recordedAt', outcome.recorded_at
+                      'recordedAt', outcome.recorded_at,
+                      'lostAfterPayout', EXISTS (
+                        SELECT 1 FROM money_audit_events audit
+                        WHERE audit.order_id = outcome.order_id
+                          AND audit.action = 'lost_after_payout'
+                      )
                     )
                     ORDER BY outcome.recorded_at, outcome.id)
            FROM delivery_outcomes outcome
@@ -888,7 +1005,12 @@ async function getDeliveryOutcomes(orderId) {
                    'outcome', outcome.outcome,
                    'recordedBy', outcome.recorded_by,
                    'note', outcome.note,
-                   'recordedAt', outcome.recorded_at
+                   'recordedAt', outcome.recorded_at,
+                   'lostAfterPayout', EXISTS (
+                     SELECT 1 FROM money_audit_events audit
+                     WHERE audit.order_id = outcome.order_id
+                       AND audit.action = 'lost_after_payout'
+                   )
                  )
                  ORDER BY outcome.recorded_at, outcome.id)
         FROM delivery_outcomes outcome
@@ -967,6 +1089,7 @@ module.exports = {
   recordAdminHandover,
   markOrderDelivered,
   recordRefusedDelivery,
+  markOrderDeliveryLost,
   listOrderExceptions,
   resolveOrderException,
   validateAdminOrderListQuery,

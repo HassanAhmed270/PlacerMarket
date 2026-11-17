@@ -2124,3 +2124,17 @@ CREATE TABLE delivery_outcomes (
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT delivery_outcomes_order_outcome_unique UNIQUE (order_id, outcome)
 );
+
+-- Migration: 035_lost_delivery_refunds.sql
+ALTER TABLE delivery_outcomes
+  DROP CONSTRAINT delivery_outcomes_outcome_check,
+  ADD CONSTRAINT delivery_outcomes_outcome_check
+    CHECK (outcome IN ('refused', 'lost'));
+
+ALTER TABLE refunds
+  DROP CONSTRAINT refunds_trigger_check,
+  ADD CONSTRAINT refunds_trigger_check
+    CHECK (trigger IN (
+      'system_cancel', 'system_expiry', 'system_handover_timeout',
+      'manual_admin', 'dispute_admin', 'delivery_lost'
+    ));

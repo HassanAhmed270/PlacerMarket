@@ -262,6 +262,11 @@ purpose so the schema works whichever way this eventually gets decided.
   the Admin identity. Moderator/Ops can read only the outcome record through
   the dedicated delivery-outcomes route, without access to the full Admin
   order detail.
+- **FR-33b (lost parcel)**: `delivery.service.js` requires the existing
+  `refund.decide` step-up grant and refuses an open dispute. In one transaction
+  it records the lost outcome, fails initiated unpaid payouts, creates an
+  approved `delivery_lost` refund, and queues buyer/seller delivery notices.
+  Paid payouts remain untouched and are surfaced by `lostAfterPayout`.
 - **FR-68 (Admin order reads)**: `delivery.service.js` composes the Admin
   reservation-order list/detail views. The bounded multi-table list query is
   the documented cross-module read-view exception; detail fields come from
