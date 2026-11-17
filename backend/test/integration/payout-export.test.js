@@ -7,6 +7,7 @@ const {
   createHarness,
   createScenario,
   db,
+  getBusinessDate,
   getApp,
   request,
   restoreHandoverTestEnvironment,
@@ -21,6 +22,7 @@ const THRESHOLD_KEY = 'payout_two_admin_threshold';
 let harness;
 let scenario;
 let previousThreshold;
+let businessDate;
 
 function adminAuthHeader(adminId, sessionId) {
   return `Bearer ${signAccessToken(adminId, { secret: JWT_SECRET, sessionId })}`;
@@ -110,7 +112,7 @@ function markPaid(payoutId, adminId, sessionId, transferReference, stepUpGrant) 
     .send({
       method: 'bank',
       transferReference,
-      paidOn: new Date().toISOString().slice(0, 10),
+      paidOn: businessDate,
       stepUpGrant,
     });
 }
@@ -139,6 +141,7 @@ async function exportWithGrant(adminId, sessionId, filters = {}) {
 
 beforeAll(async () => {
   harness = await createHarness();
+  businessDate = await getBusinessDate();
 });
 
 beforeEach(async () => {
@@ -250,8 +253,8 @@ describe('FR-48: Admin payout CSV export', () => {
     await db.query(
       `UPDATE seller_payouts
        SET initiated_at = CASE id
-         WHEN $1 THEN '2024-05-01T23:59:59.999Z'::timestamptz
-         WHEN $2 THEN '2024-05-02T00:00:00.000Z'::timestamptz
+         WHEN $1 THEN '2024-05-01T18:59:59.999Z'::timestamptz
+         WHEN $2 THEN '2024-05-01T19:00:00.000Z'::timestamptz
        END
        WHERE id = ANY($3::uuid[])`,
       [first.id, retry.body.id, [first.id, retry.body.id]]

@@ -8,6 +8,7 @@ const {
   createLegacyOrder,
   createScenario,
   db,
+  getBusinessDate,
   getApp,
   request,
   restoreHandoverTestEnvironment,
@@ -24,6 +25,7 @@ const { QUEUES } = require('../../src/lib/queue');
 let harness;
 let scenario;
 let adminSessionId;
+let businessDate;
 
 function fileDispute(actorId, orderId) {
   return request(getApp())
@@ -180,6 +182,7 @@ async function resetDisputeScenario(orderId) {
 
 beforeAll(async () => {
   harness = await createHarness();
+  businessDate = await getBusinessDate();
   adminSessionId = crypto.randomUUID();
   await db.query(
     `INSERT INTO auth_sessions
@@ -305,7 +308,7 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
         .send({
           method: 'bank',
           transferReference: 'DISPUTE-SELLER-FAVOR-PAID',
-          paidOn: new Date().toISOString().slice(0, 10),
+          paidOn: businessDate,
           stepUpGrant: await createDecisionGrant('payout.record'),
         })
         .expect(200);
@@ -753,7 +756,7 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
       .send({
         method: 'bank',
         transferReference: 'DISPUTE-HOLD-BLOCK',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
         stepUpGrant: 'unused-grant',
       })
       .expect(409)
@@ -806,7 +809,8 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
          (order_id, seller_id, attempt, status, amount, currency, initiated_by,
           method, transfer_reference, paid_on, paid_by, paid_at)
        VALUES ($1, $2, 1, 'paid', '100.00', 'PKR', $3,
-               'bank', 'DISPUTE-AFTER-PAYOUT', CURRENT_DATE, $3, now())`,
+               'bank', 'DISPUTE-AFTER-PAYOUT',
+               (now() AT TIME ZONE 'Asia/Karachi')::date, $3, now())`,
       [scenario.orderId, scenario.sellerId, harness.adminId]
     );
     await db.query(
@@ -863,7 +867,8 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
          (order_id, seller_id, attempt, status, amount, currency, initiated_by,
           method, transfer_reference, paid_on, paid_by, paid_at)
        VALUES ($1, $2, 1, 'paid', '100.00', 'PKR', $3,
-               'bank', 'DISPUTE-PAID-REFUND-TEST', CURRENT_DATE, $3, now())
+               'bank', 'DISPUTE-PAID-REFUND-TEST',
+               (now() AT TIME ZONE 'Asia/Karachi')::date, $3, now())
        RETURNING id`,
       [scenario.orderId, scenario.sellerId, harness.adminId]
     );

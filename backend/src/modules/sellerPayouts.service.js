@@ -89,6 +89,14 @@ function validatePaidOn(paidOn) {
   return paidOn;
 }
 
+/** FR-48, FR-65: return the server's business calendar date independently of the session timezone. */
+async function getBusinessDate(client) {
+  const { rows } = await client.query(
+    `SELECT (now() AT TIME ZONE 'Asia/Karachi')::date::text AS business_date`
+  );
+  return rows[0].business_date;
+}
+
 /** FR-48: format PostgreSQL DATE values without shifting their local calendar date. */
 function dateOnly(value) {
   if (value instanceof Date) {
@@ -315,10 +323,11 @@ async function markPaid(payoutId, adminId, sessionId, input, guards) {
   }
 
   const result = await db.withTransaction(async (client) => {
+    const businessDate = await getBusinessDate(client);
     const { rows: dateCheck } = await client.query(
-      `SELECT ($1::date > CURRENT_DATE) AS is_future,
-              ($1::date < CURRENT_DATE - INTERVAL '90 days') AS is_too_old`,
-      [paidOn]
+      `SELECT ($1::date > $2::date) AS is_future,
+              ($1::date < $2::date - INTERVAL '90 days') AS is_too_old`,
+      [paidOn, businessDate]
     );
     if (dateCheck[0].is_future) {
       throw new ValidationError('paidOn cannot be in the future.');
@@ -748,11 +757,11 @@ async function exportSellerPayoutsCsv(adminId, sessionId, filters) {
   }
   if (fromFilter) {
     values.push(fromFilter);
-    conditions.push(`initiated_at >= ($${values.length}::date::timestamp AT TIME ZONE 'UTC')`);
+    conditions.push(`initiated_at >= ($${values.length}::date::timestamp AT TIME ZONE 'Asia/Karachi')`);
   }
   if (toFilter) {
     values.push(toFilter);
-    conditions.push(`initiated_at < (($${values.length}::date + INTERVAL '1 day') AT TIME ZONE 'UTC')`);
+    conditions.push(`initiated_at < (($${values.length}::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Karachi')`);
   }
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
 
@@ -804,6 +813,7 @@ async function exportSellerPayoutsCsv(adminId, sessionId, filters) {
 module.exports = {
   createInitiatedPayout,
   getOrderPayoutStatus,
+  getBusinessDate,
   failInitiatedPayoutForDispute,
   getSellerOrderPayoutSummaries,
   markPaid,

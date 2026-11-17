@@ -282,19 +282,21 @@ async function processReminders() {
   let processedRecords = 0;
   while (true) {
     const processed = await db.withTransaction(async (client) => {
+      const businessDate = await sellerPayouts.getBusinessDate(client);
       const { rows } = await client.query(
         `SELECT id, order_id, seller_id
          FROM seller_held_funds
          WHERE state = 'held'
            AND (
-             (held_at <= now() - INTERVAL '7 days' AND reminder_7_sent_at IS NULL) OR
-             (held_at <= now() - INTERVAL '30 days' AND reminder_30_sent_at IS NULL) OR
-             (held_at <= now() - INTERVAL '90 days' AND reminder_90_sent_at IS NULL) OR
-             (held_at <= now() - INTERVAL '180 days' AND needs_decision_at IS NULL)
+             ((held_at AT TIME ZONE 'Asia/Karachi')::date <= $1::date - 7 AND reminder_7_sent_at IS NULL) OR
+             ((held_at AT TIME ZONE 'Asia/Karachi')::date <= $1::date - 30 AND reminder_30_sent_at IS NULL) OR
+             ((held_at AT TIME ZONE 'Asia/Karachi')::date <= $1::date - 90 AND reminder_90_sent_at IS NULL) OR
+             ((held_at AT TIME ZONE 'Asia/Karachi')::date <= $1::date - 180 AND needs_decision_at IS NULL)
            )
          ORDER BY held_at, id
          LIMIT 1
-         FOR UPDATE SKIP LOCKED`
+         FOR UPDATE SKIP LOCKED`,
+        [businessDate]
       );
       const heldFunds = rows[0];
       if (!heldFunds) return false;
@@ -305,9 +307,9 @@ async function processReminders() {
           `UPDATE seller_held_funds
            SET ${reminder.column} = now()
            WHERE id = $1 AND ${reminder.column} IS NULL
-             AND held_at <= now() - ($2::text || ' days')::interval
+             AND (held_at AT TIME ZONE 'Asia/Karachi')::date <= $2::date - $3::integer
            RETURNING id`,
-          [heldFunds.id, reminder.days]
+          [heldFunds.id, businessDate, reminder.days]
         );
         if (!reminderRows[0]) continue;
         updated = true;
@@ -330,9 +332,9 @@ async function processReminders() {
         `UPDATE seller_held_funds
          SET needs_decision_at = now()
          WHERE id = $1 AND needs_decision_at IS NULL
-           AND held_at <= now() - INTERVAL '180 days'
+           AND (held_at AT TIME ZONE 'Asia/Karachi')::date <= $2::date - 180
          RETURNING id`,
-        [heldFunds.id]
+        [heldFunds.id, businessDate]
       );
       if (decisionRows[0]) updated = true;
       if (!updated) throw new ConflictError('Due held-funds reminder state did not advance.');

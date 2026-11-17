@@ -1120,7 +1120,8 @@ describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
          (order_id, seller_id, attempt, status, amount, currency, initiated_by,
           method, transfer_reference, paid_on, paid_by, paid_at)
        VALUES ($1, $2, 1, 'paid', '100.00', 'PKR', $3,
-               'bank', 'REFUND-AFTER-PAYOUT-TEST', CURRENT_DATE, $3, now())`,
+               'bank', 'REFUND-AFTER-PAYOUT-TEST',
+               (now() AT TIME ZONE 'Asia/Karachi')::date, $3, now())`,
       [scenario.orderId, fixture.userId, staff.first.id]
     );
     await db.query(

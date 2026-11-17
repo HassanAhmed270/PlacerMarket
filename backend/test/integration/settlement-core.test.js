@@ -5,6 +5,7 @@ const {
   createHarness,
   createScenario,
   db,
+  getBusinessDate,
   getApp,
   request,
   restoreHandoverTestEnvironment,
@@ -15,9 +16,11 @@ const settlement = require('../../src/modules/settlement.service');
 const { ValidationError } = require('../../src/lib/errors');
 
 let harness;
+let businessDate;
 
 beforeAll(async () => {
   harness = await createHarness();
+  businessDate = await getBusinessDate();
   harness.retained = true;
 });
 
@@ -274,7 +277,7 @@ describe('settlement core integration', () => {
       .send({
         method: 'bank',
         transferReference: 'bank-ref-cash-only',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
         stepUpGrant: grant,
       })
       .expect(200);

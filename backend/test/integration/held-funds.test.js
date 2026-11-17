@@ -7,6 +7,7 @@ const {
   createHarness,
   createScenario,
   db,
+  getBusinessDate,
   getApp,
   request,
   restoreHandoverTestEnvironment,
@@ -29,6 +30,7 @@ let originalSellerEmail;
 let testSellerEmail;
 let originalEmailQueueSecret;
 let secondAdminOriginalRole;
+let businessDate;
 
 function adminAuthHeader(adminId, sessionId) {
   return `Bearer ${signAccessToken(adminId, { secret: JWT_SECRET, sessionId })}`;
@@ -139,7 +141,7 @@ function markPaid(payoutId, adminId, sessionId, stepUpGrant) {
     .send({
       method: 'bank',
       transferReference: 'HELD-FUNDS-TEST-REF',
-      paidOn: new Date().toISOString().slice(0, 10),
+      paidOn: businessDate,
       stepUpGrant,
     });
 }
@@ -198,6 +200,7 @@ beforeAll(async () => {
   const { rows } = await db.query('SELECT email FROM users WHERE id = $1', [harness.fixture.userId]);
   originalSellerEmail = rows[0].email;
   testSellerEmail = `held-funds-${crypto.randomUUID()}@example.test`;
+  businessDate = await getBusinessDate();
 });
 
 beforeEach(async () => {

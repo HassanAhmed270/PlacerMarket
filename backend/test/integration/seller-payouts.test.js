@@ -7,6 +7,7 @@ const {
   createHarness,
   createScenario,
   db,
+  getBusinessDate,
   getApp,
   request,
   restoreHandoverTestEnvironment,
@@ -24,6 +25,14 @@ const JWT_SECRET = 'delivery-handover-integration-secret';
 
 let harness;
 let scenario;
+let businessDate;
+const dateBoundaryScenarios = [];
+
+const TEST_TIME_ZONES = Object.freeze([
+  'America/Los_Angeles',
+  'UTC',
+  'Asia/Karachi',
+]);
 
 function adminAuthHeader(adminId, sessionId) {
   return `Bearer ${signAccessToken(adminId, { secret: JWT_SECRET, sessionId })}`;
@@ -37,6 +46,36 @@ async function createAdminSession(adminId) {
     [sessionId, crypto.randomUUID(), adminId, crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex')]
   );
   return sessionId;
+}
+
+async function withDatabaseTimeZone(timeZone, callback) {
+  const originalWithTransaction = db.withTransaction;
+  db.withTransaction = (transactionCallback) => originalWithTransaction(async (client) => {
+    const { rows } = await client.query('SHOW TIME ZONE');
+    const previousTimeZone = Object.values(rows[0])[0];
+    await client.query(`SET TIME ZONE '${timeZone}'`);
+    try {
+      const { rows: timeZoneRows } = await client.query('SHOW TIME ZONE');
+      expect(Object.values(timeZoneRows[0])[0]).toBe(timeZone);
+      return await transactionCallback(client);
+    } finally {
+      const safePreviousTimeZone = String(previousTimeZone).replace(/'/g, "''");
+      await client.query(`SET TIME ZONE '${safePreviousTimeZone}'`);
+      const { rows: restoredRows } = await client.query('SHOW TIME ZONE');
+      expect(Object.values(restoredRows[0])[0]).toBe(previousTimeZone);
+    }
+  });
+  try {
+    return await callback();
+  } finally {
+    db.withTransaction = originalWithTransaction;
+  }
+}
+
+function offsetDate(date, offsetDays) {
+  const result = new Date(`${date}T00:00:00.000Z`);
+  result.setUTCDate(result.getUTCDate() + offsetDays);
+  return result.toISOString().slice(0, 10);
 }
 
 async function insertStepUpGrant(userId, sessionId, action = 'payout.record') {
@@ -81,6 +120,7 @@ function releasePayout(orderId, adminId, body = { note: 'Manual release' }) {
 
 beforeAll(async () => {
   harness = await createHarness();
+  businessDate = await getBusinessDate();
 });
 
 beforeEach(async () => {
@@ -91,6 +131,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await global.drainIntegrationListeners(5000);
+  for (const target of dateBoundaryScenarios.splice(0)) {
+    await cleanupScenario(harness, target);
+  }
   if (scenario) {
     await cleanupScenario(harness, scenario);
   }
@@ -102,6 +145,55 @@ afterAll(async () => {
 });
 
 describe('seller payouts lifecycle integration', () => {
+  test.each(TEST_TIME_ZONES)(
+    'FR-48: paid-date bounds use the Asia/Karachi calendar in %s database sessions',
+    async (timeZone) => {
+      const targets = [scenario];
+      for (let index = 1; index < 3; index += 1) {
+        const target = await createScenario(harness);
+        dateBoundaryScenarios.push(target);
+        await deliverScenario(target);
+        await elapsePayoutWindows(target);
+        targets.push(target);
+      }
+
+      const sessionId = await createAdminSession(harness.adminId);
+      for (const [index, paidOn] of [
+        offsetDate(businessDate, -1),
+        businessDate,
+        offsetDate(businessDate, -90),
+      ].entries()) {
+        const target = targets[index];
+        const payoutResponse = await releasePayout(target.orderId, harness.adminId, {
+          note: `Karachi date-boundary payout ${timeZone} ${index}`,
+        }).expect(200);
+        const grant = await insertStepUpGrant(harness.adminId, sessionId, 'payout.record');
+        const paidRequest = (date, transferReference) => request(getApp())
+          .post(`/api/admin/seller-payouts/${payoutResponse.body.payout.id}/paid`)
+          .set('Authorization', adminAuthHeader(harness.adminId, sessionId))
+          .send({ method: 'bank', transferReference, paidOn: date, stepUpGrant: grant });
+
+        if (index === 0) {
+          for (const rejectedDate of [
+            offsetDate(businessDate, 1),
+            offsetDate(businessDate, -91),
+          ]) {
+            const response = await withDatabaseTimeZone(timeZone, () =>
+              paidRequest(rejectedDate, `REJECT-${timeZone}-${rejectedDate}`)
+            );
+            expect(response.status).toBe(400);
+          }
+        }
+
+        const response = await withDatabaseTimeZone(timeZone, () =>
+          paidRequest(paidOn, `ACCEPT-${timeZone}-${index}`)
+        );
+        expect(response.status).toBe(200);
+        expect(response.body.paidOn).toBe(paidOn);
+      }
+    }
+  );
+
   test('FR-48, FR-65: release creates one initiated payout for the settlement net and writes no ledger entry', async () => {
     const res = await releasePayout(scenario.orderId, harness.adminId, {
       note: 'Release for payout test',
@@ -189,7 +281,7 @@ describe('seller payouts lifecycle integration', () => {
     const sessionId = await createAdminSession(harness.adminId);
     const grant = await insertStepUpGrant(harness.adminId, sessionId, 'payout.record');
 
-    const paidOnDate = new Date().toISOString().slice(0, 10);
+    const paidOnDate = businessDate;
     const paidRes = await request(getApp())
       .post(`/api/admin/seller-payouts/${payoutId}/paid`)
       .set('Authorization', adminAuthHeader(harness.adminId, sessionId))
@@ -267,7 +359,7 @@ describe('seller payouts lifecycle integration', () => {
           .send({
             method: 'jazzcash',
             transferReference: `JC-REF-${index}`,
-            paidOn: new Date().toISOString().slice(0, 10),
+            paidOn: businessDate,
             stepUpGrant: g,
           });
       })
@@ -307,7 +399,7 @@ describe('seller payouts lifecycle integration', () => {
           .send({
             method: 'easypaisa',
             transferReference: 'EP-RACE-REF',
-            paidOn: new Date().toISOString().slice(0, 10),
+            paidOn: businessDate,
             stepUpGrant: gPaid,
           }),
         request(getApp())
@@ -366,7 +458,7 @@ describe('seller payouts lifecycle integration', () => {
       .send({
         method: 'crypto',
         transferReference: 'VALID-REF-123',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
         stepUpGrant: g1,
       })
       .expect(400);
@@ -378,7 +470,7 @@ describe('seller payouts lifecycle integration', () => {
       .send({
         method: 'bank',
         transferReference: 'ab',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
         stepUpGrant: g2,
       })
       .expect(400);
@@ -522,7 +614,7 @@ describe('seller payouts lifecycle integration', () => {
       .send({
         method: 'easypaisa',
         transferReference: 'EP-RETRY-PAID-1',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
         stepUpGrant: gPaid,
       })
       .expect(200);
@@ -603,7 +695,7 @@ describe('seller payouts lifecycle integration', () => {
       .send({
         method: 'bank',
         transferReference: 'REF-NO-GRANT',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
       })
       .expect(403);
 
@@ -615,7 +707,7 @@ describe('seller payouts lifecycle integration', () => {
       .send({
         method: 'bank',
         transferReference: 'REF-WRONG-GRANT',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
         stepUpGrant: wrongActionGrant,
       })
       .expect(403);
@@ -638,7 +730,7 @@ describe('seller payouts lifecycle integration', () => {
         .send({
           method: 'bank',
           transferReference: 'REF-LIMITER',
-          paidOn: new Date().toISOString().slice(0, 10),
+          paidOn: businessDate,
           stepUpGrant: validGrant,
         });
 
@@ -671,7 +763,7 @@ describe('seller payouts lifecycle integration', () => {
       .send({
         method: 'bank',
         transferReference: 'PAYOUT-NOTIF-REF',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
         stepUpGrant: gPaid,
       })
       .expect(200);

@@ -7,6 +7,7 @@ const {
   createHarness,
   createScenario,
   db,
+  getBusinessDate,
   getApp,
   request,
   restoreHandoverTestEnvironment,
@@ -16,6 +17,7 @@ const { signAccessToken } = require('../../src/lib/jwt');
 let harness;
 let scenario;
 let originalPlatformSettings;
+let businessDate;
 const PLATFORM_SETTING_KEYS = ['commission_percent', 'payout_two_admin_threshold'];
 
 function adminAuthHeader(adminId, sessionId) {
@@ -122,6 +124,7 @@ async function restorePlatformSettings() {
 beforeAll(async () => {
   harness = await createHarness();
   originalPlatformSettings = await readPlatformSettings();
+  businessDate = await getBusinessDate();
 });
 
 beforeEach(async () => {
@@ -197,7 +200,7 @@ describe('seller order earnings and payout reads', () => {
     const payoutId = releaseRes.body.payout.id;
     const sessionId = await createAdminSession(harness.adminId);
     const paidGrant = await insertStepUpGrant(harness.adminId, sessionId, 'payout.record');
-    const paidOn = new Date().toISOString().slice(0, 10);
+    const paidOn = businessDate;
 
     const paidRes = await request(getApp())
       .post(`/api/admin/seller-payouts/${payoutId}/paid`)

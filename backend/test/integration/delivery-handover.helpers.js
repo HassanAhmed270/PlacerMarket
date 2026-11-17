@@ -95,6 +95,13 @@ async function createHarness() {
   return harness;
 }
 
+async function getBusinessDate() {
+  const { rows } = await db.query(
+    `SELECT (now() AT TIME ZONE 'Asia/Karachi')::date::text AS business_date`
+  );
+  return rows[0].business_date;
+}
+
 async function createListing(harness, sellerId = harness.fixture.userId) {
   const { rows } = await db.query(
     `INSERT INTO listings
@@ -326,6 +333,7 @@ module.exports = {
   createUnfundedScenario,
   db,
   escrowPayments,
+  getBusinessDate,
   getApp: () => app,
   pickupTime,
   request,

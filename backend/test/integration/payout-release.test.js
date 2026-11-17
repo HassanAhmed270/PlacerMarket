@@ -7,6 +7,7 @@ const {
   createLegacyOrder,
   createScenario,
   db,
+  getBusinessDate,
   getApp,
   request,
   restoreHandoverTestEnvironment,
@@ -18,6 +19,7 @@ const settlement = require('../../src/modules/settlement.service');
 
 let harness;
 let scenario;
+let businessDate;
 
 function releaseRequest(actorId, orderId, body = {
   payoutReference: 'bank-ref-123',
@@ -81,6 +83,7 @@ async function deleteDisputes(orderId) {
 
 beforeAll(async () => {
   harness = await createHarness();
+  businessDate = await getBusinessDate();
 });
 
 beforeEach(async () => {
@@ -362,7 +365,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
       .send({
         method: 'bank',
         transferReference: 'bank-ref-123',
-        paidOn: new Date().toISOString().slice(0, 10),
+        paidOn: businessDate,
         stepUpGrant: grant,
       })
       .expect(200);
