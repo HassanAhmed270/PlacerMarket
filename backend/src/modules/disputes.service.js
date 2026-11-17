@@ -68,12 +68,15 @@ function normalizeEvidenceUrls(evidenceUrls) {
 async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }, {
   getOrderPayoutStatus,
   pausePayoutHold,
+  hasOpenReturnRequest,
 } = {}) {
   if (typeof reasonText !== 'string' || !reasonText.trim()) {
     throw new ValidationError('A dispute reason is required (FR-43b, free-text)');
   }
-  if (typeof getOrderPayoutStatus !== 'function' || typeof pausePayoutHold !== 'function') {
-    throw new TypeError('Payout hold and status owners are required to file a dispute.');
+  if (typeof getOrderPayoutStatus !== 'function' ||
+      typeof pausePayoutHold !== 'function' ||
+      typeof hasOpenReturnRequest !== 'function') {
+    throw new TypeError('Payout hold, return, and status owners are required to file a dispute.');
   }
   const normalizedReason = reasonText.trim();
   const normalizedEvidenceUrls = normalizeEvidenceUrls(evidenceUrls);
@@ -95,6 +98,9 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }, {
     if (order.buyer_id !== buyerId) throw new NotFoundError('order', orderId);
     if (!order.delivered_at) {
       throw new ValidationError('Dispute can only be filed after delivery (FR-43)');
+    }
+    if (await hasOpenReturnRequest(client, orderId)) {
+      throw new ConflictError('An open return request already exists for this order.');
     }
     if (context.reservation_id) {
       const reservation = await reservations.lockReservationForSystemAction(client, context.reservation_id);

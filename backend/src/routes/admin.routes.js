@@ -22,6 +22,7 @@ function noStoreOrderResponses(_req, res, next) {
 
 router.use('/orders', noStoreOrderResponses);
 router.use('/refunds', noStoreOrderResponses);
+router.use('/returns', noStoreOrderResponses);
 router.use('/seller-payouts', noStoreOrderResponses);
 router.use(requireAuth);
 // Permission checks live HERE, per route (rules.md Section 5) — admin.service.js
@@ -77,6 +78,41 @@ router.get(
   limiters.adminOps,
   async (req, res) => {
     res.json(await admin.getManualRefund(req.params.refundId, req.user.id)); // FR-69, SEC-39
+  }
+);
+
+router.get(
+  '/returns',
+  noStoreOrderResponses,
+  requirePermission('refund.view'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await admin.listReturnRequests(req.query)); // FR-43, FR-56
+  }
+);
+
+router.get(
+  '/returns/:returnId',
+  noStoreOrderResponses,
+  requirePermission('refund.view'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await admin.getReturnRequest(req.params.returnId)); // FR-43, FR-56
+  }
+);
+
+router.post(
+  '/returns/:returnId/decide',
+  noStoreOrderResponses,
+  requirePermission('refund.decide'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await admin.decideReturnRequest(
+      req.params.returnId,
+      req.user.id,
+      req.authSessionId,
+      refundBody(req.body)
+    )); // FR-43, FR-45, FR-56
   }
 );
 

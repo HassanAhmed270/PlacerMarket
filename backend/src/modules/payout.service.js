@@ -58,7 +58,8 @@ async function handleDisputeResolved({ disputeId, orderId }, context = {}) {
   if (!hold || hold.state !== 'paused_for_dispute' || hold.dispute_id !== disputeId) return;
   await client.query(
     `UPDATE payout_holds
-     SET state = 'held'
+     SET state = COALESCE(state_before_pause, 'held'),
+         state_before_pause = NULL
      WHERE order_id = $1 AND state = 'paused_for_dispute' AND dispute_id = $2`,
     [orderId, disputeId]
   );
@@ -102,16 +103,69 @@ async function pausePayoutHoldForDispute(client, {
 }) {
   const { rows } = await client.query(
     `INSERT INTO payout_holds
-       (order_id, hold_started_at, hold_window_days, complaint_window_days, state, dispute_id)
-     VALUES ($1, now(), $2, $3, 'paused_for_dispute', $4)
+       (order_id, hold_started_at, hold_window_days, complaint_window_days,
+        state, state_before_pause, dispute_id)
+     VALUES ($1, now(), $2, $3, 'paused_for_dispute', 'held', $4)
      ON CONFLICT (order_id) DO UPDATE
-     SET state = 'paused_for_dispute', dispute_id = EXCLUDED.dispute_id, released_at = NULL
+     SET state_before_pause = COALESCE(
+           payout_holds.state_before_pause,
+           CASE WHEN payout_holds.state = 'paused_for_dispute'
+             THEN 'held'::payout_hold_state ELSE payout_holds.state END
+         ),
+         state = 'paused_for_dispute',
+         dispute_id = EXCLUDED.dispute_id
      RETURNING state, dispute_id`,
     [orderId, payoutHoldDays, complaintWindowDays, disputeId]
   );
   if (rows[0]?.state !== 'paused_for_dispute' || rows[0].dispute_id !== disputeId) {
     throw new ConflictError('The order hold could not be paused for the dispute.');
   }
+}
+
+/** FR-45g: pause the existing order hold for a return or chargeback in its transaction. */
+async function pausePayoutHoldForIssue(client, orderId) {
+  if (!client || typeof client.query !== 'function') {
+    throw new TypeError('Payout hold changes require the issue transaction.');
+  }
+  await startHoldForReservationOrder(client, orderId);
+  const { rows } = await client.query(
+    `UPDATE payout_holds
+     SET state_before_pause = CASE
+           WHEN state = 'paused_for_dispute' THEN COALESCE(state_before_pause, 'held')
+           ELSE state
+         END,
+         state = 'paused_for_dispute'
+     WHERE order_id = $1
+     RETURNING state`,
+    [orderId]
+  );
+  if (rows[0]?.state !== 'paused_for_dispute') {
+    throw new ConflictError('The order hold could not be paused.');
+  }
+}
+
+/** FR-45g: clear a shared order hold only after all blocking issues are resolved. */
+async function clearPayoutHoldForIssue(client, orderId, { keepPaused = false } = {}) {
+  if (!client || typeof client.query !== 'function') {
+    throw new TypeError('Payout hold changes require the issue transaction.');
+  }
+  const { rows } = await client.query(
+    `SELECT state
+     FROM payout_holds
+     WHERE order_id = $1
+     FOR UPDATE`,
+    [orderId]
+  );
+  if (!rows[0] || rows[0].state !== 'paused_for_dispute' || keepPaused) return false;
+  await client.query(
+    `UPDATE payout_holds
+     SET state = COALESCE(state_before_pause, 'held'),
+         state_before_pause = NULL,
+         dispute_id = NULL
+     WHERE order_id = $1 AND state = 'paused_for_dispute'`,
+    [orderId]
+  );
+  return true;
 }
 
 // ---- FR-45b, FR-45c: start hold ----
@@ -501,6 +555,8 @@ module.exports = {
   startHold,
   startHoldForReservationOrder,
   pausePayoutHoldForDispute,
+  pausePayoutHoldForIssue,
+  clearPayoutHoldForIssue,
   hasPausedDisputeHold,
   getDisputePayoutGuards,
   getDisputeHoldStatus,

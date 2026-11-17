@@ -19,6 +19,7 @@ function fileDispute(orderId, buyerId, input, dependencies = {}) {
   return disputes.fileDispute(orderId, buyerId, input, {
     getOrderPayoutStatus: jest.fn().mockResolvedValue(null),
     pausePayoutHold: jest.fn().mockResolvedValue(undefined),
+    hasOpenReturnRequest: jest.fn().mockResolvedValue(false),
     ...dependencies,
   });
 }

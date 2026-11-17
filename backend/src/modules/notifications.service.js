@@ -26,6 +26,9 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.DISPUTE_RESOLVED,
   events.DISPUTE_FILED,
   events.DISPUTE_RESOLUTION_COMMITTED,
+  events.RETURN_REQUESTED,
+  events.RETURN_SELLER_RESPONDED,
+  events.RETURN_DECIDED,
   events.PAYOUT_RELEASED,
   events.PAYOUT_FORCE_RELEASED,
   events.PAYOUT_PAID,
@@ -77,6 +80,15 @@ function jobKeys(eventName, payload) {
     }
     return {
       idempotencyKey: `${eventName}:${payload.disputeId}`,
+      orderingKey: `order:${payload.orderId}`,
+    };
+  }
+  if ([events.RETURN_REQUESTED, events.RETURN_SELLER_RESPONDED, events.RETURN_DECIDED].includes(eventName)) {
+    if (!payload.returnId || !payload.orderId) {
+      throw new TypeError('Return notification event is missing its return or order ID.');
+    }
+    return {
+      idempotencyKey: `${eventName}:${payload.returnId}`,
       orderingKey: `order:${payload.orderId}`,
     };
   }
@@ -474,6 +486,9 @@ async function processNotificationJob(job, transactionDb) {
     case events.ORDER_DELIVERED:
     case events.DISPUTE_FILED:
     case events.DISPUTE_RESOLUTION_COMMITTED:
+    case events.RETURN_REQUESTED:
+    case events.RETURN_SELLER_RESPONDED:
+    case events.RETURN_DECIDED:
     case events.PAYOUT_RELEASED:
     case events.PAYOUT_FORCE_RELEASED: {
       // cross-module notification-recipient read: orders (owned by orders.service.js)
@@ -486,15 +501,21 @@ async function processNotificationJob(job, transactionDb) {
 
       const sellerOnly = [
         events.DISPUTE_FILED,
+        events.RETURN_REQUESTED,
         events.PAYOUT_RELEASED,
         events.PAYOUT_FORCE_RELEASED,
       ].includes(job.eventName);
-      recipients = sellerOnly
-        ? [{ userId: order.seller_id, role: 'seller' }]
-        : [
-            { userId: order.buyer_id, role: 'buyer' },
-            { userId: order.seller_id, role: 'seller' },
-          ];
+      const buyerOnly = job.eventName === events.RETURN_SELLER_RESPONDED;
+      if (sellerOnly) {
+        recipients = [{ userId: order.seller_id, role: 'seller' }];
+      } else if (buyerOnly) {
+        recipients = [{ userId: order.buyer_id, role: 'buyer' }];
+      } else {
+        recipients = [
+          { userId: order.buyer_id, role: 'buyer' },
+          { userId: order.seller_id, role: 'seller' },
+        ];
+      }
 
       let buyerRefundRequested = false;
       if (job.eventName === events.ORDER_CANCELLED) {
@@ -539,6 +560,14 @@ async function processNotificationJob(job, transactionDb) {
           message = isSeller
             ? 'A dispute on your sale was resolved.'
             : 'A dispute on your order was resolved.';
+        } else if (job.eventName === events.RETURN_REQUESTED) {
+          message = 'A buyer requested a return for your sale.';
+        } else if (job.eventName === events.RETURN_SELLER_RESPONDED) {
+          message = 'The seller responded to your return request.';
+        } else if (job.eventName === events.RETURN_DECIDED) {
+          message = isSeller
+            ? 'A return request for your sale was decided.'
+            : 'A return request for your order was decided.';
         } else {
           message = 'Your payout was released.';
         }
@@ -552,6 +581,9 @@ async function processNotificationJob(job, transactionDb) {
       else if (job.eventName === events.ORDER_DELIVERED) eventType = 'order_delivered';
       else if (job.eventName === events.DISPUTE_FILED) eventType = 'dispute_filed';
       else if (job.eventName === events.DISPUTE_RESOLUTION_COMMITTED) eventType = 'dispute_resolved';
+      else if (job.eventName === events.RETURN_REQUESTED) eventType = 'return_requested';
+      else if (job.eventName === events.RETURN_SELLER_RESPONDED) eventType = 'return_seller_responded';
+      else if (job.eventName === events.RETURN_DECIDED) eventType = 'return_decided';
       else eventType = 'payout_released';
 
       if (job.eventName === events.ORDER_FUNDED) {

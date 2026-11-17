@@ -11,8 +11,8 @@ describe('real PostgreSQL baseline', () => {
       const { rows } = await pool.query(
         "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
       );
-      // Migration 034 adds delivery_outcomes.
-      expect(rows[0].count).toBe(54);
+      // Migration 036 adds return_requests.
+      expect(rows[0].count).toBe(55);
     } finally {
       await pool.end();
     }

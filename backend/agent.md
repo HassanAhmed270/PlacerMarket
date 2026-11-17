@@ -138,9 +138,10 @@ later): `orders.service.createBagEntry()` (reads `conversations`),
 | 7a. Escrow Payments | FR-60a, FR-61–62, FR-65, FR-77b | `modules/escrowPayments.service.js` | payments, webhook_inbox, refunds, ledger_entries |
 | Shared Money Audit | FR-45, FR-65, FR-68, FR-69, FR-72, FR-77b | `modules/moneyAudit.service.js` | money_audit_events |
 | 8. Delivery | FR-33b, FR-39–42, FR-72e | `modules/delivery.service.js` | delivery_partners, delivery_status_log, delivery_outcomes, order_exceptions |
-| 9. Disputes, Returns & Refunds | FR-43–45a | `modules/disputes.service.js` | disputes, dispute_evidence |
+| 9. Disputes | FR-43–45a | `modules/disputes.service.js` | disputes, dispute_evidence |
 | 9a. Payout Hold Window | FR-45b–45h, FR-65 reservation payout | `modules/payout.service.js` | payout_holds |
-| 9b. Seller Held Funds | FR-65 | `modules/sellerHeldFunds.service.js` | seller_held_funds |
+| 9b. Returns | FR-43, FR-45, FR-56 | `modules/returnRequests.service.js` | return_requests |
+| 9c. Seller Held Funds | FR-65 | `modules/sellerHeldFunds.service.js` | seller_held_funds |
 | 10. Commission & Settlement | FR-46–50a | `modules/settlement.service.js` | platform_settings, settlements |
 | 11. Notifications | FR-51 | `modules/notifications.service.js` | notifications |
 | 12. Administration | FR-52–59 | `modules/admin.service.js` | **none** — thin orchestration only |
@@ -209,6 +210,14 @@ purpose so the schema works whichever way this eventually gets decided.
   calls `disputes.service.hasOpenDispute()` **synchronously, directly** —
   never via the event bus. This gates an admin decision inside one request;
   it must not depend on whether an async event has been processed.
+- **FR-43, FR-45 (returns)**: `returnRequests.service.js` owns
+  `return_requests`. The return route injects dispute checks, and return
+  decisions use the existing `payout_holds` pause/restore helpers,
+  `sellerPayouts.service.js` payout-failure helper, and
+  `escrowPayments.service.js` refund creator. `disputes.routes.js` injects
+  the return-open check into dispute filing to enforce one open case per
+  order without a service cycle. A payout hold remembers its prior state
+  while paused so resolving an issue restores previous payout eligibility.
 - **FR-45g (durable dispute pause)**: `disputes.routes.js` injects
   `payout.service.pausePayoutHoldForDispute()` into `fileDispute()`, which writes
   `payout_holds.state = 'paused_for_dispute'` in the same transaction as the

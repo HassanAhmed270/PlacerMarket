@@ -8,6 +8,7 @@ const settlement = require('../modules/settlement.service');
 const sellerPayouts = require('../modules/sellerPayouts.service');
 const sellerHeldFunds = require('../modules/sellerHeldFunds.service');
 const disputes = require('../modules/disputes.service');
+const returnRequests = require('../modules/returnRequests.service');
 const { requireAuth } = require('../middleware/auth');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 const { ConfigurationError } = require('../lib/errors');
@@ -23,7 +24,7 @@ function noStore(_req, res, next) {
 
 async function sellerOrderResponses(ordersForSeller) {
   const orderIds = ordersForSeller.map((order) => order.orderId);
-  const [listingSummaries, reservationCities, holdStates, disputeStatuses, orderSettlements, orderPayouts, orderHeldFlags] = await Promise.all([
+  const [listingSummaries, reservationCities, holdStates, disputeStatuses, orderSettlements, orderPayouts, orderHeldFlags, returnStatuses] = await Promise.all([
     listings.getSellerOrderListingSummaries(ordersForSeller.map((order) => order.listingId)),
     reservations.getSellerOrderDeliveryCities(ordersForSeller.map((order) => order.reservationId)),
     payout.getSellerOrderHoldStates(orderIds),
@@ -31,6 +32,7 @@ async function sellerOrderResponses(ordersForSeller) {
     settlement.getSellerOrderSettlements(orderIds),
     sellerPayouts.getSellerOrderPayoutSummaries(orderIds),
     sellerHeldFunds.getSellerOrderHeldFlags(orderIds),
+    returnRequests.getOrderReturnStatuses(orderIds),
   ]);
   const listingsById = new Map(listingSummaries.map((listing) => [listing.listingId, listing]));
   const reservationsById = new Map(reservationCities.map((reservation) => [reservation.reservationId, reservation]));
@@ -39,6 +41,7 @@ async function sellerOrderResponses(ordersForSeller) {
   const settlementsByOrderId = new Map(orderSettlements.map((settlementRow) => [settlementRow.orderId, settlementRow]));
   const payoutsByOrderId = new Map(orderPayouts.map((payoutRow) => [payoutRow.orderId, payoutRow]));
   const heldFlagsByOrderId = new Map(orderHeldFlags.map((heldFlag) => [heldFlag.orderId, heldFlag]));
+  const returnStatusesByOrderId = new Map(returnStatuses.map((status) => [status.orderId, status]));
 
   return ordersForSeller.map((order) => {
     const listing = listingsById.get(order.listingId);
@@ -49,6 +52,7 @@ async function sellerOrderResponses(ordersForSeller) {
     const earningsValues = settlementsByOrderId.get(order.orderId);
     const payoutValues = payoutsByOrderId.get(order.orderId);
     const disputeValues = disputesByOrderId.get(order.orderId);
+    const returnValues = returnStatusesByOrderId.get(order.orderId);
 
     return {
       orderId: order.orderId,
@@ -83,6 +87,9 @@ async function sellerOrderResponses(ordersForSeller) {
       disputeOutcome: disputeValues?.outcome ?? null,
       disputeReason: disputeValues?.reason ?? null,
       disputeDecidedAt: disputeValues?.decidedAt ?? null,
+      returnStatus: returnValues?.status ?? null,
+      returnOutcome: returnValues?.outcome ?? null,
+      returnDecidedAt: returnValues?.decidedAt ?? null,
     };
   });
 }
@@ -102,7 +109,20 @@ router.get('/selling/:orderId', noStore, limiters.payments, async (req, res) => 
 
 router.get('/mine', noStore, limiters.payments, async (req, res) => {
   const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
-  res.json(await orders.getBuyerReservationOrders(req.user.id, limit));
+  const buyerOrders = await orders.getBuyerReservationOrders(req.user.id, limit);
+  const returnStatuses = await returnRequests.getOrderReturnStatuses(
+    buyerOrders.map((order) => order.orderId)
+  );
+  const returnStatusesByOrderId = new Map(returnStatuses.map((status) => [status.orderId, status]));
+  res.json(buyerOrders.map((order) => {
+    const returnStatus = returnStatusesByOrderId.get(order.orderId);
+    return {
+      ...order,
+      returnStatus: returnStatus?.status ?? null,
+      returnOutcome: returnStatus?.outcome ?? null,
+      returnDecidedAt: returnStatus?.decidedAt ?? null,
+    };
+  }));
 });
 
 router.get('/:orderId/summary', noStore, limiters.payments, async (req, res) => {
@@ -129,6 +149,7 @@ router.get('/:orderId/summary', noStore, limiters.payments, async (req, res) => 
       checkoutUrl: paymentStatus.checkoutUrl || null,
     },
     disputeFiling: await disputes.getBuyerDisputeFilingStatus(order),
+    returnRequest: await returnRequests.getOrderReturnStatus(order.orderId),
     handoverDeadlineAt: order.handoverDeadlineAt,
     createdAt: order.createdAt,
     address: {

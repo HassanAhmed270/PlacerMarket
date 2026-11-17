@@ -28,7 +28,8 @@ describe('FR-69 durable dispute payout-hold release', () => {
     await payout.handleDisputeResolved(payload, { transaction });
 
     expect(transaction.query.mock.calls[0][0]).toMatch(/FOR UPDATE/i);
-    expect(transaction.query.mock.calls[1][0]).toMatch(/SET state = 'held'/);
+    expect(transaction.query.mock.calls[1][0]).toMatch(/SET state = COALESCE\(state_before_pause, 'held'\)/);
+    expect(transaction.query.mock.calls[1][0]).toMatch(/state_before_pause = NULL/);
     expect(transaction.query.mock.calls[1][0]).toMatch(/dispute_id = \$2/);
     expect(transaction.query.mock.calls[1][1]).toEqual([payload.orderId, payload.disputeId]);
   });

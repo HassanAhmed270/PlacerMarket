@@ -42,6 +42,9 @@ module.exports = {
   DISPUTE_RESOLVED: 'dispute.resolved', // FR-45
   DISPUTE_RESOLUTION_COMMITTED: 'dispute.resolution_committed', // FR-51
   DISPUTE_REFUND_EXCEPTION_REQUIRED: 'dispute.refund_exception_required', // FR-45
+  RETURN_REQUESTED: 'return.requested', // FR-43
+  RETURN_SELLER_RESPONDED: 'return.seller_responded', // FR-43
+  RETURN_DECIDED: 'return.decided', // FR-43, FR-45
   MANUAL_REFUND_SUCCEEDED: 'manual_refund.succeeded', // FR-45, FR-69
   REFUND_STATUS_CHANGED: 'refund.status_changed', // FR-51, FR-69
 

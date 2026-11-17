@@ -872,7 +872,8 @@ async function createDisputeRefund(client, {
          WHERE order_id = $1 AND status = 'paid'
        ) OR EXISTS (
          SELECT 1 FROM payout_holds
-         WHERE order_id = $1 AND state IN ('released', 'force_released')
+         WHERE order_id = $1
+           AND COALESCE(state_before_pause, state) IN ('released', 'force_released')
        ) AS paid_after_payout`,
     [orderId]
   );
@@ -1012,6 +1013,98 @@ async function createDeliveryLostRefund(client, { orderId, actorId, reason }) {
     itemAmount: split.itemAmount,
     deliveryFeeAmount: split.deliveryFeeAmount,
     sellerAtFault: false,
+  };
+}
+
+/** FR-43, FR-45: create an Admin-approved return refund through the captured-payment path. */
+async function createReturnRefund(client, {
+  orderId,
+  returnRequestId,
+  actorId,
+  reason,
+  sellerAtFault,
+}) {
+  if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 300) {
+    throw new ValidationError('reason must be 3 to 300 characters.');
+  }
+  if (typeof sellerAtFault !== 'boolean') {
+    throw new ValidationError('sellerAtFault must be a boolean.');
+  }
+  const { order, payment } = await lockManualRefundContext(client, orderId);
+  const balance = await getRefundableAmount(client, order, payment);
+  const itemAmountMinor = moneyToMinorUnits(balance.item_price, 'remainingItemAmount');
+  const deliveryAmountMinor = sellerAtFault
+    ? moneyToMinorUnits(balance.delivery_fee, 'remainingDeliveryFee')
+    : 0n;
+  const amountMinor = itemAmountMinor + deliveryAmountMinor;
+  if (amountMinor === 0n) {
+    throw new ConflictError('The order has no remaining refundable return balance.');
+  }
+  const split = await allocateRefundSplit(
+    client,
+    order,
+    payment,
+    minorUnitsToMoney(amountMinor),
+    sellerAtFault
+  );
+  const refundId = randomUUID();
+  const normalizedReason = reason.trim();
+  const { rows: payoutRows } = await client.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM seller_payouts WHERE order_id = $1 AND status = 'paid'
+     ) OR EXISTS (
+       SELECT 1 FROM payout_holds
+       WHERE order_id = $1
+         AND COALESCE(state_before_pause, state) IN ('released', 'force_released')
+     ) AS paid_after_payout`,
+    [orderId]
+  );
+  await client.query(
+    `INSERT INTO refunds
+       (id, payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+        approved_by, approved_at, reason, decision_note, item_amount, delivery_fee_amount,
+        seller_at_fault, decided_by)
+     VALUES ($1, $2, $3, 'return_admin', $4::numeric, $5, 'approved', $6,
+             $7, now(), $8, $8, $9::numeric, $10::numeric, $11, $7)`,
+    [
+      refundId,
+      payment.id,
+      orderId,
+      split.amount,
+      payment.currency,
+      `refund:${payment.id}:return:${returnRequestId}`,
+      actorId,
+      normalizedReason,
+      split.itemAmount,
+      split.deliveryFeeAmount,
+      sellerAtFault,
+    ]
+  );
+  await enqueueRefundJob(client, refundId);
+  await moneyAudit.recordMoneyAuditEvent(client, {
+    actorId,
+    action: 'return_refund_approved',
+    orderId,
+    paymentId: payment.id,
+    refundId,
+    approvedBy: actorId,
+    reason: normalizedReason,
+    metadata: {
+      returnRequestId,
+      amount: split.amount,
+      itemAmount: split.itemAmount,
+      deliveryFeeAmount: split.deliveryFeeAmount,
+      sellerAtFault,
+      refundAfterPayout: payoutRows[0].paid_after_payout,
+    },
+  });
+  return {
+    refundId,
+    amount: split.amount,
+    itemAmount: split.itemAmount,
+    deliveryFeeAmount: split.deliveryFeeAmount,
+    sellerAtFault,
+    refundAfterPayout: payoutRows[0].paid_after_payout,
   };
 }
 
@@ -2416,6 +2509,7 @@ module.exports = {
   decideManualRefund,
   createDisputeRefund,
   createDeliveryLostRefund,
+  createReturnRefund,
   assertNoOpenManualRefund,
   hasOpenDisputeRefund,
   getSucceededRefundedItemAmount,

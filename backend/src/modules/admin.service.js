@@ -27,6 +27,7 @@ const settlement = require('./settlement.service');
 const payout = require('./payout.service');
 const escrowPayments = require('./escrowPayments.service');
 const sellerPayouts = require('./sellerPayouts.service');
+const returnRequests = require('./returnRequests.service');
 const { ValidationError } = require('../lib/errors');
 
 // ---- FR-52: users ----
@@ -100,6 +101,25 @@ async function listFailedRefundsNeedingAttention(query) {
 async function retryFailedRefund(refundId, actorId) {
   return escrowPayments.retryFailedRefund(refundId, actorId, {
     isOrderPayoutReleased: payout.isOrderPayoutReleased,
+  });
+}
+
+/** FR-43, FR-56: list return requests for Admin review. */
+async function listReturnRequests(query) {
+  return returnRequests.listAdminReturnRequests(query);
+}
+
+/** FR-43, FR-56: return one full return record for Admin review. */
+async function getReturnRequest(returnId) {
+  return returnRequests.getAdminReturnRequest(returnId);
+}
+
+/** FR-43, FR-45, FR-56: decide a return with the existing Admin step-up gate. */
+async function decideReturnRequest(returnId, adminId, sessionId, input) {
+  return returnRequests.decideReturnRequest(returnId, adminId, sessionId, input, {
+    hasOpenDispute: disputes.hasOpenDisputeInTransaction,
+    hasOpenOtherPayoutIssue: disputes.hasOpenDisputeInTransaction,
+    failInitiatedPayout: sellerPayouts.failInitiatedPayoutForReturn,
   });
 }
 
@@ -185,6 +205,9 @@ module.exports = {
   decideManualRefund,
   listFailedRefundsNeedingAttention,
   retryFailedRefund,
+  listReturnRequests,
+  getReturnRequest,
+  decideReturnRequest,
   verifySellerIdentity,
   approveListing,
   rejectListing,

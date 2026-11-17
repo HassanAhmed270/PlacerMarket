@@ -418,6 +418,7 @@ test('FR-51: the seller receives a dispute-filed notification', async () => {
   }, {
     getOrderPayoutStatus: sellerPayouts.getOrderPayoutStatus,
     pausePayoutHold: payout.pausePayoutHoldForDispute,
+    hasOpenReturnRequest: async () => false,
   });
   await processQueuedNotification(
     events.DISPUTE_FILED,
@@ -451,6 +452,7 @@ test.each([
   }, {
     getOrderPayoutStatus: sellerPayouts.getOrderPayoutStatus,
     pausePayoutHold: payout.pausePayoutHoldForDispute,
+    hasOpenReturnRequest: async () => false,
   });
   await global.drainIntegrationListeners(5000);
   await disputes.resolveDispute(dispute.id, {

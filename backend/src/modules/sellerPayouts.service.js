@@ -335,6 +335,53 @@ async function failInitiatedPayoutForLostDelivery(client, { orderId, adminId }) 
   return { failedPayoutIds, paidPayoutIds };
 }
 
+/** FR-43, FR-45: fail initiated payouts after an approved return without touching paid payouts. */
+async function failInitiatedPayoutForReturn(client, { orderId, adminId, returnRequestId }) {
+  if (!client || typeof client.query !== 'function') {
+    throw new TypeError('Return payout handling requires the decision transaction.');
+  }
+  const { rows: payouts } = await client.query(
+    `SELECT id, status
+     FROM seller_payouts
+     WHERE order_id = $1
+     ORDER BY attempt DESC
+     FOR UPDATE`,
+    [orderId]
+  );
+  const failedPayoutIds = [];
+  const paidPayoutIds = [];
+  for (const payout of payouts) {
+    if (payout.status === 'paid') {
+      paidPayoutIds.push(payout.id);
+      continue;
+    }
+    if (payout.status !== 'initiated') continue;
+    const { rows } = await client.query(
+      `UPDATE seller_payouts
+       SET status = 'failed',
+           failure_reason = 'return_decision',
+           failed_by = $1,
+           failed_at = now()
+       WHERE id = $2 AND status = 'initiated'
+       RETURNING id`,
+      [adminId, payout.id]
+    );
+    if (!rows[0]) throw new ConflictError('Payout status changed before return decision.');
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: adminId,
+      action: 'seller_payout_failed_by_return',
+      orderId,
+      reason: 'return_decision',
+      metadata: {
+        payoutId: rows[0].id,
+        returnRequestId,
+      },
+    });
+    failedPayoutIds.push(rows[0].id);
+  }
+  return { failedPayoutIds, paidPayoutIds };
+}
+
 /** FR-48, FR-49: record an initiated payout as paid with transfer details and cash ledger entry. */
 async function markPaid(payoutId, adminId, sessionId, input, guards) {
   assertUuid(payoutId, 'payoutId');
@@ -860,6 +907,7 @@ module.exports = {
   getBusinessDate,
   failInitiatedPayoutForDispute,
   failInitiatedPayoutForLostDelivery,
+  failInitiatedPayoutForReturn,
   getSellerOrderPayoutSummaries,
   markPaid,
   approvePayout,

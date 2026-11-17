@@ -2,6 +2,7 @@ const { Router } = require('express');
 const disputes = require('../modules/disputes.service');
 const payout = require('../modules/payout.service');
 const sellerPayouts = require('../modules/sellerPayouts.service');
+const returnRequests = require('../modules/returnRequests.service');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
@@ -13,6 +14,7 @@ router.post('/orders/:id', async (req, res) => {
   res.status(201).json(await disputes.fileDispute(req.params.id, req.user.id, req.body, {
     getOrderPayoutStatus: sellerPayouts.getOrderPayoutStatus,
     pausePayoutHold: payout.pausePayoutHoldForDispute,
+    hasOpenReturnRequest: returnRequests.hasOpenReturnRequest,
   })); // FR-43
 });
 

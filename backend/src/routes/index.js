@@ -16,6 +16,7 @@ const routeMounts = [
   ['/payments', require('./payments.routes')],
   ['/delivery', require('./delivery.routes')],
   ['/disputes', require('./disputes.routes')],
+  ['/returns', require('./returnRequests.routes')],
   ['/payout', require('./payout.routes')],
   ['/settlement', require('./settlement.routes')],
   ['/notifications', require('./notifications.routes')],
