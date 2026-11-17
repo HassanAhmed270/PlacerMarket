@@ -19,6 +19,7 @@ let buyerIdentity;
 
 const SELLER_ORDER_KEYS = [
   'cancelledAt',
+  'chargebacks',
   'currency',
   'deliveredAt',
   'deliveryCity',
@@ -154,6 +155,7 @@ describe('FR-34 seller reservation-backed order reads', () => {
       returnStatus: null,
       returnOutcome: null,
       returnDecidedAt: null,
+      chargebacks: [],
       disputeStatus: null,
       disputeOutcome: null,
       disputeReason: null,

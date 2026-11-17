@@ -465,6 +465,7 @@ test.each([
     stepUpGrant: await createDisputeDecisionGrant(),
   }, {
     failInitiatedPayoutForDispute: sellerPayouts.failInitiatedPayoutForDispute,
+    hasOpenOtherPayoutIssue: async () => false,
   });
   const recipientId = role === 'seller' ? scenario.sellerId : scenario.buyerId;
   await processQueuedNotification(

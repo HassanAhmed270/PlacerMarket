@@ -34,6 +34,17 @@ describe('FR-69 durable dispute payout-hold release', () => {
     expect(transaction.query.mock.calls[1][1]).toEqual([payload.orderId, payload.disputeId]);
   });
 
+  test('FR-69: a chargeback keeps the shared payout hold paused after dispute resolution', async () => {
+    transaction.query
+      .mockResolvedValueOnce({
+        rows: [{ state: 'paused_for_dispute', dispute_id: payload.disputeId }],
+      });
+
+    await payout.handleDisputeResolved({ ...payload, keepPayoutHold: true }, { transaction });
+
+    expect(transaction.query).toHaveBeenCalledTimes(1);
+  });
+
   test('FR-69: an absent, released, or mismatched hold is not changed', async () => {
     transaction.query
       .mockResolvedValueOnce({ rows: [] })

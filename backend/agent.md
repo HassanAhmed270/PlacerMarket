@@ -141,7 +141,8 @@ later): `orders.service.createBagEntry()` (reads `conversations`),
 | 9. Disputes | FR-43–45a | `modules/disputes.service.js` | disputes, dispute_evidence |
 | 9a. Payout Hold Window | FR-45b–45h, FR-65 reservation payout | `modules/payout.service.js` | payout_holds |
 | 9b. Returns | FR-43, FR-45, FR-56 | `modules/returnRequests.service.js` | return_requests |
-| 9c. Seller Held Funds | FR-65 | `modules/sellerHeldFunds.service.js` | seller_held_funds |
+| 9c. Chargebacks | FR-57–58 | `modules/chargebacks.service.js` | chargebacks |
+| 9d. Seller Held Funds | FR-65 | `modules/sellerHeldFunds.service.js` | seller_held_funds |
 | 10. Commission & Settlement | FR-46–50a | `modules/settlement.service.js` | platform_settings, settlements |
 | 11. Notifications | FR-51 | `modules/notifications.service.js` | notifications |
 | 12. Administration | FR-52–59 | `modules/admin.service.js` | **none** — thin orchestration only |

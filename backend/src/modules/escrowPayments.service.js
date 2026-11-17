@@ -317,6 +317,7 @@ function normalizeManualRefundNote(note) {
   return trimmed;
 }
 
+/** FR-57, FR-58, FR-69: lock the captured order and payment context for refund actions. */
 async function lockManualRefundContext(client, orderId, expectedPaymentId) {
   const context = await orders.getMoneyLockContext(client, orderId);
   if (!context) throw new NotFoundError('order');
@@ -420,11 +421,18 @@ async function expireManualRefundRequests(client, orderId, paymentId, actorId, r
 async function getRefundableAmount(client, order, payment) {
   const { rows } = await client.query(
     `WITH refunded AS (
-       SELECT COALESCE(SUM(amount) FILTER (WHERE status = ANY($2::text[])), 0) AS total,
-              COALESCE(SUM(item_amount) FILTER (WHERE status = ANY($2::text[])), 0) AS item_amount,
-              COALESCE(SUM(delivery_fee_amount) FILTER (WHERE status = ANY($2::text[])), 0) AS delivery_fee_amount,
+       SELECT COALESCE(SUM(amount) FILTER (
+                WHERE status = ANY($2::text[]) OR trigger = 'chargeback'
+              ), 0) AS total,
+              COALESCE(SUM(item_amount) FILTER (
+                WHERE status = ANY($2::text[]) OR trigger = 'chargeback'
+              ), 0) AS item_amount,
+              COALESCE(SUM(delivery_fee_amount) FILTER (
+                WHERE status = ANY($2::text[]) OR trigger = 'chargeback'
+              ), 0) AS delivery_fee_amount,
               COALESCE(SUM(amount) FILTER (
-                WHERE status = ANY($2::text[]) AND item_amount IS NULL
+                WHERE (status = ANY($2::text[]) OR trigger = 'chargeback')
+                  AND item_amount IS NULL
               ), 0) AS unallocated_amount
        FROM refunds
        WHERE payment_id = $1
@@ -463,7 +471,8 @@ async function allocateRefundSplit(
   amount,
   sellerAtFault,
   excludedRefundId = null,
-  mustBePartial = false
+  mustBePartial = false,
+  allowPartialDeliveryFee = false
 ) {
   const amountMinor = moneyToMinorUnits(amount, 'amount');
   if (mustBePartial && amountMinor >= moneyToMinorUnits(String(payment.amount), 'capturedAmount')) {
@@ -472,7 +481,8 @@ async function allocateRefundSplit(
   const { rows: reservedRows } = await client.query(
     `SELECT COALESCE(SUM(amount), 0)::text AS reserved_amount
      FROM refunds
-     WHERE payment_id = $1 AND status = ANY($2::text[])
+    WHERE payment_id = $1
+      AND (status = ANY($2::text[]) OR trigger = 'chargeback')
        AND ($3::uuid IS NULL OR id <> $3)`,
     [payment.id, MANUAL_REFUND_RESERVED_STATUSES, excludedRefundId]
   );
@@ -485,7 +495,8 @@ async function allocateRefundSplit(
     `SELECT COALESCE(SUM(COALESCE(item_amount, amount)), 0)::text AS refunded_item_amount,
             COALESCE(SUM(COALESCE(delivery_fee_amount, 0)), 0)::text AS refunded_delivery_fee
      FROM refunds
-     WHERE payment_id = $1 AND status = ANY($2::text[])
+    WHERE payment_id = $1
+      AND (status = ANY($2::text[]) OR trigger = 'chargeback')
        AND ($3::uuid IS NULL OR id <> $3)`,
     [payment.id, MANUAL_REFUND_RESERVED_STATUSES, excludedRefundId]
   );
@@ -498,8 +509,9 @@ async function allocateRefundSplit(
   const itemAmount = amountMinor < itemRemaining ? amountMinor : itemRemaining;
   const deliveryFeeAmount = amountMinor - itemAmount;
   if (deliveryFeeAmount > 0n &&
-      (!(sellerAtFault || (!order.delivered_at && order.status !== 'refused_at_door')) ||
-       deliveryFeeAmount !== deliveryRemaining)) {
+      (!(sellerAtFault || (!order.delivered_at && order.status !== 'refused_at_door') ||
+         allowPartialDeliveryFee) ||
+       (!allowPartialDeliveryFee && deliveryFeeAmount !== deliveryRemaining))) {
     throw new ConflictError(
       'The delivery fee can only be refunded in full when the seller is at fault or the order was never delivered without a recorded refusal.'
     );
@@ -1105,6 +1117,66 @@ async function createReturnRefund(client, {
     deliveryFeeAmount: split.deliveryFeeAmount,
     sellerAtFault,
     refundAfterPayout: payoutRows[0].paid_after_payout,
+  };
+}
+
+/** FR-57, FR-58: create a chargeback refund through the captured-payment allocation path. */
+async function createChargebackRefund(client, {
+  orderId,
+  chargebackId,
+  actorId,
+  amount,
+  reason,
+}) {
+  const amountMinor = moneyToMinorUnits(amount, 'amount');
+  if (amountMinor <= 0n) throw new ValidationError('amount must be greater than zero.');
+  const normalizedReason = typeof reason === 'string' ? reason.trim() : '';
+  if (normalizedReason.length < 3 || normalizedReason.length > 300) {
+    throw new ValidationError('reason must be 3 to 300 characters.');
+  }
+  const { order, payment } = await lockManualRefundContext(client, orderId);
+  const balance = await getRefundableAmount(client, order, payment);
+  if (amountMinor > moneyToMinorUnits(balance.total, 'remainingRefundableAmount')) {
+    throw new ConflictError('Chargeback amount exceeds the remaining refundable balance.');
+  }
+  const split = await allocateRefundSplit(
+    client,
+    order,
+    payment,
+    minorUnitsToMoney(amountMinor),
+    false,
+    null,
+    false,
+    true
+  );
+  const refundId = randomUUID();
+  await client.query(
+    `INSERT INTO refunds
+       (id, payment_id, order_id, trigger, amount, currency, status, idempotency_key,
+        approved_by, approved_at, reason, decision_note, item_amount, delivery_fee_amount,
+        seller_at_fault, decided_by)
+     VALUES ($1, $2, $3, 'chargeback', $4::numeric, $5, 'approved', $6,
+             $7, now(), $8, $8, $9::numeric, $10::numeric, FALSE, $7)`,
+    [
+      refundId,
+      payment.id,
+      orderId,
+      split.amount,
+      payment.currency,
+      `refund:${payment.id}:chargeback:${chargebackId}`,
+      actorId,
+      normalizedReason,
+      split.itemAmount,
+      split.deliveryFeeAmount,
+    ]
+  );
+  await enqueueRefundJob(client, refundId);
+  return {
+    refundId,
+    amount: split.amount,
+    itemAmount: split.itemAmount,
+    deliveryFeeAmount: split.deliveryFeeAmount,
+    currency: payment.currency,
   };
 }
 
@@ -2510,6 +2582,8 @@ module.exports = {
   createDisputeRefund,
   createDeliveryLostRefund,
   createReturnRefund,
+  createChargebackRefund,
+  lockManualRefundContext,
   assertNoOpenManualRefund,
   hasOpenDisputeRefund,
   getSucceededRefundedItemAmount,

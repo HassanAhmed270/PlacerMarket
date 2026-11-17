@@ -143,6 +143,7 @@ describe('Dispute decision status and exact money inputs', () => {
         stepUpGrant: 'grant-1',
       }, {
         failInitiatedPayoutForDispute: jest.fn().mockResolvedValue([]),
+        hasOpenOtherPayoutIssue: jest.fn().mockResolvedValue(false),
       })
     ).rejects.toMatchObject({ statusCode: 409 });
   });
@@ -159,6 +160,8 @@ describe('Dispute decision status and exact money inputs', () => {
         resolvedBy: 'admin-1',
         sessionId: 'session-1',
         stepUpGrant: 'grant-1',
+      }, {
+        hasOpenOtherPayoutIssue: jest.fn().mockResolvedValue(false),
       })
     ).rejects.toMatchObject({ statusCode: 409 });
   });

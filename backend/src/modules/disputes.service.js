@@ -355,6 +355,7 @@ async function resolveDispute(disputeId, {
   stepUpGrant,
 } = {}, {
   failInitiatedPayoutForDispute,
+  hasOpenOtherPayoutIssue,
 } = {}) {
 
   if (typeof disputeId !== 'string' || !disputeId.trim()) {
@@ -395,6 +396,9 @@ async function resolveDispute(disputeId, {
   );
   const initial = initialRows[0];
   if (!initial) throw new NotFoundError('dispute', disputeId);
+  if (typeof hasOpenOtherPayoutIssue !== 'function') {
+    throw new TypeError('Payout-issue owner is required to resolve a dispute.');
+  }
   if (normalizedOutcome !== 'seller_favor' && typeof failInitiatedPayoutForDispute !== 'function') {
     throw new TypeError('Dispute payout owner is required for refund decisions.');
   }
@@ -508,6 +512,7 @@ async function resolveDispute(disputeId, {
         } : {}),
       },
     });
+    const keepPayoutHold = await hasOpenOtherPayoutIssue(client, initial.order_id);
     await eventBus.emitAsync(
       events.DISPUTE_RESOLVED,
       {
@@ -516,6 +521,7 @@ async function resolveDispute(disputeId, {
         resolutionStatus,
         resolutionAmountToBuyer: resolutionAmount,
         outcome: normalizedOutcome,
+        keepPayoutHold,
       },
       { transaction: client, resolvedBy }
     );

@@ -158,8 +158,9 @@ describe('FR-61, FR-62 buyer order reads', () => {
 
     expect(response.headers['cache-control']).toBe('private, no-store');
     expect(Object.keys(response.body).sort()).toEqual([
-      'address', 'createdAt', 'currency', 'deliveryFee', 'disputeFiling', 'handoverDeadlineAt',
-      'itemPrice', 'listing', 'orderId', 'payment', 'reservation', 'returnRequest', 'status', 'total',
+      'address', 'chargebacks', 'createdAt', 'currency', 'deliveryFee', 'disputeFiling',
+      'handoverDeadlineAt', 'itemPrice', 'listing', 'orderId', 'payment', 'reservation',
+      'returnRequest', 'status', 'total',
     ]);
     expect(response.body).toMatchObject({
       orderId: reservation.orderId,
@@ -176,6 +177,7 @@ describe('FR-61, FR-62 buyer order reads', () => {
       total: '1550.50',
       currency: 'PKR',
       returnRequest: null,
+      chargebacks: [],
       reservation: { status: 'active' },
       payment: { status: 'pending', checkoutUrl: 'https://payments.example.test/session' },
       handoverDeadlineAt: null,
@@ -204,7 +206,7 @@ describe('FR-61, FR-62 buyer order reads', () => {
     expect(response.headers['cache-control']).toBe('private, no-store');
     expect(response.body).toHaveLength(1);
     expect(Object.keys(response.body[0]).sort()).toEqual([
-      'createdAt', 'currency', 'listingId', 'orderId', 'reservationExpiresAt',
+      'chargebacks', 'createdAt', 'currency', 'listingId', 'orderId', 'reservationExpiresAt',
       'returnDecidedAt', 'returnOutcome', 'returnStatus', 'status', 'title', 'total',
     ]);
     expect(response.body[0]).toMatchObject({
@@ -217,6 +219,7 @@ describe('FR-61, FR-62 buyer order reads', () => {
       returnStatus: null,
       returnOutcome: null,
       returnDecidedAt: null,
+      chargebacks: [],
     });
     expect(typeof response.body[0].reservationExpiresAt).toBe('string');
     expect(JSON.stringify(response.body)).not.toContain(fixture.userId);

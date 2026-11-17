@@ -3,6 +3,7 @@ const disputes = require('../modules/disputes.service');
 const payout = require('../modules/payout.service');
 const sellerPayouts = require('../modules/sellerPayouts.service');
 const returnRequests = require('../modules/returnRequests.service');
+const chargebacks = require('../modules/chargebacks.service');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 
@@ -37,6 +38,7 @@ router.post('/:id/resolve', requirePermission('dispute.resolve'), limiters.admin
     sessionId: req.authSessionId,
   }, {
     failInitiatedPayoutForDispute: sellerPayouts.failInitiatedPayoutForDispute,
+    hasOpenOtherPayoutIssue: chargebacks.hasOpenPayoutIssue,
   })); // FR-45
 });
 

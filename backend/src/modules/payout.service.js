@@ -41,7 +41,7 @@ const events = require('../lib/events');
 const { NotFoundError, ValidationError, ForbiddenError, ConflictError } = require('../lib/errors');
 
 /** FR-45, FR-69: release the durable order hold atomically with dispute decision. */
-async function handleDisputeResolved({ disputeId, orderId }, context = {}) {
+async function handleDisputeResolved({ disputeId, orderId, keepPayoutHold = false }, context = {}) {
   const { transaction: client } = context;
   if (!client) {
     throw new TypeError('Dispute resolution payout effects require the resolution transaction.');
@@ -56,6 +56,7 @@ async function handleDisputeResolved({ disputeId, orderId }, context = {}) {
   );
   const hold = holdRows[0];
   if (!hold || hold.state !== 'paused_for_dispute' || hold.dispute_id !== disputeId) return;
+  if (keepPayoutHold) return;
   await client.query(
     `UPDATE payout_holds
      SET state = COALESCE(state_before_pause, 'held'),

@@ -92,6 +92,56 @@ router.get(
 );
 
 router.get(
+  '/chargebacks',
+  noStoreOrderResponses,
+  requirePermission('refund.view'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await admin.listChargebacks(req.query)); // FR-57, FR-58
+  }
+);
+
+router.get(
+  '/chargebacks/:chargebackId',
+  noStoreOrderResponses,
+  requirePermission('refund.view'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await admin.getChargeback(req.params.chargebackId)); // FR-57, FR-58
+  }
+);
+
+router.post(
+  '/orders/:orderId/chargebacks',
+  noStoreOrderResponses,
+  requirePermission('refund.decide'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.status(201).json(await admin.recordChargeback(
+      req.params.orderId,
+      req.user.id,
+      req.authSessionId,
+      refundBody(req.body)
+    )); // FR-57, FR-58
+  }
+);
+
+router.post(
+  '/chargebacks/:chargebackId/resolve',
+  noStoreOrderResponses,
+  requirePermission('refund.decide'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await admin.resolveChargeback(
+      req.params.chargebackId,
+      req.user.id,
+      req.authSessionId,
+      refundBody(req.body)
+    )); // FR-57, FR-58
+  }
+);
+
+router.get(
   '/returns/:returnId',
   noStoreOrderResponses,
   requirePermission('refund.view'),

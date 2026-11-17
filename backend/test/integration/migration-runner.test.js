@@ -385,8 +385,8 @@ describe('FR-79b PostgreSQL migration runner', () => {
     const schema = newSchemaName();
     await resetPgBossSchema();
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    // Migration 036 adds one migration to the full schema run.
-    expect(applied).toHaveLength(35);
+    // Migration 037 adds one migration to the full schema run.
+    expect(applied).toHaveLength(36);
 
     const relations = await db.query(
       `SELECT table_name FROM information_schema.tables
@@ -465,8 +465,8 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     await expect(runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir }))
-      // Migration 036 adds one migration after the pre-availability baseline.
-      .resolves.toHaveLength(16);
+      // Migration 037 adds one migration after the pre-availability baseline.
+      .resolves.toHaveLength(17);
     await withSchemaClient(schema, async (client) => {
       const { rows } = await client.query(
         'SELECT title, search_text, is_reserved, reserved_until, is_sold FROM listing_search WHERE listing_id = $1',
@@ -518,8 +518,8 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    // Migrations 035 and 036 follow the previous-head baseline.
-    expect(applied).toHaveLength(17);
+    // Migrations 035, 036, and 037 follow the previous-head baseline.
+    expect(applied).toHaveLength(18);
 
     await withSchemaClient(schema, async (client) => {
       const preservedOrders = await client.query(
@@ -794,6 +794,32 @@ describe('FR-79b PostgreSQL migration runner', () => {
          ) VALUES ($1, $2, 'system_cancel', 101, 'PKR', 'pending', $3)`,
         [singleRefund.paymentId, singleRefund.orderId, `refund-${randomUUID()}`]
       )).rejects.toMatchObject({ code: '23514' });
+      await expect(client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'chargeback', 101, 'PKR', 'voided', $3)`,
+        [singleRefund.paymentId, singleRefund.orderId, `refund-${randomUUID()}`]
+      )).rejects.toMatchObject({ code: '23514' });
+      await expect(client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'chargeback', 100, 'USD', 'voided', $3)`,
+        [singleRefund.paymentId, singleRefund.orderId, `refund-${randomUUID()}`]
+      )).rejects.toMatchObject({ code: '23514' });
+
+      const voidedRefund = await insertOrderAndPayment(client, fixture, { paymentAmount: '100.00' });
+      await client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'chargeback', 100, 'PKR', 'voided', $3)`,
+        [voidedRefund.paymentId, voidedRefund.orderId, `refund-${randomUUID()}`]
+      );
+      await expect(client.query(
+        `INSERT INTO refunds (
+           payment_id, order_id, trigger, amount, currency, status, idempotency_key
+         ) VALUES ($1, $2, 'system_cancel', 100, 'PKR', 'pending', $3)`,
+        [voidedRefund.paymentId, voidedRefund.orderId, `refund-${randomUUID()}`]
+      )).resolves.toMatchObject({ rowCount: 1 });
 
       const cumulativeRefund = await insertOrderAndPayment(client, fixture, { paymentAmount: '100.00' });
       const firstRefund = await client.query(

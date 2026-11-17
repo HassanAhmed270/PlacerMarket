@@ -3,8 +3,9 @@
  *
  * Owns: FR-52 to FR-59 (specs.md section "12. Administration")
  * Tables owned: NONE — per schema.sql's own note, admin actions operate on
- * users, seller_applications, listings, orders, disputes, platform_settings,
- * and delivery_partners, all of which already have an owning service file.
+ * users, seller_applications, listings, orders, disputes, chargebacks,
+ * platform_settings, and delivery_partners, all of which already have an
+ * owning service file.
  *
  * THIS FILE IS A THIN ORCHESTRATION/FACADE LAYER, NOT A LOGIC OWNER. If a
  * change belongs in "what counts as a valid seller application decision" or
@@ -28,6 +29,7 @@ const payout = require('./payout.service');
 const escrowPayments = require('./escrowPayments.service');
 const sellerPayouts = require('./sellerPayouts.service');
 const returnRequests = require('./returnRequests.service');
+const chargebacks = require('./chargebacks.service');
 const { ValidationError } = require('../lib/errors');
 
 // ---- FR-52: users ----
@@ -118,9 +120,21 @@ async function getReturnRequest(returnId) {
 async function decideReturnRequest(returnId, adminId, sessionId, input) {
   return returnRequests.decideReturnRequest(returnId, adminId, sessionId, input, {
     hasOpenDispute: disputes.hasOpenDisputeInTransaction,
-    hasOpenOtherPayoutIssue: disputes.hasOpenDisputeInTransaction,
+    hasOpenOtherPayoutIssue: chargebacks.hasOpenPayoutIssue,
     failInitiatedPayout: sellerPayouts.failInitiatedPayoutForReturn,
   });
+}
+
+/** FR-57, FR-58: record a chargeback with the existing Admin step-up gate. */
+async function recordChargeback(orderId, adminId, sessionId, input) {
+  return chargebacks.recordChargeback(orderId, adminId, sessionId, input, {
+    failInitiatedPayout: sellerPayouts.failInitiatedPayoutForChargeback,
+  });
+}
+
+/** FR-57, FR-58: resolve a chargeback with the existing Admin step-up gate. */
+async function resolveChargeback(chargebackId, adminId, sessionId, input) {
+  return chargebacks.resolveChargeback(chargebackId, adminId, sessionId, input);
 }
 
 /** FR-66: Admin-only manual identity check delegates storage to users.service. */
@@ -160,6 +174,7 @@ async function getOperationsOverview() {
 async function resolveDispute(disputeId, input) {
   return disputes.resolveDispute(disputeId, input, {
     failInitiatedPayoutForDispute: sellerPayouts.failInitiatedPayoutForDispute,
+    hasOpenOtherPayoutIssue: chargebacks.hasOpenPayoutIssue,
   });
 }
 
@@ -208,6 +223,10 @@ module.exports = {
   listReturnRequests,
   getReturnRequest,
   decideReturnRequest,
+  recordChargeback,
+  resolveChargeback,
+  listChargebacks: chargebacks.listAdminChargebacks,
+  getChargeback: chargebacks.getAdminChargeback,
   verifySellerIdentity,
   approveListing,
   rejectListing,
