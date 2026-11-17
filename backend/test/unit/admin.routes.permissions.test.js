@@ -59,6 +59,7 @@ const ADMIN_ONLY_PATHS = [
 const DELIVERY_ADMIN_ONLY_PATHS = [
   { method: 'patch', path: '/api/admin/orders/x/delivery' },
   { method: 'post', path: '/api/admin/orders/x/delivered' },
+  { method: 'post', path: '/api/admin/orders/x/refused-delivery' },
   { method: 'get', path: '/api/admin/orders' },
   { method: 'get', path: '/api/admin/orders/x' },
   { method: 'get', path: '/api/admin/order-exceptions' },
@@ -115,6 +116,11 @@ describe('admin routes: permission gates at the route layer', () => {
   test('moderator is NOT blocked by the gate on a moderator-allowed route', async () => {
     const res = await request(appAs('moderator')).post('/api/admin/listings/x/approve').send({});
     expect(res.status).not.toBe(403); // gets past the gate (then fails on the mocked DB — irrelevant here)
+  });
+
+  test('FR-33b: Moderator can pass the dedicated delivery-outcome read gate', async () => {
+    const res = await request(appAs('moderator')).get('/api/admin/orders/x/delivery-outcomes');
+    expect(res.status).not.toBe(403);
   });
 
   test('FR-05a: only Admin can resolve a dispute; Moderator keeps dispute review access', async () => {

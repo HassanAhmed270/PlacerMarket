@@ -26,6 +26,7 @@ const MODERATOR_ALLOWED_ACTIONS = new Set([
   'conversation.staff_read',
   'seller_application.approve', // FR-07, FR-53
   'seller_application.reject',
+  'delivery_outcome.view', // FR-33b
 ]);
 
 // Explicitly Admin-only per FR-05a / FR-58 — listed for clarity even though

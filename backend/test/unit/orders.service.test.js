@@ -77,3 +77,23 @@ describe('FR-68 reservation-backed delivery transition', () => {
     expect(client.query).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('FR-33b reservation-backed refusal transition', () => {
+  test('FR-33b: refusal changes only a dispatched, not-yet-delivered reservation order', async () => {
+    const client = {
+      query: jest.fn().mockResolvedValue({
+        rows: [{ id: 'order-1', status: 'refused_at_door' }],
+      }),
+    };
+
+    await expect(orders.markReservationOrderDeliveryRefused(client, 'order-1'))
+      .resolves.toEqual({ id: 'order-1', status: 'refused_at_door' });
+    expect(client.query).toHaveBeenCalledWith(
+      expect.stringContaining("SET status = 'refused_at_door'"),
+      ['order-1']
+    );
+    expect(client.query.mock.calls[0][0]).toContain("status IN ('handed_to_delivery', 'out_for_delivery')");
+    expect(client.query.mock.calls[0][0]).toContain('delivered_at IS NULL');
+    expect(client.query.mock.calls[0][0]).toContain('handed_over_at IS NOT NULL');
+  });
+});

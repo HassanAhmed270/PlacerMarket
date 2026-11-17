@@ -5,14 +5,14 @@ const settlement = require('../../src/modules/settlement.service');
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 
 describe('real PostgreSQL baseline', () => {
-  test('schema.sql includes the existing tables and Phase 4 structures', async () => {
+  test('schema.sql includes the existing tables and delivery-outcome structure', async () => {
     const pool = new Pool({ connectionString: testDatabaseUrl });
     try {
       const { rows } = await pool.query(
         "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
       );
-      // Migration 031 adds seller_held_funds.
-      expect(rows[0].count).toBe(53);
+      // Migration 034 adds delivery_outcomes.
+      expect(rows[0].count).toBe(54);
     } finally {
       await pool.end();
     }

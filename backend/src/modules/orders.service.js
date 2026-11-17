@@ -14,10 +14,9 @@
  *   lives in payout.service.js, not here.
  * - discovery.service.getSellerPublicCard() calls getSellerRatingSummary().
  *
- * FR-33b (OPEN / MAJOR GAP): `refused_at_door` is a reserved order_status
- * enum value with NO supporting logic yet (per schema.sql implementation
- * note #1). handleRefusalAtDoor() below throws NotYetSpecifiedError on
- * purpose — do not implement a guess here.
+ * FR-33b remains open for the legacy COD refusal consequences. The Stage 5.5a
+ * Admin record-only path uses the reserved `refused_at_door` status; the
+ * undefined charge, restriction and return behavior remains unimplemented.
  */
 
 const db = require('../db.service');
@@ -312,6 +311,22 @@ async function markReservationOrderDelivered(client, orderId) {
     [orderId]
   );
   return heldRows[0] || null;
+}
+
+/** FR-33b: move a dispatched reservation order into its reserved refused-at-door state. */
+async function markReservationOrderDeliveryRefused(client, orderId) {
+  const { rows } = await client.query(
+    `UPDATE orders
+     SET status = 'refused_at_door'
+     WHERE id = $1
+       AND reservation_id IS NOT NULL
+       AND status IN ('handed_to_delivery', 'out_for_delivery')
+       AND delivered_at IS NULL
+       AND handed_over_at IS NOT NULL
+     RETURNING id, status`,
+    [orderId]
+  );
+  return rows[0] || null;
 }
 
 /** FR-72: record courier handover timestamps on the owning order in the caller's transaction. */
@@ -643,6 +658,7 @@ module.exports = {
   lockReservationOrderForPayout,
   completeReservationPayoutOrder,
   markReservationOrderDelivered,
+  markReservationOrderDeliveryRefused,
   recordCourierHandover,
   cancelReservationOrder,
   getOrderIdForReservation,

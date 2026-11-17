@@ -498,8 +498,11 @@ async function allocateRefundSplit(
   const itemAmount = amountMinor < itemRemaining ? amountMinor : itemRemaining;
   const deliveryFeeAmount = amountMinor - itemAmount;
   if (deliveryFeeAmount > 0n &&
-      (!(sellerAtFault || !order.delivered_at) || deliveryFeeAmount !== deliveryRemaining)) {
-    throw new ConflictError('The delivery fee can only be refunded in full when the seller is at fault or the item was never delivered.');
+      (!(sellerAtFault || (!order.delivered_at && order.status !== 'refused_at_door')) ||
+       deliveryFeeAmount !== deliveryRemaining)) {
+    throw new ConflictError(
+      'The delivery fee can only be refunded in full when the seller is at fault or the order was never delivered without a recorded refusal.'
+    );
   }
   return {
     amount: minorUnitsToMoney(amountMinor),

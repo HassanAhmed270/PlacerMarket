@@ -268,6 +268,7 @@ async function cleanupScenario(harness, scenario) {
     return;
   }
   await db.query('DELETE FROM order_exceptions WHERE order_id = $1', [scenario.orderId]);
+  await db.query('DELETE FROM delivery_outcomes WHERE order_id = $1', [scenario.orderId]);
   await db.query('DELETE FROM payout_holds WHERE order_id = $1', [scenario.orderId]);
   await db.query(
     'DELETE FROM delivery_status_log WHERE order_id IN (SELECT id FROM orders WHERE listing_id = $1)',
@@ -275,6 +276,7 @@ async function cleanupScenario(harness, scenario) {
   );
   await db.query('DELETE FROM webhook_inbox WHERE payment_id = $1', [scenario.paymentId]);
   await db.query('DELETE FROM refunds WHERE order_id = $1', [scenario.orderId]);
+  await db.query('DELETE FROM seller_payouts WHERE order_id = $1', [scenario.orderId]);
   await db.query('DELETE FROM payments WHERE order_id = $1', [scenario.orderId]);
   if (scenario.legacyOrderId) {
     await db.query('DELETE FROM orders WHERE id = $1', [scenario.legacyOrderId]);

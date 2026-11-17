@@ -26,6 +26,7 @@ const users = require('./users.service');
 const escrowPayments = require('./escrowPayments.service');
 const payout = require('./payout.service');
 const disputes = require('./disputes.service');
+const moneyAudit = require('./moneyAudit.service');
 const {
   ConflictError, NotFoundError, ValidationError,
 } = require('../lib/errors');
@@ -514,6 +515,80 @@ async function markOrderDelivered(orderId, body, adminId) {
   return response;
 }
 
+function validateDeliveryOutcomeRequest(orderId, body, adminId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)) {
+    throw new ValidationError('orderId must be a UUID.');
+  }
+  if (typeof adminId !== 'string' || !UUID.test(adminId)) {
+    throw new ValidationError('recordedBy must be a UUID.');
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body) ||
+      Object.keys(body).some((key) => key !== 'note') ||
+      typeof body.note !== 'string') {
+    throw new ValidationError('A note of 3 to 300 characters is required.');
+  }
+  const note = body.note.trim();
+  if (note.length < 3 || note.length > 300) {
+    throw new ValidationError('A note of 3 to 300 characters is required.');
+  }
+  return note;
+}
+
+/** FR-33b: record a buyer's refusal without charging or restricting the buyer. */
+async function recordRefusedDelivery(orderId, body, adminId) {
+  const note = validateDeliveryOutcomeRequest(orderId, body, adminId);
+  return db.withTransactionRetry(async (client) => {
+    const { order, reservation } = await lockHandoverOrder(client, orderId);
+    if (!['handed_to_delivery', 'out_for_delivery'].includes(order.status) ||
+        reservation.status !== 'paid' ||
+        !order.handed_over_at ||
+        order.delivered_at !== null) {
+      throw new ConflictError('The order is not eligible to record a refused delivery.');
+    }
+
+    const { rows: attemptRows } = await client.query(
+      `SELECT EXISTS (
+         SELECT 1 FROM delivery_status_log
+         WHERE order_id = $1 AND status = 'delivery_failed'
+       ) AS attempt_recorded`,
+      [orderId]
+    );
+    if (!attemptRows[0].attempt_recorded) {
+      throw new ConflictError('A delivery attempt must be recorded before a refusal.');
+    }
+    const { rows: existingRows } = await client.query(
+      `SELECT id FROM delivery_outcomes
+       WHERE order_id = $1 AND outcome = 'refused'
+       FOR UPDATE`,
+      [orderId]
+    );
+    if (existingRows[0]) throw new ConflictError('A refused-delivery record already exists.');
+
+    const updatedOrder = await orders.markReservationOrderDeliveryRefused(client, orderId);
+    if (!updatedOrder) throw new ConflictError('The order state changed before refusal was recorded.');
+    const { rows } = await client.query(
+      `INSERT INTO delivery_outcomes (order_id, outcome, recorded_by, note)
+       VALUES ($1, 'refused', $2, $3)
+       RETURNING id, order_id AS "orderId", outcome, recorded_by AS "recordedBy",
+                 note, recorded_at AS "recordedAt"`,
+      [orderId, adminId, note]
+    );
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: adminId,
+      action: 'delivery_refused_recorded',
+      orderId,
+      reason: note,
+      metadata: { outcome: 'refused' },
+    });
+    await eventBus.emitAsync(
+      events.ORDER_STATUS_CHANGED,
+      { orderId, status: updatedOrder.status },
+      { transaction: client }
+    );
+    return rows[0];
+  });
+}
+
 /** FR-72e: list Admin delivery exceptions using status, kind, and bounded limit filters. */
 async function listOrderExceptions(filters = {}) {
   if (!filters || typeof filters !== 'object' || Array.isArray(filters)) {
@@ -769,16 +844,61 @@ async function getAdminOrderDeliveryMetadata(orderId) {
           FROM order_exceptions oe
           WHERE oe.order_id = $1),
          '[]'::jsonb
-       ) AS exceptions`,
+       ) AS exceptions,
+       COALESCE(
+          (SELECT jsonb_agg(
+                    jsonb_build_object(
+                      'id', outcome.id,
+                      'outcome', outcome.outcome,
+                      'recordedBy', outcome.recorded_by,
+                      'note', outcome.note,
+                      'recordedAt', outcome.recorded_at
+                    )
+                    ORDER BY outcome.recorded_at, outcome.id)
+           FROM delivery_outcomes outcome
+           WHERE outcome.order_id = $1),
+          '[]'::jsonb
+       ) AS delivery_outcomes`,
     [orderId]
   );
   const trackingMatch = rows[0].tracking_note?.match(/(?:^|\r?\n)Tracking number: ([^\r\n]+)/);
   const exceptions = rows[0].exceptions;
+  const deliveryOutcomes = rows[0].delivery_outcomes;
   return {
     trackingNumber: trackingMatch ? trackingMatch[1].trim() : null,
     exceptions,
+    deliveryOutcomes,
     hasUnresolvedException: exceptions.some((exception) => exception.resolvedAt === null),
   };
+}
+
+/** FR-33b: expose only the delivery-outcome record to Moderator/Ops readers. */
+async function getDeliveryOutcomes(orderId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)) {
+    throw new ValidationError('orderId must be a UUID.');
+  }
+  const { rows } = await db.read(
+    `SELECT EXISTS (
+       SELECT 1 FROM orders WHERE id = $1 AND reservation_id IS NOT NULL
+     ) AS order_exists,
+     COALESCE(
+       (SELECT jsonb_agg(
+                 jsonb_build_object(
+                   'id', outcome.id,
+                   'outcome', outcome.outcome,
+                   'recordedBy', outcome.recorded_by,
+                   'note', outcome.note,
+                   'recordedAt', outcome.recorded_at
+                 )
+                 ORDER BY outcome.recorded_at, outcome.id)
+        FROM delivery_outcomes outcome
+        WHERE outcome.order_id = $1),
+       '[]'::jsonb
+     ) AS delivery_outcomes`,
+    [orderId]
+  );
+  if (!rows[0].order_exists) throw new NotFoundError('order', orderId);
+  return rows[0].delivery_outcomes;
 }
 
 /** FR-68: compose an Admin reservation-order detail from owner-scoped read helpers. */
@@ -833,6 +953,7 @@ async function getAdminOrderDetail(orderId) {
     payoutHold,
     disputes: disputeSummary.disputes,
     exceptions: deliveryMetadata.exceptions,
+    deliveryOutcomes: deliveryMetadata.deliveryOutcomes,
     refunds: paymentAndRefunds.refunds,
   };
 }
@@ -845,10 +966,12 @@ module.exports = {
   getDeliveryTracking,
   recordAdminHandover,
   markOrderDelivered,
+  recordRefusedDelivery,
   listOrderExceptions,
   resolveOrderException,
   validateAdminOrderListQuery,
   listAdminOrders,
   getAdminOrderDetail,
   getAdminOrderDeliveryMetadata,
+  getDeliveryOutcomes,
 };

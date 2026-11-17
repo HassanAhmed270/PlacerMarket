@@ -342,6 +342,66 @@ afterEach(async () => {
 });
 
 describe('FR-69 / SEC-39 manual two-Admin refund workflow', () => {
+  test('FR-33b, FR-69: a refused order remains manually refundable and the delivery fee requires seller fault', async () => {
+    await db.query(
+      `UPDATE orders
+       SET status = 'handed_to_delivery', handed_over_at = now() - INTERVAL '5 minutes'
+       WHERE id = $1`,
+      [scenario.orderId]
+    );
+    await db.query(
+      `INSERT INTO delivery_status_log (order_id, status, entered_by, note)
+       VALUES ($1, 'delivery_failed', $2, 'Courier attempted delivery; buyer refused.')`,
+      [scenario.orderId, staff.first.id]
+    );
+    await request(app)
+      .post(`/api/admin/orders/${scenario.orderId}/refused-delivery`)
+      .set('Authorization', authHeader(staff.first.id, staff.first.sessionId))
+      .send({ note: 'Buyer refused the delivery at the door.' })
+      .expect(201);
+
+    const { rows: paymentRows } = await db.query(
+      `SELECT p.amount::text AS amount, r.item_price_snapshot::text AS item_amount,
+              r.delivery_fee_snapshot::text AS delivery_fee
+       FROM payments p
+       JOIN reservations r ON r.id = $2
+       WHERE p.id = $1`,
+      [scenario.paymentId, scenario.reservationId]
+    );
+    const requested = await createRequest(staff.first, { amount: paymentRows[0].amount });
+    expect(requested.status).toBe(201);
+
+    const decisionGrant = await createGrant(staff.second, 'refund.decide');
+    await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'The delivery fee must not be refunded for a buyer refusal.',
+      sellerAtFault: false,
+      stepUpGrant: decisionGrant,
+    }).expect(409);
+
+    const approved = await sendDecision(staff.second, requested.body.refundId, 'approve', {
+      reason: 'The seller was responsible for the delivery failure.',
+      sellerAtFault: true,
+      stepUpGrant: decisionGrant,
+    }).expect(200);
+    expect(approved.body.amount).toBe(paymentRows[0].amount);
+    expect(approved.body.itemAmount).toBe(paymentRows[0].item_amount);
+    expect(approved.body.deliveryFeeAmount).toBe(paymentRows[0].delivery_fee);
+    expect(approved.body.sellerAtFault).toBe(true);
+
+    const { rows: auditRows } = await db.query(
+      `SELECT action FROM money_audit_events
+       WHERE order_id = $1
+         AND action IN ('delivery_refused_recorded', 'manual_refund_requested', 'manual_refund_approved')
+       ORDER BY action`,
+      [scenario.orderId]
+    );
+    expect(auditRows.map((row) => row.action)).toEqual([
+      'delivery_refused_recorded',
+      'manual_refund_approved',
+      'manual_refund_requested',
+    ]);
+  });
+
   test('FR-69, SEC-39, SEC-40: request then approve enqueues one refund, calls the gateway once with its idempotency key and audits both Admins', async () => {
     const requestGrant = await createGrant(staff.first, 'refund.request');
     const requested = await sendManualRequest(staff.first, {

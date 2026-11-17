@@ -9,12 +9,18 @@ jest.mock('../../src/modules/escrowPayments.service', () => ({
   lockPaymentAndRefundRowsForHandover: jest.fn(),
   recordOrderExceptionResolvedAuditEvent: jest.fn(),
 }));
+jest.mock('../../src/modules/moneyAudit.service', () => ({
+  recordMoneyAuditEvent: jest.fn(),
+}));
 jest.mock('../../src/modules/orders.service', () => ({
   getMoneyLockContext: jest.fn(),
   lockOrderForRefund: jest.fn(),
+  lockReservationOrderForHandover: jest.fn(),
+  markReservationOrderDeliveryRefused: jest.fn(),
 }));
 jest.mock('../../src/modules/reservations.service', () => ({
   lockReservationForPayout: jest.fn(),
+  lockReservationForSystemAction: jest.fn(),
 }));
 jest.mock('../../src/modules/listings.service', () => ({
   lockListingForMoneyAction: jest.fn(),
@@ -29,6 +35,7 @@ const db = require('../../src/db.service');
 const eventBus = require('../../src/lib/eventBus');
 const events = require('../../src/lib/events');
 const escrowPayments = require('../../src/modules/escrowPayments.service');
+const moneyAudit = require('../../src/modules/moneyAudit.service');
 const orders = require('../../src/modules/orders.service');
 const reservations = require('../../src/modules/reservations.service');
 const listings = require('../../src/modules/listings.service');
@@ -43,6 +50,11 @@ const client = { query: jest.fn() };
 beforeEach(() => {
   jest.clearAllMocks();
   db.withTransaction.mockImplementation((callback) => callback(client));
+  db.withTransactionRetry.mockImplementation((callback) => callback(client));
+});
+
+afterEach(() => {
+  jest.restoreAllMocks();
 });
 
 describe('FR-68 Admin delivery metadata summary', () => {
@@ -55,6 +67,13 @@ describe('FR-68 Admin delivery metadata summary', () => {
         recordedAt: '2026-11-06T12:00:00.000Z',
         resolvedAt: null,
       }],
+      delivery_outcomes: [{
+        id: 'delivery-outcome-1',
+        outcome: 'refused',
+        recordedBy: adminId,
+        note: 'Buyer refused at delivery.',
+        recordedAt: '2026-11-06T12:00:00.000Z',
+      }],
     }] });
     await expect(delivery.getAdminOrderDeliveryMetadata(orderId)).resolves.toEqual({
       trackingNumber: 'PK-123',
@@ -64,9 +83,84 @@ describe('FR-68 Admin delivery metadata summary', () => {
         recordedAt: '2026-11-06T12:00:00.000Z',
         resolvedAt: null,
       }],
+      deliveryOutcomes: [{
+        id: 'delivery-outcome-1',
+        outcome: 'refused',
+        recordedBy: adminId,
+        note: 'Buyer refused at delivery.',
+        recordedAt: '2026-11-06T12:00:00.000Z',
+      }],
       hasUnresolvedException: true,
     });
-    expect(db.read.mock.calls[0][0]).not.toMatch(/resolution_note|note AS|recorded_by/i);
+    const query = db.read.mock.calls[0][0];
+    const exceptionProjection = query.slice(query.indexOf('(SELECT jsonb_agg'), query.indexOf('AS exceptions'));
+    expect(exceptionProjection).not.toMatch(/resolution_note|recorded_by/i);
+    expect(query).toContain('delivery_outcomes');
+  });
+});
+
+describe('FR-33b Admin refused-delivery recording', () => {
+  test('FR-33b: records a refusal for an attempted delivery and writes its audit event', async () => {
+    const listingId = '44444444-4444-4444-8444-444444444444';
+    const buyerId = '55555555-5555-4555-8555-555555555555';
+    const reservationId = '66666666-6666-4666-8666-666666666666';
+    const recorded = {
+      id: 'delivery-outcome-1',
+      orderId,
+      outcome: 'refused',
+      recordedBy: adminId,
+      note: 'Buyer refused the delivery.',
+      recordedAt: new Date('2026-11-06T12:00:00.000Z'),
+    };
+    orders.getMoneyLockContext.mockResolvedValue({
+      listing_id: listingId,
+      buyer_id: buyerId,
+      reservation_id: reservationId,
+    });
+    listings.lockListingForMoneyAction.mockResolvedValue({ id: listingId });
+    users.lockBuyerForMoneyAction.mockResolvedValue({ id: buyerId });
+    orders.lockReservationOrderForHandover.mockResolvedValue({
+      id: orderId,
+      listing_id: listingId,
+      buyer_id: buyerId,
+      reservation_id: reservationId,
+      status: 'handed_to_delivery',
+      handed_over_at: new Date('2026-11-06T11:00:00.000Z'),
+      delivered_at: null,
+    });
+    reservations.lockReservationForSystemAction.mockResolvedValue({
+      id: reservationId,
+      listing_id: listingId,
+      status: 'paid',
+    });
+    escrowPayments.lockPaymentAndRefundRowsForHandover.mockResolvedValue([]);
+    client.query
+      .mockResolvedValueOnce({ rows: [{ attempt_recorded: true }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [recorded] });
+    orders.markReservationOrderDeliveryRefused.mockResolvedValue({
+      id: orderId,
+      status: 'refused_at_door',
+    });
+    jest.spyOn(eventBus, 'emitAsync').mockResolvedValue(true);
+
+    await expect(delivery.recordRefusedDelivery(orderId, {
+      note: '  Buyer refused the delivery.  ',
+    }, adminId)).resolves.toEqual(recorded);
+
+    expect(db.withTransactionRetry).toHaveBeenCalledTimes(1);
+    expect(orders.markReservationOrderDeliveryRefused).toHaveBeenCalledWith(client, orderId);
+    expect(client.query.mock.calls[2][1]).toEqual([orderId, adminId, 'Buyer refused the delivery.']);
+    expect(moneyAudit.recordMoneyAuditEvent).toHaveBeenCalledWith(client, expect.objectContaining({
+      actorId: adminId,
+      action: 'delivery_refused_recorded',
+      orderId,
+    }));
+    expect(eventBus.emitAsync).toHaveBeenCalledWith(
+      events.ORDER_STATUS_CHANGED,
+      { orderId, status: 'refused_at_door' },
+      { transaction: client }
+    );
   });
 });
 

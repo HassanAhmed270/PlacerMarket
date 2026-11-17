@@ -137,7 +137,7 @@ later): `orders.service.createBagEntry()` (reads `conversations`),
 | 7. Payments & COD (legacy COD paths) | FR-36–38 | `modules/payments.service.js` | cod_collections (also owns FR-41a reconciliation — see correction note below) |
 | 7a. Escrow Payments | FR-60a, FR-61–62, FR-65, FR-77b | `modules/escrowPayments.service.js` | payments, webhook_inbox, refunds, ledger_entries |
 | Shared Money Audit | FR-45, FR-65, FR-68, FR-69, FR-72, FR-77b | `modules/moneyAudit.service.js` | money_audit_events |
-| 8. Delivery | FR-39–42, FR-72e | `modules/delivery.service.js` | delivery_partners, delivery_status_log, order_exceptions |
+| 8. Delivery | FR-33b, FR-39–42, FR-72e | `modules/delivery.service.js` | delivery_partners, delivery_status_log, delivery_outcomes, order_exceptions |
 | 9. Disputes, Returns & Refunds | FR-43–45a | `modules/disputes.service.js` | disputes, dispute_evidence |
 | 9a. Payout Hold Window | FR-45b–45h, FR-65 reservation payout | `modules/payout.service.js` | payout_holds |
 | 9b. Seller Held Funds | FR-65 | `modules/sellerHeldFunds.service.js` | seller_held_funds |
@@ -186,7 +186,7 @@ add a guard where one isn't needed, and don't remove the two that exist.
 
 | FR | What's open | How the code handles it right now |
 |---|---|---|
-| **FR-33b** | COD refusal-at-the-door flow — undefined | `orders.service.handleRefusalAtDoor()` throws `NotYetSpecifiedError('FR-33b', ...)` unconditionally. Do not implement a guess. |
+| **FR-33b** | COD refusal penalties, restrictions, and return logistics remain undefined | The Stage 5.5a Admin record-only path is implemented in `delivery.service.js`; `orders.service.handleRefusalAtDoor()` remains a guard for the undefined legacy COD flow. |
 | **FR-45a** | Dispute outcome granularity — decided in Stage 5.4 | `disputes.service.resolveDispute()` supports Admin-only buyer_favor, seller_favor, and split outcomes with an action-bound step-up grant and exact-decimal refund amount. |
 | **FR-50a** | Settlement math for a partial refund — implemented in Stage 5.4 | `settlement.service.calculateSettlement()` receives the resolved amount from `payout.service.js` and computes exact decimal-string settlement values. |
 | **FR-18a** | Verified-badge criteria — undefined | **No guard.** `listings.service.setVerifiedBadge()` is a plain manual boolean a moderator sets after reviewing evidence — that IS the decided interim behavior. |
@@ -254,6 +254,14 @@ purpose so the schema works whichever way this eventually gets decided.
   for the transaction-aware payout-hold insert, and
   `moneyAudit.service.js` for the money-audit row. It emits
   `events.PAYOUT_HELD` only after the transaction commits.
+- **FR-33b (record-only buyer refusal)**: `delivery.service.js` moves an
+  attempted reservation order into the existing `refused_at_door` status and
+  owns the `delivery_outcomes` record. It does not impose a money penalty,
+  buyer restriction, or automatic refund. The `delivery_refused_recorded`
+  audit is written through `moneyAudit.service.js`; notification payloads omit
+  the Admin identity. Moderator/Ops can read only the outcome record through
+  the dedicated delivery-outcomes route, without access to the full Admin
+  order detail.
 - **FR-68 (Admin order reads)**: `delivery.service.js` composes the Admin
   reservation-order list/detail views. The bounded multi-table list query is
   the documented cross-module read-view exception; detail fields come from
