@@ -20,12 +20,14 @@ const notificationService = require('../../src/modules/notifications.service');
 const escrowPayments = require('../../src/modules/escrowPayments.service');
 const payout = require('../../src/modules/payout.service');
 const sellerPayouts = require('../../src/modules/sellerPayouts.service');
+const disputes = require('../../src/modules/disputes.service');
 const { QUEUES } = require('../../src/lib/queue');
 
 let harness;
 let scenario;
 let adminSessionId;
 let businessDate;
+let extraScenarios;
 
 function fileDispute(actorId, orderId) {
   return request(getApp())
@@ -184,6 +186,31 @@ async function getDisputeExceptionRows(orderId) {
   return rows;
 }
 
+async function withDisputeSlaDays(value, callback) {
+  const { rows } = await db.query(
+    `SELECT value, updated_by, updated_at
+     FROM platform_settings WHERE key = 'dispute_sla_business_days'`
+  );
+  if (!rows[0]) throw new Error('dispute_sla_business_days setting is missing.');
+  const original = rows[0];
+  try {
+    await db.query(
+      `UPDATE platform_settings
+       SET value = $1, updated_by = NULL, updated_at = now()
+       WHERE key = 'dispute_sla_business_days'`,
+      [value]
+    );
+    return await callback();
+  } finally {
+    await db.query(
+      `UPDATE platform_settings
+       SET value = $1, updated_by = $2, updated_at = $3
+       WHERE key = 'dispute_sla_business_days'`,
+      [original.value, original.updated_by, original.updated_at]
+    );
+  }
+}
+
 async function resetDisputeScenario(orderId) {
   await db.query(
     `UPDATE payout_holds
@@ -217,6 +244,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  extraScenarios = [];
   scenario = await createScenario(harness);
   await deliverScenario(scenario);
 });
@@ -226,6 +254,10 @@ afterEach(async () => {
   if (scenario) {
     await resetDisputeScenario(scenario.orderId);
     await cleanupScenario(harness, scenario);
+  }
+  for (const extraScenario of extraScenarios) {
+    await resetDisputeScenario(extraScenario.orderId);
+    await cleanupScenario(harness, extraScenario);
   }
 });
 
@@ -557,7 +589,212 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
         submittedBy: 'seller',
       });
     });
+  });
 
+  describe('FR-44, FR-45, FR-56 dispute queue and timeline', () => {
+      test('FR-44: status filters and cursor pagination return the matching dispute queue', async () => {
+        const firstDispute = await fileBuyerDispute();
+        const extraScenario = await createScenario(harness);
+        extraScenarios.push(extraScenario);
+        await deliverScenario(extraScenario);
+        const secondDispute = await fileDispute(extraScenario.buyerId, extraScenario.orderId).expect(201);
+
+        const openIds = new Set();
+        let before;
+        let pages = 0;
+        do {
+          const path = `/api/disputes?status=open&limit=1${before ? `&before=${before}` : ''}`;
+          const page = await request(getApp())
+            .get(path)
+            .set('Authorization', adminHeader())
+            .expect(200);
+          if (pages === 0) expect(page.headers['cache-control']).toBe('private, no-store');
+          expect(page.body).toHaveLength(1);
+          openIds.add(page.body[0].id);
+          before = page.headers['x-next-before'] || null;
+          pages += 1;
+          expect(pages).toBeLessThanOrEqual(100);
+        } while (before);
+
+        expect(openIds.size).toBe(pages);
+        expect(openIds.has(firstDispute.body.id)).toBe(true);
+        expect(openIds.has(secondDispute.body.id)).toBe(true);
+        const decided = await request(getApp())
+          .get('/api/disputes?status=decided&limit=100')
+          .set('Authorization', adminHeader())
+          .expect(200);
+        expect(decided.body.every((row) =>
+          ['resolved_refund', 'resolved_release', 'resolved_other'].includes(row.status)
+        )).toBe(true);
+        expect(decided.body.map((row) => row.id)).not.toContain(firstDispute.body.id);
+        expect(decided.body.map((row) => row.id)).not.toContain(secondDispute.body.id);
+      });
+
+      test('FR-56: buyer, seller, and Admin reads expose event timelines without Admin IDs', async () => {
+        const dispute = await fileBuyerDispute();
+        await addDisputeEvidence(scenario.buyerId, dispute.body.id, {
+          note: 'The seam is coming apart.',
+        }).expect(201);
+        await request(getApp())
+          .post(`/api/disputes/${dispute.body.id}/counter-evidence`)
+          .set('Authorization', authHeader(scenario.sellerId))
+          .send({ responseText: 'The item matched the listing.', evidenceUrls: [] })
+          .expect(200);
+        await resolveDispute(
+          harness.adminId,
+          dispute.body.id,
+          await decisionInput('seller_favor')
+        ).expect(200);
+
+        const buyer = await request(getApp())
+          .get(`/api/orders/${scenario.orderId}/summary`)
+          .set('Authorization', authHeader(scenario.buyerId))
+          .expect(200);
+        const seller = await request(getApp())
+          .get(`/api/orders/selling/${scenario.orderId}`)
+          .set('Authorization', authHeader(scenario.sellerId))
+          .expect(200);
+        const adminQueue = await request(getApp())
+          .get('/api/disputes?status=decided')
+          .set('Authorization', adminHeader())
+          .expect(200);
+        const adminOrder = await request(getApp())
+          .get(`/api/admin/orders/${scenario.orderId}`)
+          .set('Authorization', adminHeader())
+          .expect(200);
+        const buyerTimeline = buyer.body.disputeFiling.timeline;
+        const sellerTimeline = seller.body.disputeTimeline;
+        const queueTimeline = adminQueue.body.find((row) => row.id === dispute.body.id).timeline;
+        const orderTimeline = adminOrder.body.disputes.find((row) => row.id === dispute.body.id).timeline;
+        const expectedEvents = ['filed', 'evidence_added', 'evidence_added', 'seller_responded', 'decided'];
+
+        for (const timeline of [buyerTimeline, sellerTimeline, queueTimeline, orderTimeline]) {
+          expect(timeline.map((item) => item.event)).toEqual(expectedEvents);
+          expect(JSON.stringify(timeline)).not.toContain(harness.adminId);
+        }
+      });
+
+      test('FR-56: SLA attention uses the business date and restores the setting', async () => {
+        await withDisputeSlaDays('1', async () => {
+          const dispute = await fileBuyerDispute();
+          const currentBusinessDate = await getBusinessDate();
+          await db.query(
+            `UPDATE disputes
+             SET created_at = (($2::date - 8)::timestamp AT TIME ZONE 'Asia/Karachi') + INTERVAL '12 hours'
+             WHERE id = $1`,
+            [dispute.body.id, currentBusinessDate]
+          );
+
+          const response = await request(getApp())
+            .get('/api/disputes?status=open&ageBucket=needs_attention')
+            .set('Authorization', adminHeader())
+            .expect(200);
+          const item = response.body.find((row) => row.id === dispute.body.id);
+          expect(item).toMatchObject({
+            ageBucket: 'needs_attention',
+            needsAttention: true,
+          });
+          expect(item.ageBusinessDays).toBeGreaterThan(1);
+          const withinSla = await request(getApp())
+            .get('/api/disputes?status=open&ageBucket=within_sla')
+            .set('Authorization', adminHeader())
+            .expect(200);
+          expect(withinSla.body.map((row) => row.id)).not.toContain(dispute.body.id);
+        });
+      });
+
+      test('FR-56: SLA reminder runs twice enqueue one Admin notification job and one notification', async () => {
+        let disputeId;
+        let previouslyUnreminded = [];
+        try {
+          await withDisputeSlaDays('1', async () => {
+            const dispute = await fileBuyerDispute();
+            disputeId = dispute.body.id;
+            const currentBusinessDate = await getBusinessDate();
+            await db.query(
+              `UPDATE disputes
+               SET created_at = (($2::date - 8)::timestamp AT TIME ZONE 'Asia/Karachi') + INTERVAL '12 hours'
+               WHERE id = $1`,
+              [disputeId, currentBusinessDate]
+            );
+            const { rows: otherDisputes } = await db.query(
+              `SELECT id
+               FROM disputes
+               WHERE id <> $1 AND status IN ('open', 'seller_responded')
+                 AND sla_reminded_at IS NULL`,
+              [disputeId]
+            );
+            previouslyUnreminded = otherDisputes.map((row) => row.id);
+            if (previouslyUnreminded.length) {
+              await db.query(
+                'UPDATE disputes SET sla_reminded_at = now() WHERE id = ANY($1::uuid[])',
+                [previouslyUnreminded]
+              );
+            }
+
+            await expect(disputes.processDisputeSlaReminders({
+              getBusinessDate: sellerPayouts.getBusinessDate,
+            })).resolves.toBe(1);
+            await expect(disputes.processDisputeSlaReminders({
+              getBusinessDate: sellerPayouts.getBusinessDate,
+            })).resolves.toBe(0);
+
+            const { rows: jobs } = await db.query(
+              `SELECT id, data FROM pgboss.job
+               WHERE name = $1 AND data->>'eventName' = $2
+                 AND data->'payload'->>'disputeId' = $3`,
+              [QUEUES.NOTIFICATIONS, events.DISPUTE_SLA_BREACHED, disputeId]
+            );
+            expect(jobs).toHaveLength(1);
+            const transactionDb = {
+              executeSql: (text, values = []) => transactionDb.client.query(text, values),
+            };
+            await db.withTransaction(async (client) => {
+              transactionDb.client = client;
+              await notificationService.processNotificationJob(jobs[0].data, transactionDb);
+            });
+            const { rows: notifications } = await db.query(
+              `SELECT user_id, payload, dedupe_key
+               FROM notifications
+               WHERE user_id = $1 AND event_type = 'dispute_sla_breached'
+                 AND dedupe_key = $2`,
+              [harness.adminId, `dispute_sla_breached:${disputeId}`]
+            );
+            expect(notifications).toHaveLength(1);
+            expect(notifications[0].user_id).toBe(harness.adminId);
+            expect(notifications[0].payload).toMatchObject({
+              disputeId,
+              orderId: scenario.orderId,
+              message: 'A dispute has exceeded its review SLA.',
+            });
+          });
+        } finally {
+          if (previouslyUnreminded.length) {
+            await db.query(
+              `UPDATE disputes SET sla_reminded_at = NULL
+               WHERE id = ANY($1::uuid[]) AND status IN ('open', 'seller_responded')`,
+              [previouslyUnreminded]
+            );
+          }
+          if (disputeId) {
+            await db.query(
+              `DELETE FROM notifications
+               WHERE event_type = 'dispute_sla_breached'
+                 AND dedupe_key = $1`,
+              [`dispute_sla_breached:${disputeId}`]
+            );
+            await db.query(
+              `DELETE FROM pgboss.job
+               WHERE name = $1 AND data->>'eventName' = $2
+                 AND data->'payload'->>'disputeId' = $3`,
+              [QUEUES.NOTIFICATIONS, events.DISPUTE_SLA_BREACHED, disputeId]
+            );
+          }
+        }
+      });
+  });
+
+  describe('FR-43 dispute evidence and buyer withdrawal', () => {
     test('FR-43c: unrelated users receive 403 when adding or reading party evidence', async () => {
       const dispute = await fileBuyerDispute();
 
@@ -787,7 +1024,7 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
       .toMatchObject({ rows: [{ status: 'open' }] });
   });
 
-  test('FR-43: Moderator cannot resolve disputes but can still list them', async () => {
+  test('FR-56: Moderator can read the no-store dispute queue but cannot decide disputes', async () => {
     const dispute = await fileBuyerDispute();
 
     await resolveDispute(harness.moderatorId, dispute.body.id, {}).expect(403);
@@ -795,6 +1032,7 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
       .get('/api/disputes')
       .set('Authorization', authHeader(harness.moderatorId))
       .expect(200);
+    expect(response.headers['cache-control']).toBe('private, no-store');
     expect(response.body.some((row) => row.id === dispute.body.id)).toBe(true);
   });
 

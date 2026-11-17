@@ -167,6 +167,7 @@ describe('FR-61, FR-62 buyer order reads', () => {
       disputeFiling: {
         canFileDispute: false,
         disputeStatus: null,
+        timeline: [],
         complaintWindowClosesAt: null,
         maxEvidenceUrls: 2,
       },

@@ -11,6 +11,11 @@ const router = Router();
 const limiters = createConfiguredRateLimiters();
 router.use(requireAuth);
 
+function noStore(_req, res, next) {
+  res.set('Cache-Control', 'private, no-store');
+  return next();
+}
+
 router.post('/orders/:id', async (req, res) => {
   res.status(201).json(await disputes.fileDispute(req.params.id, req.user.id, req.body, {
     getOrderPayoutStatus: sellerPayouts.getOrderPayoutStatus,
@@ -38,11 +43,15 @@ router.post('/:id/withdraw', async (req, res) => {
   })); // FR-43
 });
 
-router.get('/', requirePermission('dispute.review'), async (req, res) => {
-  res.json(await disputes.getDisputeQueue(req.query)); // FR-44
+router.get('/', noStore, requirePermission('dispute.review'), async (req, res) => {
+  const page = await disputes.getDisputeQueue(req.query, {
+    getBusinessDate: sellerPayouts.getBusinessDate,
+  });
+  res.set('X-Next-Before', page.nextBefore || '');
+  res.json(page.disputes); // FR-44, FR-56
 });
 
-router.get('/:id/evidence', requirePermission('dispute.review'), async (req, res) => {
+router.get('/:id/evidence', noStore, requirePermission('dispute.review'), async (req, res) => {
   res.json(await disputes.getDisputeEvidence(req.params.id));
 });
 

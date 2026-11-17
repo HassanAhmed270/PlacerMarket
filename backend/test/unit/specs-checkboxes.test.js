@@ -35,8 +35,9 @@ describe('rules.md Section 1: ticked specs.md checkboxes are backed by a named t
     expect(named('FR-99z')).toBe(false);
   });
 
-  test('FR-45 is not satisfied by a test that only names FR-45a (no prefix false-positive)', () => {
-    expect(named('FR-45')).toBe(false);
+  test('FR-45 is not satisfied by a title that only names FR-45a (no prefix false-positive)', () => {
+    expect(namesFr(['FR-45a: add partial-refund guard'], 'FR-45')).toBe(false);
+    expect(namesFr(['FR-44, FR-45, FR-56: dispute queue and timeline'], 'FR-45')).toBe(true);
   });
 
   if (ticked.length === 0) {

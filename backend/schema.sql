@@ -2304,3 +2304,18 @@ ALTER TABLE dispute_evidence
 
 CREATE INDEX dispute_evidence_timeline_idx
   ON dispute_evidence (dispute_id, created_at, id);
+
+-- Migration: 039_dispute_sla_reminders.sql
+ALTER TABLE disputes
+  ADD COLUMN sla_reminded_at TIMESTAMPTZ;
+
+INSERT INTO platform_settings (key, value)
+VALUES ('dispute_sla_business_days', '3')
+ON CONFLICT (key) DO NOTHING;
+
+CREATE INDEX disputes_queue_cursor_idx
+  ON disputes (created_at, id);
+
+CREATE INDEX disputes_sla_candidates_idx
+  ON disputes (created_at, id)
+  WHERE status IN ('open', 'seller_responded') AND sla_reminded_at IS NULL;

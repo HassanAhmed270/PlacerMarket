@@ -21,8 +21,8 @@ describe('real PostgreSQL baseline', () => {
   test('seed.js inserts existing and Phase 4 platform settings', async () => {
     const pool = require('../../src/db.service').pool;
     const { rows } = await pool.query('SELECT count(*)::int AS count FROM platform_settings');
-    // Migration 030 adds the payout approval threshold setting.
-    expect(rows[0].count).toBe(10);
+    // Migration 030 adds the payout approval threshold setting; migration 039 adds the dispute SLA business-days setting.
+    expect(rows[0].count).toBe(11);
     await expect(settlement.getSetting('commission_percent')).resolves.toBe('5');
     await expect(settlement.getSetting('instant_price_decrease_max_percent')).resolves.toBe('30');
     await expect(settlement.getSetting('reservation_minutes')).resolves.toBe('60');

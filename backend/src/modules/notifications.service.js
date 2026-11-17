@@ -26,6 +26,7 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.DISPUTE_RESOLVED,
   events.DISPUTE_FILED,
   events.DISPUTE_EVIDENCE_ADDED,
+  events.DISPUTE_SLA_BREACHED,
   events.DISPUTE_RESOLUTION_COMMITTED,
   events.RETURN_REQUESTED,
   events.RETURN_SELLER_RESPONDED,
@@ -82,6 +83,15 @@ function jobKeys(eventName, payload) {
     }
     return {
       idempotencyKey: `dispute-evidence:${payload.evidenceId}`,
+      orderingKey: `dispute:${payload.disputeId}`,
+    };
+  }
+  if (eventName === events.DISPUTE_SLA_BREACHED) {
+    if (!payload.disputeId || !payload.orderId) {
+      throw new TypeError('Dispute SLA notification is missing its dispute or order ID.');
+    }
+    return {
+      idempotencyKey: `dispute-sla-breach:${payload.disputeId}`,
       orderingKey: `dispute:${payload.disputeId}`,
     };
   }
@@ -232,6 +242,34 @@ async function processNotificationJob(job, transactionDb) {
         `dispute_evidence_added:${job.payload.evidenceId}`,
       ]
     );
+    return;
+  }
+
+  if (job.eventName === events.DISPUTE_SLA_BREACHED) {
+    const { rows } = await transactionDb.executeSql(
+      `SELECT id
+       FROM users
+       WHERE role = 'admin' AND is_suspended = false`
+    );
+    const href = '/admin/disputes?status=open&ageBucket=needs_attention';
+    for (const admin of rows) {
+      await transactionDb.executeSql(
+        `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+        [
+          admin.id,
+          'dispute_sla_breached',
+          JSON.stringify({
+            disputeId: job.payload.disputeId,
+            orderId: job.payload.orderId,
+            message: 'A dispute has exceeded its review SLA.',
+            href,
+          }),
+          `dispute_sla_breached:${job.payload.disputeId}`,
+        ]
+      );
+    }
     return;
   }
 

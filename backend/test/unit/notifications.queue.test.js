@@ -52,6 +52,43 @@ describe('FR-77d: notification event listeners enqueue durable jobs', () => {
     expect(JSON.stringify(payload)).not.toContain('buyer-id');
   });
 
+  test('FR-56: dispute SLA notifications enqueue once per dispute with a singleton key', async () => {
+    const transaction = { query: jest.fn() };
+    const payload = { disputeId: 'dispute-1', orderId: 'order-1' };
+
+    await eventBus.emitAsync(events.DISPUTE_SLA_BREACHED, payload, { transaction });
+
+    expect(queue.enqueue).toHaveBeenCalledWith('notifications', {
+      eventName: events.DISPUTE_SLA_BREACHED,
+      payload,
+    }, {
+      idempotencyKey: 'dispute-sla-breach:dispute-1',
+      orderingKey: 'dispute:dispute-1',
+      transaction,
+    });
+  });
+
+  test('FR-56: a dispute SLA job creates a deduplicated Admin-only reminder', async () => {
+    const transactionDb = { executeSql: jest.fn()
+      .mockResolvedValueOnce({ rows: [{ id: 'admin-1' }] })
+      .mockResolvedValueOnce({ rows: [] }) };
+
+    await notifications.processNotificationJob({
+      eventName: events.DISPUTE_SLA_BREACHED,
+      payload: { disputeId: 'dispute-1', orderId: 'order-1' },
+    }, transactionDb);
+
+    expect(transactionDb.executeSql.mock.calls[0][0]).toContain("role = 'admin'");
+    expect(transactionDb.executeSql.mock.calls[1][1][0]).toBe('admin-1');
+    expect(transactionDb.executeSql.mock.calls[1][1][3]).toBe('dispute_sla_breached:dispute-1');
+    expect(JSON.parse(transactionDb.executeSql.mock.calls[1][1][2])).toEqual({
+      disputeId: 'dispute-1',
+      orderId: 'order-1',
+      message: 'A dispute has exceeded its review SLA.',
+      href: '/admin/disputes?status=open&ageBucket=needs_attention',
+    });
+  });
+
   test('FR-43c: evidence notification goes only to the other order party with generic content', async () => {
     const transactionDb = { executeSql: jest.fn()
       .mockResolvedValueOnce({ rows: [{ buyer_id: 'buyer-1', seller_id: 'seller-1' }] })

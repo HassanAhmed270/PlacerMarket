@@ -91,6 +91,7 @@ async function sellerOrderResponses(ordersForSeller) {
       disputeOutcome: disputeValues?.outcome ?? null,
       disputeReason: disputeValues?.reason ?? null,
       disputeDecidedAt: disputeValues?.decidedAt ?? null,
+      disputeTimeline: disputeValues?.timeline ?? [],
       returnStatus: returnValues?.status ?? null,
       returnOutcome: returnValues?.outcome ?? null,
       returnDecidedAt: returnValues?.decidedAt ?? null,

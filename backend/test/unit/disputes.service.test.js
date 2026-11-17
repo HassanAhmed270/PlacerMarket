@@ -58,6 +58,7 @@ describe('FR-68 Admin order dispute summary', () => {
             decidedAt: null,
             createdAt: new Date('2026-11-06T12:00:00Z'),
             disputeAfterPayout: true,
+            timeline: [],
           },
           {
             id: 'dispute-2',
@@ -67,6 +68,7 @@ describe('FR-68 Admin order dispute summary', () => {
             decidedAt,
             createdAt: decidedAt,
             disputeAfterPayout: true,
+            timeline: [],
           },
         ],
         hasOpenDispute: true,

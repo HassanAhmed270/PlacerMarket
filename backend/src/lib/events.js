@@ -40,6 +40,7 @@ module.exports = {
   // Module 9: Disputes
   DISPUTE_FILED: 'dispute.filed', // FR-43
   DISPUTE_EVIDENCE_ADDED: 'dispute.evidence_added', // FR-43c
+  DISPUTE_SLA_BREACHED: 'dispute.sla_breached', // FR-56
   DISPUTE_RESOLVED: 'dispute.resolved', // FR-45
   DISPUTE_RESOLUTION_COMMITTED: 'dispute.resolution_committed', // FR-51
   DISPUTE_REFUND_EXCEPTION_REQUIRED: 'dispute.refund_exception_required', // FR-45

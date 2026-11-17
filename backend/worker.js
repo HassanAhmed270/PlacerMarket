@@ -15,6 +15,8 @@ const listingSearch = require('./src/modules/listingSearch.service');
 const pageSnapshots = require('./src/modules/pageSnapshots.service');
 const escrowPayments = require('./src/modules/escrowPayments.service');
 const sellerHeldFunds = require('./src/modules/sellerHeldFunds.service');
+const disputes = require('./src/modules/disputes.service');
+const sellerPayouts = require('./src/modules/sellerPayouts.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 const { assertPaymentsAdminGate } = require('./src/lib/paymentsAdminGate');
 
@@ -43,6 +45,12 @@ async function registerMoneyMaintenanceSchedules(boss) {
     { task: 'held-funds-reminders' },
     { key: 'held-funds-reminders', singletonKey: 'money-maintenance:held-funds-reminders' }
   );
+  await boss.schedule(
+    QUEUES.MONEY_MAINTENANCE,
+    '0 * * * *',
+    { task: 'dispute-sla-reminders' },
+    { key: 'dispute-sla-reminders', singletonKey: 'money-maintenance:dispute-sla-reminders' }
+  );
 }
 
 async function processMoneyMaintenanceJob(job) {
@@ -57,6 +65,11 @@ async function processMoneyMaintenanceJob(job) {
   }
   if (job.data?.task === 'held-funds-reminders') {
     return sellerHeldFunds.processReminders();
+  }
+  if (job.data?.task === 'dispute-sla-reminders') {
+    return disputes.processDisputeSlaReminders({
+      getBusinessDate: sellerPayouts.getBusinessDate,
+    });
   }
   throw new Error('Unsupported money maintenance task.');
 }

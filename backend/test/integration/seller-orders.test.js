@@ -27,6 +27,7 @@ const SELLER_ORDER_KEYS = [
   'disputeOutcome',
   'disputeReason',
   'disputeStatus',
+  'disputeTimeline',
   'earnings',
   'fundedAt',
   'fundsHeldForVerification',

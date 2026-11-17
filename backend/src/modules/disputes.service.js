@@ -27,11 +27,16 @@ const moneyAudit = require('./moneyAudit.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const {
-  NotFoundError, ValidationError, ConflictError, ForbiddenError,
+  NotFoundError, ValidationError, ConflictError, ForbiddenError, ConfigurationError,
 } = require('../lib/errors');
 
 const MAX_EVIDENCE_URLS = 2;
 const MAX_DISPUTE_EVIDENCE_ITEMS = 10;
+const DISPUTE_SLA_SETTING = 'dispute_sla_business_days';
+const DISPUTE_STATUSES = new Set([
+  'open', 'seller_responded', 'resolved_refund', 'resolved_release', 'resolved_other', 'withdrawn',
+]);
+const DISPUTE_AGE_BUCKETS = new Set(['new', 'within_sla', 'needs_attention']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DISPUTE_OUTCOMES = new Set(['buyer_favor', 'seller_favor', 'split']);
 
@@ -202,11 +207,12 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }, {
 /** FR-43: report whether a buyer may file against an order and expose its filing limit. */
 async function getBuyerDisputeFilingStatus(order) {
   const { rows } = await db.read(
-    `SELECT status, outcome, resolution_note, resolved_at
+    `SELECT id, status, outcome, resolution_note, resolved_at
      FROM disputes WHERE order_id = $1 LIMIT 1`,
     [order.orderId]
   );
   const existing = rows[0] || null;
+  const timeline = existing ? await getDisputeTimelines([existing.id]) : new Map();
   let complaintWindowClosesAt = null;
   let withinComplaintWindow = false;
   if (order.deliveredAt) {
@@ -226,6 +232,7 @@ async function getBuyerDisputeFilingStatus(order) {
     outcome: existing?.outcome ?? null,
     reason: existing?.resolution_note ?? null,
     decidedAt: existing?.resolved_at ?? null,
+    timeline: existing ? timeline.get(existing.id) || [] : [],
     complaintWindowClosesAt,
     maxEvidenceUrls: MAX_EVIDENCE_URLS,
   };
@@ -461,28 +468,170 @@ async function withdrawDispute(disputeId, buyerId, {
 
 // ---- FR-44: queue (dispute-only side; combined-with-HELD view lives in payout.service.js) ----
 
-/** FR-44: dispute-only queue (combined held-orders view is in payout.service). */
-async function getDisputeQueue({ status } = {}) {
-  const where = status ? 'WHERE d.status = $1' : '';
-  const values = status ? [status] : [];
-  // cross-module read: money_audit_events (owned by moneyAudit.service.js) for the dispute queue.
-  const { rows } = await db.read(
-    `SELECT d.id, d.order_id, d.raised_by, d.reason_text, d.status,
-            d.seller_response_text, d.seller_responded_at, d.outcome,
-            d.resolution_amount_to_buyer::text AS resolution_amount_to_buyer,
-            d.resolution_note, d.created_at, d.resolved_at,
-            EXISTS (
-              SELECT 1
-              FROM money_audit_events audit
-              WHERE audit.order_id = d.order_id
-                AND audit.action = 'dispute_after_payout'
-            ) AS dispute_after_payout
-     FROM disputes d
-     ${where}
-     ORDER BY d.created_at ASC`,
-    values
-  );
-  return rows.map(formatDisputeRead);
+/** FR-44: paginated dispute queue (combined held-orders view is in payout.service). */
+async function getDisputeQueue({
+  status,
+  ageBucket,
+  before,
+  limit = 50,
+} = {}, { getBusinessDate } = {}) {
+  if (status !== undefined && !['open', 'decided'].includes(status) &&
+      !DISPUTE_STATUSES.has(status)) {
+    throw new ValidationError('status must be open, decided, or a dispute status.');
+  }
+  if (ageBucket !== undefined && !DISPUTE_AGE_BUCKETS.has(ageBucket)) {
+    throw new ValidationError('ageBucket must be new, within_sla, or needs_attention.');
+  }
+  if (before !== undefined && (typeof before !== 'string' || !UUID.test(before))) {
+    throw new ValidationError('before must be a dispute UUID.');
+  }
+  if (!(typeof limit === 'number' || (typeof limit === 'string' && /^\d+$/.test(limit)))) {
+    throw new ValidationError('limit must be an integer from 1 to 100.');
+  }
+  const pageSize = Number(limit);
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new ValidationError('limit must be an integer from 1 to 100.');
+  }
+  if (typeof getBusinessDate !== 'function') {
+    throw new TypeError('Business-date owner is required to read the dispute queue.');
+  }
+
+  const page = await db.withTransaction(async (client) => {
+    const businessDate = await getBusinessDate(client);
+    const settings = await settlement.getSettingsForTransaction(client, [DISPUTE_SLA_SETTING]);
+    const slaDays = Number(settings[DISPUTE_SLA_SETTING]);
+    if (!Number.isInteger(slaDays) || slaDays < 1 || slaDays > 365) {
+      throw new ConfigurationError(`${DISPUTE_SLA_SETTING} must be an integer from 1 to 365.`);
+    }
+
+    let cursor = null;
+    if (before) {
+      const { rows: cursorRows } = await client.query(
+        'SELECT created_at, id FROM disputes WHERE id = $1',
+        [before]
+      );
+      if (!cursorRows[0]) throw new NotFoundError('dispute', before);
+      cursor = cursorRows[0];
+    }
+
+    const { rows } = await client.query(
+      `WITH aged AS (
+         SELECT d.*,
+                (
+                  SELECT count(*)::int
+                  FROM generate_series(
+                    (d.created_at AT TIME ZONE 'Asia/Karachi')::date + 1,
+                    $1::date,
+                    interval '1 day'
+                  ) AS business_day(day_value)
+                  WHERE EXTRACT(ISODOW FROM business_day.day_value) BETWEEN 1 AND 5
+                ) AS age_business_days
+         FROM disputes d
+       ), classified AS (
+         SELECT aged.*,
+                CASE
+                  WHEN age_business_days = 0 THEN 'new'
+                  WHEN age_business_days <= $2::int THEN 'within_sla'
+                  ELSE 'needs_attention'
+                END AS age_bucket,
+                (status IN ('open', 'seller_responded') AND age_business_days > $2::int)
+                  AS needs_attention
+         FROM aged
+       )
+       SELECT d.id, d.order_id, d.raised_by, d.reason_text, d.status,
+              d.seller_response_text, d.seller_responded_at, d.outcome,
+              d.resolution_amount_to_buyer::text AS resolution_amount_to_buyer,
+              d.resolution_note, d.created_at, d.resolved_at,
+              d.age_business_days, d.age_bucket, d.needs_attention,
+              EXISTS (
+                SELECT 1
+                FROM money_audit_events audit
+                WHERE audit.order_id = d.order_id
+                  AND audit.action = 'dispute_after_payout'
+              ) AS dispute_after_payout
+       FROM classified d
+       WHERE ($3::text IS NULL
+              OR ($3 = 'open' AND d.status IN ('open', 'seller_responded'))
+            OR ($3 = 'decided' AND d.status IN ('resolved_refund', 'resolved_release', 'resolved_other'))
+            OR d.status::text = $3)
+         AND ($4::text IS NULL OR d.age_bucket = $4)
+         AND ($5::timestamptz IS NULL OR (d.created_at, d.id) > ($5, $6::uuid))
+       ORDER BY d.created_at, d.id
+       LIMIT $7`,
+      [
+        businessDate,
+        slaDays,
+        status ?? null,
+        ageBucket ?? null,
+        cursor?.created_at ?? null,
+        cursor?.id ?? null,
+        pageSize + 1,
+      ]
+    );
+    return { rows };
+  });
+
+  const hasMore = page.rows.length > pageSize;
+  const rows = hasMore ? page.rows.slice(0, pageSize) : page.rows;
+  const timelines = await getDisputeTimelines(rows.map((row) => row.id));
+  return {
+    disputes: rows.map((row) => ({
+      ...formatDisputeRead(row),
+      timeline: timelines.get(row.id) || [],
+      ageBusinessDays: row.age_business_days,
+      ageBucket: row.age_bucket,
+      needsAttention: row.needs_attention === true,
+    })),
+    nextBefore: hasMore ? rows[rows.length - 1].id : null,
+  };
+}
+
+/** FR-56: enqueue one Admin reminder for each open dispute when it first breaches its SLA. */
+async function processDisputeSlaReminders({ getBusinessDate } = {}) {
+  if (typeof getBusinessDate !== 'function') {
+    throw new TypeError('Business-date owner is required to process dispute SLA reminders.');
+  }
+  return db.withTransaction(async (client) => {
+    const businessDate = await getBusinessDate(client);
+    const settings = await settlement.getSettingsForTransaction(client, [DISPUTE_SLA_SETTING]);
+    const slaDays = Number(settings[DISPUTE_SLA_SETTING]);
+    if (!Number.isInteger(slaDays) || slaDays < 1 || slaDays > 365) {
+      throw new ConfigurationError(`${DISPUTE_SLA_SETTING} must be an integer from 1 to 365.`);
+    }
+    const { rows } = await client.query(
+      `WITH overdue AS (
+         SELECT d.id, d.order_id, d.created_at,
+                (
+                  SELECT count(*)::int
+                  FROM generate_series(
+                    (d.created_at AT TIME ZONE 'Asia/Karachi')::date + 1,
+                    $1::date,
+                    interval '1 day'
+                  ) AS business_day(day_value)
+                  WHERE EXTRACT(ISODOW FROM business_day.day_value) BETWEEN 1 AND 5
+                ) AS age_business_days
+         FROM disputes d
+         WHERE d.status IN ('open', 'seller_responded')
+           AND d.sla_reminded_at IS NULL
+         FOR UPDATE OF d SKIP LOCKED
+       )
+       UPDATE disputes d
+       SET sla_reminded_at = now()
+       FROM overdue
+       WHERE d.id = overdue.id
+         AND overdue.age_business_days > $2::int
+       RETURNING d.id, d.order_id`,
+      [businessDate, slaDays]
+    );
+    for (const dispute of rows) {
+      await eventBus.emitAsync(
+        events.DISPUTE_SLA_BREACHED,
+        { disputeId: dispute.id, orderId: dispute.order_id },
+        { transaction: client }
+      );
+    }
+    return rows.length;
+  });
 }
 
 /** FR-43a, FR-44: evidence files attached to a dispute, for admin review. */
@@ -505,6 +654,7 @@ async function getAdminOrderDisputes(orderId) {
     [orderId]
   );
   const disputeAfterPayout = await moneyAudit.hasDisputeAfterPayout(orderId);
+  const timelines = await getDisputeTimelines(rows.map((row) => row.id));
   const disputes = rows.map((row) => ({
     id: row.id,
     status: row.status,
@@ -513,6 +663,7 @@ async function getAdminOrderDisputes(orderId) {
     decidedAt: row.resolved_at ?? null,
     createdAt: row.created_at,
     disputeAfterPayout,
+    timeline: timelines.get(row.id) || [],
   }));
   return {
     disputes,
@@ -532,7 +683,48 @@ async function getSellerOrderDisputeStatuses(orderIds) {
      ORDER BY d.order_id, d.created_at DESC, d.id DESC`,
     [orderIds]
   );
-  return rows.map((row) => ({ orderId: row.order_id, ...formatDisputeRead(row) }));
+  const timelines = await getDisputeTimelines(rows.map((row) => row.id));
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    ...formatDisputeRead({ ...row, timeline: timelines.get(row.id) || [] }),
+  }));
+}
+
+async function getDisputeTimelines(disputeIds) {
+  const ids = [...new Set(disputeIds.filter(Boolean))];
+  if (!ids.length) return new Map();
+  const { rows } = await db.read(
+    `SELECT timeline.dispute_id,
+            jsonb_agg(
+              jsonb_build_object('event', timeline.event, 'at', timeline.event_at)
+              ORDER BY timeline.event_at, timeline.event_order, timeline.event_id
+            ) AS timeline
+     FROM (
+       SELECT d.id AS dispute_id, 'filed' AS event, d.created_at AS event_at, 0 AS event_order, d.id AS event_id
+       FROM disputes d
+       WHERE d.id = ANY($1::uuid[])
+       UNION ALL
+       SELECT e.dispute_id, 'evidence_added', e.created_at, 1, e.id
+       FROM dispute_evidence e
+       WHERE e.dispute_id = ANY($1::uuid[])
+       UNION ALL
+       SELECT d.id, 'seller_responded', d.seller_responded_at, 2, d.id
+       FROM disputes d
+       WHERE d.id = ANY($1::uuid[]) AND d.seller_responded_at IS NOT NULL
+       UNION ALL
+       SELECT d.id,
+              CASE WHEN d.status = 'withdrawn' THEN 'withdrawn' ELSE 'decided' END,
+              CASE WHEN d.status = 'withdrawn' THEN d.withdrawn_at ELSE d.resolved_at END,
+              3,
+              d.id
+       FROM disputes d
+       WHERE d.id = ANY($1::uuid[])
+         AND (d.resolved_at IS NOT NULL OR d.withdrawn_at IS NOT NULL)
+     ) timeline
+     GROUP BY timeline.dispute_id`,
+    [ids]
+  );
+  return new Map(rows.map((row) => [row.dispute_id, row.timeline]));
 }
 
 function formatDisputeRead(row) {
@@ -558,6 +750,12 @@ function formatDisputeRead(row) {
       ? { sellerRespondedAt: row.seller_responded_at }
       : {}),
     ...(Object.hasOwn(row, 'created_at') ? { createdAt: row.created_at } : {}),
+    ...(Object.hasOwn(row, 'timeline') ? { timeline: row.timeline } : {}),
+    ...(Object.hasOwn(row, 'age_business_days') ? { ageBusinessDays: row.age_business_days } : {}),
+    ...(Object.hasOwn(row, 'age_bucket') ? { ageBucket: row.age_bucket } : {}),
+    ...(Object.hasOwn(row, 'needs_attention')
+      ? { needsAttention: row.needs_attention === true }
+      : {}),
   };
   return result;
 }
@@ -810,6 +1008,7 @@ module.exports = {
   getPartyDisputeEvidence,
   withdrawDispute,
   getDisputeQueue,
+  processDisputeSlaReminders,
   getDisputeEvidence,
   getAdminOrderDisputes,
   getSellerOrderDisputeStatuses,
