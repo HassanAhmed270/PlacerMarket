@@ -13,6 +13,7 @@ const escrowPayments = require('../../src/modules/escrowPayments.service');
 const settlement = require('../../src/modules/settlement.service');
 const moneyAudit = require('../../src/modules/moneyAudit.service');
 const eventBus = require('../../src/lib/eventBus');
+const { NotFoundError } = require('../../src/lib/errors');
 
 function fileDispute(orderId, buyerId, input, dependencies = {}) {
   return disputes.fileDispute(orderId, buyerId, input, {
@@ -139,6 +140,8 @@ describe('Dispute decision status and exact money inputs', () => {
         resolvedBy: 'admin-1',
         sessionId: 'session-1',
         stepUpGrant: 'grant-1',
+      }, {
+        failInitiatedPayoutForDispute: jest.fn().mockResolvedValue([]),
       })
     ).rejects.toMatchObject({ statusCode: 409 });
   });
@@ -157,6 +160,21 @@ describe('Dispute decision status and exact money inputs', () => {
         stepUpGrant: 'grant-1',
       })
     ).rejects.toMatchObject({ statusCode: 409 });
+  });
+
+  test('FR-69: a missing dispute is reported as NotFoundError', async () => {
+    db.read.mockResolvedValue({ rows: [] });
+
+    await expect(
+      disputes.resolveDispute(disputeId, {
+        outcome: 'seller_favor',
+        reason: 'Reviewed seller evidence.',
+        resolvedBy: 'admin-1',
+        sessionId: 'session-1',
+        stepUpGrant: 'grant-1',
+      })
+    ).rejects.toThrow(new NotFoundError('dispute', disputeId));
+    expect(db.withTransaction).not.toHaveBeenCalled();
   });
 
   test('FR-69: dispute refund amounts must be decimal strings, not JavaScript numbers', async () => {

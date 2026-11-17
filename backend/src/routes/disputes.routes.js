@@ -33,6 +33,8 @@ router.post('/:id/resolve', requirePermission('dispute.resolve'), limiters.admin
     ...req.body,
     resolvedBy: req.user.id,
     sessionId: req.authSessionId,
+  }, {
+    failInitiatedPayoutForDispute: sellerPayouts.failInitiatedPayoutForDispute,
   })); // FR-45
 });
 

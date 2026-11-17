@@ -42,15 +42,16 @@ function adminHeader() {
   })}`;
 }
 
-async function createDecisionGrant() {
+async function createDecisionGrant(action = 'refund.decide') {
   const grant = crypto.randomBytes(32).toString('base64url');
   await db.query(
     `INSERT INTO step_up_grants (token_hash, user_id, session_id, action, expires_at)
-     VALUES ($1, $2, $3, 'refund.decide', now() + INTERVAL '5 minutes')`,
+     VALUES ($1, $2, $3, $4, now() + INTERVAL '5 minutes')`,
     [
       crypto.createHash('sha256').update(grant).digest('hex'),
       harness.adminId,
       adminSessionId,
+      action,
     ]
   );
   return grant;
@@ -99,13 +100,16 @@ async function fileBuyerDispute() {
   return response;
 }
 
-async function insertInitiatedPayout() {
+async function insertInitiatedPayout({
+  initiatedBy = harness.adminId,
+  amount = '100.00',
+} = {}) {
   const { rows } = await db.query(
     `INSERT INTO seller_payouts
        (order_id, seller_id, attempt, status, amount, currency, initiated_by)
-     VALUES ($1, $2, 1, 'initiated', '100.00', 'PKR', $3)
+     VALUES ($1, $2, 1, 'initiated', $3::numeric, 'PKR', $4)
      RETURNING id`,
-    [scenario.orderId, scenario.sellerId, harness.adminId]
+    [scenario.orderId, scenario.sellerId, amount, initiatedBy]
   );
   return rows[0].id;
 }
@@ -244,6 +248,93 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
     expect(orderRows).toEqual([{ status: 'completed', hold_state: 'released' }]);
   });
 
+  test('FR-69: seller_favor clears the hold and allows an initiated payout to be approved and paid', async () => {
+    const { rows: thresholdRows } = await db.query(
+      'SELECT value FROM platform_settings WHERE key = $1',
+      ['payout_two_admin_threshold']
+    );
+    const { rows: roleRows } = await db.query(
+      'SELECT role FROM users WHERE id = $1',
+      [harness.moderatorId]
+    );
+    const originalThreshold = thresholdRows[0].value;
+    const originalRole = roleRows[0].role;
+
+    try {
+      await db.query(
+        'UPDATE platform_settings SET value = $1 WHERE key = $2',
+        ['99.99', 'payout_two_admin_threshold']
+      );
+      await db.query(
+        'UPDATE users SET role = $1 WHERE id = $2',
+        ['admin', harness.moderatorId]
+      );
+      const payoutId = await insertInitiatedPayout({ initiatedBy: harness.moderatorId });
+      const dispute = await fileBuyerDispute();
+      await resolveDispute(
+        harness.adminId,
+        dispute.body.id,
+        await decisionInput('seller_favor')
+      ).expect(200);
+
+      const { rows: heldPayoutRows } = await db.query(
+        `SELECT status, failure_reason, failed_by, failed_at, approved_by
+         FROM seller_payouts WHERE id = $1`,
+        [payoutId]
+      );
+      expect(heldPayoutRows).toEqual([{
+        status: 'initiated',
+        failure_reason: null,
+        failed_by: null,
+        failed_at: null,
+        approved_by: null,
+      }]);
+      expect(await db.query(
+        'SELECT state FROM payout_holds WHERE order_id = $1',
+        [scenario.orderId]
+      )).toMatchObject({ rows: [{ state: 'held' }] });
+
+      await request(getApp())
+        .post(`/api/admin/seller-payouts/${payoutId}/approve`)
+        .set('Authorization', adminHeader())
+        .send({ stepUpGrant: await createDecisionGrant('payout.approve') })
+        .expect(200);
+      await request(getApp())
+        .post(`/api/admin/seller-payouts/${payoutId}/paid`)
+        .set('Authorization', adminHeader())
+        .send({
+          method: 'bank',
+          transferReference: 'DISPUTE-SELLER-FAVOR-PAID',
+          paidOn: new Date().toISOString().slice(0, 10),
+          stepUpGrant: await createDecisionGrant('payout.record'),
+        })
+        .expect(200);
+
+      const { rows: paidRows } = await db.query(
+        `SELECT status, approved_by, paid_by, failure_reason, failed_by, failed_at
+         FROM seller_payouts WHERE id = $1`,
+        [payoutId]
+      );
+      expect(paidRows).toEqual([{
+        status: 'paid',
+        approved_by: harness.adminId,
+        paid_by: harness.adminId,
+        failure_reason: null,
+        failed_by: null,
+        failed_at: null,
+      }]);
+    } finally {
+      await db.query(
+        'UPDATE platform_settings SET value = $1 WHERE key = $2',
+        [originalThreshold, 'payout_two_admin_threshold']
+      );
+      await db.query(
+        'UPDATE users SET role = $1 WHERE id = $2',
+        [originalRole, harness.moderatorId]
+      );
+    }
+  });
+
   test('FR-69: buyer_favor creates a capped item-only refund in the dispute transaction', async () => {
     const dispute = await fileBuyerDispute();
     const before = await getMoneyState(scenario.orderId);
@@ -316,6 +407,112 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
       await decisionInput('buyer_favor', '1250.50')
     ).expect(409);
     expect(await getDisputeAuditCount(scenario.orderId)).toBe(1);
+  });
+
+  test.each(['buyer_favor', 'split'])(
+    'FR-69: %s fails an initiated payout and audits it before creating the dispute refund',
+    async (outcome) => {
+      const payoutId = await insertInitiatedPayout();
+      const dispute = await fileBuyerDispute();
+      const response = await resolveDispute(
+        harness.adminId,
+        dispute.body.id,
+        await decisionInput(outcome, '100.00')
+      ).expect(200);
+
+      expect(response.body.outcome).toBe(outcome);
+      expect(response.body.refund).toMatchObject({
+        amount: '100.00',
+        refundAfterPayout: false,
+      });
+      const { rows: payoutRows } = await db.query(
+        `SELECT status, failure_reason, failed_by, failed_at
+         FROM seller_payouts WHERE id = $1`,
+        [payoutId]
+      );
+      expect(payoutRows).toEqual([{
+        status: 'failed',
+        failure_reason: 'dispute_decision',
+        failed_by: harness.adminId,
+        failed_at: expect.any(Date),
+      }]);
+      const { rows: refundRows } = await db.query(
+        `SELECT trigger, status, amount::text
+         FROM refunds WHERE order_id = $1`,
+        [scenario.orderId]
+      );
+      expect(refundRows).toEqual([{
+        trigger: 'dispute_admin',
+        status: 'approved',
+        amount: '100.00',
+      }]);
+      expect(await db.query(
+        'SELECT state FROM payout_holds WHERE order_id = $1',
+        [scenario.orderId]
+      )).toMatchObject({ rows: [{ state: 'held' }] });
+      const { rows: auditRows } = await db.query(
+        `SELECT actor_id, action, reason, metadata
+         FROM money_audit_events
+         WHERE order_id = $1 AND action = 'seller_payout_failed_by_dispute'`,
+        [scenario.orderId]
+      );
+      expect(auditRows).toEqual([{
+        actor_id: harness.adminId,
+        action: 'seller_payout_failed_by_dispute',
+        reason: 'dispute_decision',
+        metadata: { payoutId, disputeId: dispute.body.id },
+      }]);
+    }
+  );
+
+  test('FR-69: failed dispute refund stays decided, is surfaced to Admin, and permits a new manual request', async () => {
+    const dispute = await fileBuyerDispute();
+    const resolution = await resolveDispute(
+      harness.adminId,
+      dispute.body.id,
+      await decisionInput('buyer_favor', '100.00')
+    ).expect(200);
+    const refundId = resolution.body.refund.refundId;
+    await db.query(
+      `UPDATE refunds
+       SET status = 'failed',
+           attempt_count = 6,
+           last_error_code = 'gateway_unavailable',
+           last_attempt_at = now(),
+           needs_attention_at = now(),
+           updated_at = now()
+       WHERE id = $1`,
+      [refundId]
+    );
+
+    const attention = await request(getApp())
+      .get('/api/admin/refunds/attention')
+      .set('Authorization', adminHeader())
+      .expect(200);
+    expect(attention.body.refunds).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        refundId,
+        trigger: 'dispute_admin',
+        amount: '100.00',
+      }),
+    ]));
+    expect(await db.query('SELECT status FROM disputes WHERE id = $1', [dispute.body.id]))
+      .toMatchObject({ rows: [{ status: 'resolved_refund' }] });
+
+    const manualRequest = await request(getApp())
+      .post(`/api/admin/orders/${scenario.orderId}/refunds`)
+      .set('Authorization', adminHeader())
+      .send({
+        amount: '1.00',
+        reason: 'Manual refund after the dispute refund failed.',
+        stepUpGrant: await createDecisionGrant('refund.request'),
+      })
+      .expect(201);
+    expect(manualRequest.body).toMatchObject({
+      status: 'requested',
+      amount: '1.00',
+      currency: 'PKR',
+    });
   });
 
   test.each(['buyer_favor', 'split'])(
@@ -482,6 +679,46 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
     expect(grants[0].consumed_at).toBeNull();
   });
 
+  test('FR-69: refund failure rolls back an initiated payout failure and leaves the dispute open', async () => {
+    const payoutId = await insertInitiatedPayout();
+    const dispute = await fileBuyerDispute();
+    const createRefund = jest.spyOn(escrowPayments, 'createDisputeRefund')
+      .mockRejectedValueOnce(new Error('forced dispute refund failure'));
+    try {
+      await resolveDispute(
+        harness.adminId,
+        dispute.body.id,
+        await decisionInput('buyer_favor', '100.00')
+      ).expect(500);
+    } finally {
+      createRefund.mockRestore();
+    }
+
+    const { rows: payoutRows } = await db.query(
+      `SELECT status, failure_reason, failed_by, failed_at
+       FROM seller_payouts WHERE id = $1`,
+      [payoutId]
+    );
+    expect(payoutRows).toEqual([{
+      status: 'initiated',
+      failure_reason: null,
+      failed_by: null,
+      failed_at: null,
+    }]);
+    expect(await db.query('SELECT status FROM disputes WHERE id = $1', [dispute.body.id]))
+      .toMatchObject({ rows: [{ status: 'open' }] });
+    expect(await db.query(
+      'SELECT state FROM payout_holds WHERE order_id = $1',
+      [scenario.orderId]
+    )).toMatchObject({ rows: [{ state: 'paused_for_dispute' }] });
+    const { rows: auditRows } = await db.query(
+      `SELECT id FROM money_audit_events
+       WHERE order_id = $1 AND action = 'seller_payout_failed_by_dispute'`,
+      [scenario.orderId]
+    );
+    expect(auditRows).toEqual([]);
+  });
+
   test('FR-69: durable dispute hold blocks payout creation, approval and payment until decision', async () => {
     const payoutId = await insertInitiatedPayout();
     const dispute = await fileBuyerDispute();
@@ -610,6 +847,77 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
       actor_id: scenario.buyerId,
       metadata: { disputeId: dispute.body.id },
     });
+  });
+
+  test('FR-69: buyer_favor leaves a paid payout and its cash ledger untouched', async () => {
+    await db.query(
+      `UPDATE orders SET status = 'completed', completed_at = now() WHERE id = $1`,
+      [scenario.orderId]
+    );
+    await db.query(
+      `UPDATE payout_holds SET state = 'released', released_at = now() WHERE order_id = $1`,
+      [scenario.orderId]
+    );
+    const { rows: insertedPayoutRows } = await db.query(
+      `INSERT INTO seller_payouts
+         (order_id, seller_id, attempt, status, amount, currency, initiated_by,
+          method, transfer_reference, paid_on, paid_by, paid_at)
+       VALUES ($1, $2, 1, 'paid', '100.00', 'PKR', $3,
+               'bank', 'DISPUTE-PAID-REFUND-TEST', CURRENT_DATE, $3, now())
+       RETURNING id`,
+      [scenario.orderId, scenario.sellerId, harness.adminId]
+    );
+    await db.query(
+      `INSERT INTO ledger_entries
+         (order_id, payment_id, currency, amount, entry_type, idempotency_key)
+       VALUES ($1, $2, 'PKR', '-100.00', 'seller_payout_manual', $3)`,
+      [scenario.orderId, scenario.paymentId, `seller_payout_manual:${scenario.orderId}`]
+    );
+    const payoutId = insertedPayoutRows[0].id;
+    const { rows: payoutBefore } = await db.query(
+      `SELECT id, status, amount::text, failure_reason, failed_by, failed_at,
+              transfer_reference, paid_by
+       FROM seller_payouts WHERE id = $1`,
+      [payoutId]
+    );
+    const { rows: ledgerBefore } = await db.query(
+      `SELECT id, entry_type, amount::text
+       FROM ledger_entries WHERE order_id = $1 ORDER BY id`,
+      [scenario.orderId]
+    );
+    const dispute = await fileBuyerDispute();
+
+    await resolveDispute(
+      harness.adminId,
+      dispute.body.id,
+      await decisionInput('buyer_favor', '100.00')
+    ).expect(200);
+
+    const { rows: payoutAfter } = await db.query(
+      `SELECT id, status, amount::text, failure_reason, failed_by, failed_at,
+              transfer_reference, paid_by
+       FROM seller_payouts WHERE id = $1`,
+      [payoutId]
+    );
+    const { rows: ledgerAfter } = await db.query(
+      `SELECT id, entry_type, amount::text
+       FROM ledger_entries WHERE order_id = $1 ORDER BY id`,
+      [scenario.orderId]
+    );
+    expect(payoutAfter).toEqual(payoutBefore);
+    expect(ledgerAfter).toEqual(ledgerBefore);
+    const { rows: auditRows } = await db.query(
+      `SELECT action, metadata
+       FROM money_audit_events
+       WHERE order_id = $1
+         AND action IN ('dispute_after_payout', 'refund_after_payout',
+                        'seller_payout_failed_by_dispute')`,
+      [scenario.orderId]
+    );
+    expect(auditRows.map((row) => row.action).sort()).toEqual([
+      'dispute_after_payout',
+      'refund_after_payout',
+    ]);
   });
 
   test('FR-69: ten parallel resolutions produce exactly one success', async () => {

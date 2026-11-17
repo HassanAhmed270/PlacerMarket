@@ -138,7 +138,9 @@ async function getOperationsOverview() {
 
 /** FR-56, FR-45: resolve a dispute (delegates to disputes.service). */
 async function resolveDispute(disputeId, input) {
-  return disputes.resolveDispute(disputeId, input);
+  return disputes.resolveDispute(disputeId, input, {
+    failInitiatedPayoutForDispute: sellerPayouts.failInitiatedPayoutForDispute,
+  });
 }
 
 // ---- FR-57: delivery partner config ----

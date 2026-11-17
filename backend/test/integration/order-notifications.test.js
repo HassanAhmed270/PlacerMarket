@@ -461,6 +461,8 @@ test.each([
     resolvedBy: harness.adminId,
     sessionId: adminSessionId,
     stepUpGrant: await createDisputeDecisionGrant(),
+  }, {
+    failInitiatedPayoutForDispute: sellerPayouts.failInitiatedPayoutForDispute,
   });
   const recipientId = role === 'seller' ? scenario.sellerId : scenario.buyerId;
   await processQueuedNotification(

@@ -227,7 +227,10 @@ purpose so the schema works whichever way this eventually gets decided.
   `DISPUTE_RESOLVED` event in that transaction; for buyer-favour resolutions,
   it requests the `order_exceptions` write through a transaction-aware event
   handled by the table-owning `delivery.service.js`, avoiding a payout/delivery
-  service require cycle.
+  service require cycle. `disputes.routes.js` and the Admin facade inject
+  `sellerPayouts.failInitiatedPayoutForDispute()` for buyer-favour and split
+  decisions; the seller-payout owner marks initiated attempts failed and audits
+  them in the same transaction before the dispute refund is created.
 - **FR-65 manual payout**: `payout.service.releaseReservationPayout()`
   orchestrates one transaction and calls the owning `listings`, `users`,
   `orders`, `reservations`, `escrowPayments`, and `settlement` functions.

@@ -347,6 +347,8 @@ async function resolveDispute(disputeId, {
   resolvedBy,
   sessionId,
   stepUpGrant,
+} = {}, {
+  failInitiatedPayoutForDispute,
 } = {}) {
 
   if (typeof disputeId !== 'string' || !disputeId.trim()) {
@@ -381,10 +383,15 @@ async function resolveDispute(disputeId, {
     throw new ValidationError('amount must be a positive decimal string with at most two decimal places.');
   }
 
-  const readResult = typeof db.read === 'function' ? await db.read('SELECT order_id FROM disputes WHERE id = $1', [disputeId]) : null;
-  const initial = readResult && readResult.rows && readResult.rows[0]
-    ? readResult.rows[0]
-    : { order_id: 'order-1' };
+  const { rows: initialRows } = await db.read(
+    'SELECT order_id FROM disputes WHERE id = $1',
+    [disputeId]
+  );
+  const initial = initialRows[0];
+  if (!initial) throw new NotFoundError('dispute', disputeId);
+  if (normalizedOutcome !== 'seller_favor' && typeof failInitiatedPayoutForDispute !== 'function') {
+    throw new TypeError('Dispute payout owner is required for refund decisions.');
+  }
   const normalizedReasonValue = normalizedReason.trim();
 
   const result = await db.withTransaction(async (client) => {
@@ -452,6 +459,11 @@ async function resolveDispute(disputeId, {
 
     let refund = null;
     if (normalizedOutcome !== 'seller_favor') {
+      await failInitiatedPayoutForDispute(client, {
+        orderId: initial.order_id,
+        disputeId,
+        adminId: resolvedBy,
+      });
       refund = await escrowPayments.createDisputeRefund(client, {
         orderId: initial.order_id,
         disputeId,

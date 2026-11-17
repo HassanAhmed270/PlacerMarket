@@ -242,6 +242,47 @@ async function getOrderPayoutStatus(client, orderId) {
   return rows[0]?.status || null;
 }
 
+/** FR-45, FR-69: fail initiated payouts in the caller's buyer-favor dispute transaction. */
+async function failInitiatedPayoutForDispute(client, { orderId, disputeId, adminId }) {
+  if (!client || typeof client.query !== 'function') {
+    throw new TypeError('Dispute payout failure requires the resolution transaction.');
+  }
+  const { rows: payouts } = await client.query(
+    `SELECT id, attempt
+     FROM seller_payouts
+     WHERE order_id = $1 AND status = 'initiated'
+     ORDER BY attempt DESC
+     FOR UPDATE`,
+    [orderId]
+  );
+  const failedPayoutIds = [];
+  for (const payout of payouts) {
+    const { rows } = await client.query(
+      `UPDATE seller_payouts
+       SET status = 'failed',
+           failure_reason = 'dispute_decision',
+           failed_by = $1,
+           failed_at = now()
+       WHERE id = $2 AND status = 'initiated'
+       RETURNING id`,
+      [adminId, payout.id]
+    );
+    if (!rows[0]) throw new ConflictError('Payout status changed before dispute decision.');
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: adminId,
+      action: 'seller_payout_failed_by_dispute',
+      orderId,
+      reason: 'dispute_decision',
+      metadata: {
+        payoutId: rows[0].id,
+        disputeId,
+      },
+    });
+    failedPayoutIds.push(rows[0].id);
+  }
+  return failedPayoutIds;
+}
+
 /** FR-48, FR-49: record an initiated payout as paid with transfer details and cash ledger entry. */
 async function markPaid(payoutId, adminId, sessionId, input, guards) {
   assertUuid(payoutId, 'payoutId');
@@ -763,6 +804,7 @@ async function exportSellerPayoutsCsv(adminId, sessionId, filters) {
 module.exports = {
   createInitiatedPayout,
   getOrderPayoutStatus,
+  failInitiatedPayoutForDispute,
   getSellerOrderPayoutSummaries,
   markPaid,
   approvePayout,
