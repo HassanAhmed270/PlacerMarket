@@ -16,6 +16,7 @@ const pageSnapshots = require('./src/modules/pageSnapshots.service');
 const escrowPayments = require('./src/modules/escrowPayments.service');
 const sellerHeldFunds = require('./src/modules/sellerHeldFunds.service');
 const disputes = require('./src/modules/disputes.service');
+const reviews = require('./src/modules/reviews.service');
 const sellerPayouts = require('./src/modules/sellerPayouts.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 const { assertPaymentsAdminGate } = require('./src/lib/paymentsAdminGate');
@@ -51,6 +52,12 @@ async function registerMoneyMaintenanceSchedules(boss) {
     { task: 'dispute-sla-reminders' },
     { key: 'dispute-sla-reminders', singletonKey: 'money-maintenance:dispute-sla-reminders' }
   );
+  await boss.schedule(
+    QUEUES.MONEY_MAINTENANCE,
+    '*/10 * * * *',
+    { task: 'review-reveal-expired' },
+    { key: 'review-reveal-expired', singletonKey: 'review-maintenance:reveal-expired' }
+  );
 }
 
 async function processMoneyMaintenanceJob(job) {
@@ -68,6 +75,11 @@ async function processMoneyMaintenanceJob(job) {
   }
   if (job.data?.task === 'dispute-sla-reminders') {
     return disputes.processDisputeSlaReminders({
+      getBusinessDate: sellerPayouts.getBusinessDate,
+    });
+  }
+  if (job.data?.task === 'review-reveal-expired') {
+    return reviews.revealEligibleReviews({
       getBusinessDate: sellerPayouts.getBusinessDate,
     });
   }

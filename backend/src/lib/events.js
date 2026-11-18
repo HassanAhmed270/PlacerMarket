@@ -33,6 +33,8 @@ module.exports = {
   ORDER_AUTO_CANCELLED: 'order.auto_cancelled', // FR-51
   ORDER_HANDED_OVER: 'order.handed_over', // FR-51
   ORDER_DELIVERED: 'order.delivered', // FR-51
+  REVIEW_WAITING: 'review.waiting', // FR-27b
+  REVIEWS_REVEALED: 'reviews.revealed', // FR-27b
 
   // Module 8: Delivery
   DELIVERY_STATUS_CHANGED: 'delivery.status_changed', // FR-41, FR-42

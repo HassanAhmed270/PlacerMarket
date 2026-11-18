@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const orders = require('../modules/orders.service');
+const reviews = require('../modules/reviews.service');
 const reservations = require('../modules/reservations.service');
 const listings = require('../modules/listings.service');
 const escrowPayments = require('../modules/escrowPayments.service');
@@ -184,8 +185,8 @@ router.get('/', async (req, res) => {
   res.json(await orders.getOrderHistory(req.user.id)); // FR-34
 });
 
-router.post('/:id/reviews', async (req, res) => {
-  res.status(201).json(await orders.submitReview(req.params.id, req.user.id, req.body)); // FR-27b
+router.post('/:id/reviews', noStore, limiters.security, async (req, res) => {
+  res.status(201).json(await reviews.submitReview(req.params.id, req.user.id, req.body)); // FR-27b
 });
 
 // FR-33b (OPEN / MAJOR GAP): route exists so the endpoint shape is visible,

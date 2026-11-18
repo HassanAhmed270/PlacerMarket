@@ -1,18 +1,15 @@
 /**
  * modules/orders.service.js
  *
- * Owns: FR-32 to FR-34 (specs.md section "6. Orders"), plus FR-27b (reviews
- * table is defined here in schema.sql, even though the FR itself is listed
- * under Search & Discovery — discovery.service.js reads the aggregate via
- * getSellerRatingSummary() below rather than querying `reviews` itself).
- * Tables owned: orders, reviews
+ * Owns: FR-32 to FR-34 (specs.md section "6. Orders").
+ * Tables owned: orders
  *
  * Cross-module dependencies IN (who calls this file):
  * - negotiation.service.acceptOffer() calls createBagEntry() (FR-32).
  * - payments.service.confirmCodCollection() calls setOrderStatus() and
  *   triggers payout.service.startHold() (FR-38, FR-45b) — the payout side
  *   lives in payout.service.js, not here.
- * - discovery.service.getSellerPublicCard() calls getSellerRatingSummary().
+ * - reviews.service.js calls lockReviewOrder() for participant and eligibility checks.
  *
  * FR-33b remains open for the legacy COD refusal consequences. The Stage 5.5a
  * Admin record-only path uses the reserved `refused_at_door` status; the
@@ -602,43 +599,30 @@ async function getAdminReservationOrderContext(orderId) {
   );
 }
 
-// ---- FR-27b: two-way reviews, entry point is the completed Orders page only ----
-
-/** FR-27b: only after order completion; entry point enforced by caller (Orders page), not here. */
-async function submitReview(orderId, raterId, { rating, comment }) {
-  const { rows } = await db.query('SELECT * FROM orders WHERE id = $1', [orderId]);
-  const order = rows[0];
-  if (!order) throw new NotFoundError('order', orderId);
-  if (order.status !== 'completed') {
-    throw new ValidationError('Reviews can only be submitted after order completion (FR-27b)');
-  }
-  const revieweeId = raterId === order.buyer_id ? order.seller_id
-    : raterId === order.seller_id ? order.buyer_id
-    : null;
-  if (!revieweeId) throw new ForbiddenError('Rater is not a party to this order');
-
-  const { rows: review } = await db.query(
-    `INSERT INTO reviews (order_id, reviewer_id, reviewee_id, rating, comment)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [orderId, raterId, revieweeId, rating, comment || null]
+/** FR-27b: lock the order row that owns a review eligibility decision. */
+async function lockReviewOrder(client, orderId) {
+  const { rows } = await client.query(
+    `SELECT id, buyer_id, seller_id, listing_id, status, delivered_at
+       FROM orders WHERE id = $1 FOR UPDATE`,
+    [orderId]
   );
-  return review[0];
+  return rows[0] || null;
 }
 
-/** FR-37 read-side: total_cod_amount is a generated column on `orders` — payments.service.js reads it through here rather than querying `orders` directly. */
-async function getCodAmountDue(orderId) {
-  const { rows } = await db.query('SELECT total_cod_amount, agreed_item_price, delivery_fee FROM orders WHERE id = $1', [orderId]);
-  if (!rows[0]) throw new NotFoundError('order', orderId);
-  return rows[0];
-}
-
-/** Read model for discovery.service.getSellerPublicCard() (FR-27a) — keep `reviews` ownership in this file. */
+/** Read model for discovery.service.getSellerPublicCard() (FR-27a). */
 async function getSellerRatingSummary(sellerId) {
   const { rows } = await db.query(
     `SELECT COALESCE(AVG(rating), 0)::float AS "averageRating", COUNT(*)::int AS "ratingCount"
      FROM reviews WHERE reviewee_id = $1`,
     [sellerId]
   );
+  return rows[0];
+}
+
+/** FR-37 read-side: total_cod_amount is a generated column on `orders` — payments.service.js reads it through here rather than querying `orders` directly. */
+async function getCodAmountDue(orderId) {
+  const { rows } = await db.query('SELECT total_cod_amount, agreed_item_price, delivery_fee FROM orders WHERE id = $1', [orderId]);
+  if (!rows[0]) throw new NotFoundError('order', orderId);
   return rows[0];
 }
 
@@ -672,6 +656,6 @@ module.exports = {
   getSellerReservationOrders,
   getAdminReservationOrderContext,
   getCodAmountDue,
-  submitReview,
+  lockReviewOrder,
   getSellerRatingSummary,
 };

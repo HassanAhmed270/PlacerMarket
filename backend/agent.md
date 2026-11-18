@@ -130,9 +130,10 @@ later): `orders.service.createBagEntry()` (reads `conversations`),
 | 1. Identity & Users | FR-01–10 | `modules/users.service.js` | cities, users, seller_applications, seller_profiles, auth_sessions, email_login_codes, password_reset_tokens, staff_totp_credentials |
 | 2. Catalog | FR-11–14a | `modules/catalog.service.js` | main_categories, sub_categories, measurement_field_defs |
 | 3. Listings | FR-15–21a | `modules/listings.service.js` | listings, listing_measurements, listing_images, listing_evidence |
-| 4. Search & Discovery | FR-22–27b | `modules/discovery.service.js` | favorites (listing images read via listings.service.js; reviews read via orders.service.js) |
+| 4. Search & Discovery | FR-22–27a | `modules/discovery.service.js` | favorites (listing images read via listings.service.js; review aggregates and public review reads via reviews.service.js) |
 | 5. Messaging & Negotiation | FR-28–31 | `modules/negotiation.service.js` | conversations, messages, offers |
-| 6. Orders | FR-32–34, FR-61–62 owner operations | `modules/orders.service.js` | orders, reviews (FR-27b lives here, not in module 4) |
+| 6. Orders | FR-32–34, FR-61–62 owner operations | `modules/orders.service.js` | orders |
+| 6b. Reviews | FR-27b | `modules/reviews.service.js` | reviews, review_reports, review_moderation_events |
 | 6a. Reservations | FR-32a, FR-61–63a | `modules/reservations.service.js` | reservations, supported_delivery_cities |
 | 7. Payments & COD (legacy COD paths) | FR-36–38 | `modules/payments.service.js` | cod_collections (also owns FR-41a reconciliation — see correction note below) |
 | 7a. Escrow Payments | FR-60a, FR-61–62, FR-65, FR-77b | `modules/escrowPayments.service.js` | payments, webhook_inbox, refunds, ledger_entries |

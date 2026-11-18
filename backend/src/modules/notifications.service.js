@@ -22,6 +22,8 @@ const NOTIFICATION_EVENTS = Object.freeze([
   events.REFUND_STATUS_CHANGED,
   events.ORDER_HANDED_OVER,
   events.ORDER_DELIVERED,
+  events.REVIEW_WAITING,
+  events.REVIEWS_REVEALED,
   events.DELIVERY_STATUS_CHANGED,
   events.DISPUTE_RESOLVED,
   events.DISPUTE_FILED,
@@ -40,6 +42,24 @@ const NOTIFICATION_EVENTS = Object.freeze([
 ]);
 
 function jobKeys(eventName, payload) {
+  if (eventName === events.REVIEW_WAITING) {
+    if (!payload.reviewId || !payload.orderId || !payload.recipientId) {
+      throw new TypeError('Review waiting notification is missing its review, order, or recipient ID.');
+    }
+    return {
+      idempotencyKey: `review-waiting:${payload.reviewId}`,
+      orderingKey: `order:${payload.orderId}`,
+    };
+  }
+  if (eventName === events.REVIEWS_REVEALED) {
+    if (!payload.orderId) {
+      throw new TypeError('Review reveal notification is missing its order ID.');
+    }
+    return {
+      idempotencyKey: `reviews-revealed:${payload.orderId}`,
+      orderingKey: `order:${payload.orderId}`,
+    };
+  }
   if (eventName === events.REFUND_STATUS_CHANGED) {
     if (!payload.refundId || !payload.orderId || !payload.status) {
       throw new TypeError('Refund notification event is missing its refund, order, or status.');
@@ -242,6 +262,46 @@ async function processNotificationJob(job, transactionDb) {
         `dispute_evidence_added:${job.payload.evidenceId}`,
       ]
     );
+    return;
+  }
+
+  if ([events.REVIEW_WAITING, events.REVIEWS_REVEALED].includes(job.eventName)) {
+    // cross-module read: orders (owned by orders.service.js), for review notification recipients.
+    const { rows } = await transactionDb.executeSql(
+      'SELECT buyer_id, seller_id FROM orders WHERE id = $1',
+      [job.payload.orderId]
+    );
+    const order = rows[0];
+    if (!order) return;
+    const recipients = job.eventName === events.REVIEW_WAITING
+      ? [job.payload.recipientId]
+      : [order.buyer_id, order.seller_id];
+    if (recipients.some((recipientId) =>
+      recipientId !== order.buyer_id && recipientId !== order.seller_id)) {
+      throw new TypeError('Review notification recipient is not an order participant.');
+    }
+    for (const recipientId of recipients) {
+      const isSeller = recipientId === order.seller_id;
+      const waiting = job.eventName === events.REVIEW_WAITING;
+      const message = waiting ? 'A review is waiting.' : 'Reviews are now visible.';
+      await transactionDb.executeSql(
+        `INSERT INTO notifications (user_id, event_type, payload, dedupe_key)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (user_id, dedupe_key) WHERE dedupe_key IS NOT NULL DO NOTHING`,
+        [
+          recipientId,
+          waiting ? 'review_waiting' : 'reviews_revealed',
+          JSON.stringify({
+            orderId: job.payload.orderId,
+            message,
+            href: `${isSeller ? '/seller/orders' : '/orders'}/${encodeURIComponent(job.payload.orderId)}`,
+          }),
+          waiting
+            ? `review_waiting:${job.payload.reviewId}`
+            : `reviews_revealed:${job.payload.orderId}`,
+        ]
+      );
+    }
     return;
   }
 
