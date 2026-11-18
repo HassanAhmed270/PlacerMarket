@@ -609,16 +609,6 @@ async function lockReviewOrder(client, orderId) {
   return rows[0] || null;
 }
 
-/** Read model for discovery.service.getSellerPublicCard() (FR-27a). */
-async function getSellerRatingSummary(sellerId) {
-  const { rows } = await db.query(
-    `SELECT COALESCE(AVG(rating), 0)::float AS "averageRating", COUNT(*)::int AS "ratingCount"
-     FROM reviews WHERE reviewee_id = $1`,
-    [sellerId]
-  );
-  return rows[0];
-}
-
 /** FR-37 read-side: total_cod_amount is a generated column on `orders` — payments.service.js reads it through here rather than querying `orders` directly. */
 async function getCodAmountDue(orderId) {
   const { rows } = await db.query('SELECT total_cod_amount, agreed_item_price, delivery_fee FROM orders WHERE id = $1', [orderId]);
@@ -657,5 +647,4 @@ module.exports = {
   getAdminReservationOrderContext,
   getCodAmountDue,
   lockReviewOrder,
-  getSellerRatingSummary,
 };

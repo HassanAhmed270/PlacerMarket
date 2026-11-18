@@ -6,8 +6,9 @@ jest.mock('../../src/modules/users.service', () => ({
   getSellerProfile: jest.fn(),
   getSellerCityName: jest.fn(),
 }));
-jest.mock('../../src/modules/orders.service', () => ({
-  getSellerRatingSummary: jest.fn(),
+jest.mock('../../src/modules/reviews.service', () => ({
+  getSellerRatingAggregate: jest.fn(),
+  getListingItemRatingAggregate: jest.fn(),
 }));
 jest.mock('../../src/modules/listings.service', () => ({
   getListingImages: jest.fn(),
@@ -18,7 +19,7 @@ jest.mock('../../src/modules/catalog.service', () => ({
 
 const db = require('../../src/db.service');
 const users = require('../../src/modules/users.service');
-const orders = require('../../src/modules/orders.service');
+const reviews = require('../../src/modules/reviews.service');
 const listings = require('../../src/modules/listings.service');
 const catalog = require('../../src/modules/catalog.service');
 const discovery = require('../../src/modules/discovery.service');
@@ -31,6 +32,12 @@ describe('discovery.service public listings and favorites', () => {
     jest.clearAllMocks();
     catalog.getSubCategoryName.mockResolvedValue('Sub-category');
     users.getSellerCityName.mockResolvedValue('City');
+    reviews.getSellerRatingAggregate.mockResolvedValue({
+      average: null, count: 2, distribution: { 1: 0, 2: 0, 3: 0, 4: 2, 5: 0 },
+    });
+    reviews.getListingItemRatingAggregate.mockResolvedValue({
+      average: null, count: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    });
   });
 
   test('FR-25, FR-27a: published detail includes price, live status, and only rating and join date for seller', async () => {
@@ -43,7 +50,6 @@ describe('discovery.service public listings and favorites', () => {
       display_alias: 'must not leak', created_at: new Date('2025-01-01T00:00:00Z'),
       payout_wallet_number: 'must not leak', id_verified: true,
     });
-    orders.getSellerRatingSummary.mockResolvedValue({ averageRating: 4.5, ratingCount: 2 });
     listings.getListingImages.mockResolvedValue([]);
 
     const detail = await discovery.getListingDetail(listingId);
@@ -51,10 +57,16 @@ describe('discovery.service public listings and favorites', () => {
     expect(detail).toMatchObject({
       asking_price: '125.00', status: 'available', liveStatus: 'available', available: true,
       seller: {
-        joinDate: new Date('2025-01-01T00:00:00Z'), averageRating: 4.5, ratingCount: 2,
+        joinDate: new Date('2025-01-01T00:00:00Z'),
+        averageRating: null,
+        ratingCount: 2,
+        ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 2, 5: 0 },
       },
+      itemRating: { average: null, count: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } },
     });
-    expect(Object.keys(detail.seller).sort()).toEqual(['averageRating', 'joinDate', 'ratingCount']);
+    expect(Object.keys(detail.seller).sort()).toEqual([
+      'averageRating', 'joinDate', 'ratingCount', 'ratingDistribution',
+    ]);
     expect(detail).not.toHaveProperty('seller_id');
     expect(detail.status).not.toBe('published');
   });
@@ -67,7 +79,6 @@ describe('discovery.service public listings and favorites', () => {
       }] })
       .mockResolvedValueOnce({ rows: [{ id: 'similar-1', has_reservation: true }] });
     users.getSellerProfile.mockResolvedValue({ created_at: new Date() });
-    orders.getSellerRatingSummary.mockResolvedValue({ averageRating: 0, ratingCount: 0 });
     listings.getListingImages.mockResolvedValue([]);
 
     const detail = await discovery.getListingDetail(listingId);

@@ -159,8 +159,8 @@ describe('FR-61, FR-62 buyer order reads', () => {
     expect(response.headers['cache-control']).toBe('private, no-store');
     expect(Object.keys(response.body).sort()).toEqual([
       'address', 'chargebacks', 'createdAt', 'currency', 'deliveryFee', 'disputeFiling',
-      'handoverDeadlineAt', 'itemPrice', 'listing', 'orderId', 'payment', 'reservation',
-      'returnRequest', 'status', 'total',
+      'handoverDeadlineAt', 'itemPrice', 'listing', 'myReview', 'orderId', 'payment',
+      'reservation', 'returnRequest', 'reviewOfMe', 'status', 'total',
     ]);
     expect(response.body).toMatchObject({
       orderId: reservation.orderId,
@@ -178,6 +178,8 @@ describe('FR-61, FR-62 buyer order reads', () => {
       total: '1550.50',
       currency: 'PKR',
       returnRequest: null,
+      myReview: null,
+      reviewOfMe: null,
       chargebacks: [],
       reservation: { status: 'active' },
       payment: { status: 'pending', checkoutUrl: 'https://payments.example.test/session' },
@@ -207,8 +209,9 @@ describe('FR-61, FR-62 buyer order reads', () => {
     expect(response.headers['cache-control']).toBe('private, no-store');
     expect(response.body).toHaveLength(1);
     expect(Object.keys(response.body[0]).sort()).toEqual([
-      'chargebacks', 'createdAt', 'currency', 'listingId', 'orderId', 'reservationExpiresAt',
-      'returnDecidedAt', 'returnOutcome', 'returnStatus', 'status', 'title', 'total',
+      'chargebacks', 'createdAt', 'currency', 'listingId', 'myReview', 'orderId',
+      'reservationExpiresAt', 'returnDecidedAt', 'returnOutcome', 'returnStatus',
+      'reviewOfMe', 'status', 'title', 'total',
     ]);
     expect(response.body[0]).toMatchObject({
       orderId: reservation.orderId,
@@ -220,6 +223,8 @@ describe('FR-61, FR-62 buyer order reads', () => {
       returnStatus: null,
       returnOutcome: null,
       returnDecidedAt: null,
+      myReview: null,
+      reviewOfMe: null,
       chargebacks: [],
     });
     expect(typeof response.body[0].reservationExpiresAt).toBe('string');

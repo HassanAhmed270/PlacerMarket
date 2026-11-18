@@ -2433,3 +2433,8 @@ CREATE TRIGGER review_moderation_events_no_truncate
 INSERT INTO platform_settings (key, value)
 VALUES ('review_window_days', '14')
 ON CONFLICT (key) DO NOTHING;
+
+-- Migration: 041_immutable_review_audit_references.sql
+ALTER TABLE review_moderation_events
+  DROP CONSTRAINT review_moderation_events_review_id_fkey,
+  DROP CONSTRAINT review_moderation_events_actor_id_fkey;

@@ -142,11 +142,17 @@ describe('FR-22 through FR-27 public discovery', () => {
     const detail = await request(app).get(`/api/discovery/listings/${fixture.listingId}`).expect(200);
     expect(detail.body).toMatchObject({
       asking_price: '100.00', status: 'available', liveStatus: 'available', seller: {
-        joinDate: expect.any(String), averageRating: 0, ratingCount: 0,
+        joinDate: expect.any(String),
+        averageRating: null,
+        ratingCount: 0,
+        ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
       },
+      itemRating: { average: null, count: 0, distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } },
     });
-    expect(Object.keys(detail.body.seller).sort()).toEqual(['averageRating', 'joinDate', 'ratingCount']);
-    expect(detail.headers['cache-control']).toBe('public, max-age=10');
+    expect(Object.keys(detail.body.seller).sort()).toEqual([
+      'averageRating', 'joinDate', 'ratingCount', 'ratingDistribution',
+    ]);
+    expect(detail.headers['cache-control']).toBe('no-store');
     expect(detail.headers['set-cookie']).toBeUndefined();
 
     await db.query("UPDATE listings SET status = 'paused' WHERE id = $1", [fixture.listingId]);

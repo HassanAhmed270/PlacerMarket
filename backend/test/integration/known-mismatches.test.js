@@ -660,9 +660,14 @@ describe('known schema and service mismatches', () => {
   test('FR-27a: public seller card exposes rating and join date only', async () => {
     const card = await discovery.getSellerPublicCard(fixture.userId);
     expect(card).toEqual({
-      joinDate: expect.any(Date), averageRating: 0, ratingCount: 0,
+      joinDate: expect.any(Date),
+      averageRating: null,
+      ratingCount: 0,
+      ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
     });
-    expect(Object.keys(card).sort()).toEqual(['averageRating', 'joinDate', 'ratingCount']);
+    expect(Object.keys(card).sort()).toEqual([
+      'averageRating', 'joinDate', 'ratingCount', 'ratingDistribution',
+    ]);
   });
 
   test('measurement definition lookup returns fields ordered by display_order', async () => {
@@ -1353,10 +1358,17 @@ describe('known schema and service mismatches', () => {
       id: fixture.listingId, asking_price: '10.00', liveStatus: 'available', available: true, images: [
       { image_url: 'https://images.invalid/first.jpg', display_order: 0 },
       { image_url: 'https://images.invalid/second.jpg', display_order: 1 },
-    ], seller: { joinDate: expect.any(Date), averageRating: 0, ratingCount: 0 } });
+    ], seller: {
+      joinDate: expect.any(Date),
+      averageRating: null,
+      ratingCount: 0,
+      ratingDistribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    } });
     expect(detail).not.toHaveProperty('reviewed_by');
     expect(detail).not.toHaveProperty('seller_id');
-    expect(Object.keys(detail.seller).sort()).toEqual(['averageRating', 'joinDate', 'ratingCount']);
+    expect(Object.keys(detail.seller).sort()).toEqual([
+      'averageRating', 'joinDate', 'ratingCount', 'ratingDistribution',
+    ]);
     await db.query("UPDATE listings SET status = 'rejected' WHERE id = $1", [fixture.listingId]);
     expect(await discovery.getListingDetail(fixture.listingId)).toBeNull();
   });
@@ -1374,7 +1386,7 @@ describe('known schema and service mismatches', () => {
         [fixture.listingId, 'https://images.invalid/public.jpg']
       );
       const response = await request(app).get(`/api/discovery/listings/${fixture.listingId}`).expect(200);
-      expect(response.headers['cache-control']).toBe('public, max-age=10');
+      expect(response.headers['cache-control']).toBe('no-store');
       expect(response.headers['set-cookie']).toBeUndefined();
       expect(response.body.images).toEqual([
         expect.objectContaining({ image_url: 'https://images.invalid/public.jpg', display_order: 0 }),

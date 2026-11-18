@@ -24,9 +24,9 @@ function noStore(_req, res, next) {
   return next();
 }
 
-async function sellerOrderResponses(ordersForSeller) {
+async function sellerOrderResponses(ordersForSeller, sellerId) {
   const orderIds = ordersForSeller.map((order) => order.orderId);
-  const [listingSummaries, reservationCities, holdStates, disputeStatuses, orderSettlements, orderPayouts, orderHeldFlags, returnStatuses, chargebackStatuses] = await Promise.all([
+  const [listingSummaries, reservationCities, holdStates, disputeStatuses, orderSettlements, orderPayouts, orderHeldFlags, returnStatuses, chargebackStatuses, reviewReads] = await Promise.all([
     listings.getSellerOrderListingSummaries(ordersForSeller.map((order) => order.listingId)),
     reservations.getSellerOrderDeliveryCities(ordersForSeller.map((order) => order.reservationId)),
     payout.getSellerOrderHoldStates(orderIds),
@@ -36,6 +36,7 @@ async function sellerOrderResponses(ordersForSeller) {
     sellerHeldFunds.getSellerOrderHeldFlags(orderIds),
     returnRequests.getOrderReturnStatuses(orderIds),
     chargebacks.getOrderChargebackStatuses(orderIds),
+    reviews.getOrderReviewReads(orderIds, sellerId),
   ]);
   const listingsById = new Map(listingSummaries.map((listing) => [listing.listingId, listing]));
   const reservationsById = new Map(reservationCities.map((reservation) => [reservation.reservationId, reservation]));
@@ -58,6 +59,7 @@ async function sellerOrderResponses(ordersForSeller) {
     const disputeValues = disputesByOrderId.get(order.orderId);
     const returnValues = returnStatusesByOrderId.get(order.orderId);
     const chargebackValues = chargebacksByOrderId.get(order.orderId);
+    const reviewValues = reviewReads.get(order.orderId);
 
     return {
       orderId: order.orderId,
@@ -97,6 +99,8 @@ async function sellerOrderResponses(ordersForSeller) {
       returnOutcome: returnValues?.outcome ?? null,
       returnDecidedAt: returnValues?.decidedAt ?? null,
       chargebacks: chargebackValues ?? [],
+      myReview: reviewValues?.myReview ?? null,
+      reviewOfMe: reviewValues?.reviewOfMe ?? null,
     };
   });
 }
@@ -104,22 +108,23 @@ async function sellerOrderResponses(ordersForSeller) {
 router.get('/selling', noStore, limiters.payments, async (req, res) => {
   const page = await orders.getSellerReservationOrders(req.user.id, req.query);
   res.json({
-    orders: await sellerOrderResponses(page.orders),
+    orders: await sellerOrderResponses(page.orders, req.user.id),
     nextBefore: page.nextBefore,
   });
 });
 
 router.get('/selling/:orderId', noStore, limiters.payments, async (req, res) => {
   const order = await orders.getSellerReservationOrder(req.params.orderId, req.user.id);
-  res.json((await sellerOrderResponses([order]))[0]);
+  res.json((await sellerOrderResponses([order], req.user.id))[0]);
 });
 
 router.get('/mine', noStore, limiters.payments, async (req, res) => {
   const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
   const buyerOrders = await orders.getBuyerReservationOrders(req.user.id, limit);
-  const [returnStatuses, chargebackStatuses] = await Promise.all([
+  const [returnStatuses, chargebackStatuses, reviewReads] = await Promise.all([
     returnRequests.getOrderReturnStatuses(buyerOrders.map((order) => order.orderId)),
     chargebacks.getOrderChargebackStatuses(buyerOrders.map((order) => order.orderId)),
+    reviews.getOrderReviewReads(buyerOrders.map((order) => order.orderId), req.user.id),
   ]);
   const returnStatusesByOrderId = new Map(returnStatuses.map((status) => [status.orderId, status]));
   const chargebacksByOrderId = new Map(chargebackStatuses.map((status) => [status.orderId, status.chargebacks]));
@@ -131,21 +136,24 @@ router.get('/mine', noStore, limiters.payments, async (req, res) => {
       returnOutcome: returnStatus?.outcome ?? null,
       returnDecidedAt: returnStatus?.decidedAt ?? null,
       chargebacks: chargebacksByOrderId.get(order.orderId) ?? [],
+      ...(reviewReads.get(order.orderId) || { myReview: null, reviewOfMe: null }),
     };
   }));
 });
 
 router.get('/:orderId/summary', noStore, limiters.payments, async (req, res) => {
   const order = await orders.getBuyerReservationOrder(req.params.orderId, req.user.id);
-  const [reservation, listing, paymentStatus] = await Promise.all([
+  const [reservation, listing, paymentStatus, reviewRead] = await Promise.all([
     reservations.getBuyerReservationSnapshot(order.reservationId, req.user.id),
     listings.getBuyerOrderListingSummary(order.listingId),
     escrowPayments.getPaymentStatus({ orderId: order.orderId, buyerId: req.user.id }),
+    reviews.getOrderReviewRead(order.orderId, req.user.id),
   ]);
   res.json({
     orderId: order.orderId,
     listing,
     status: order.status,
+    ...reviewRead,
     itemPrice: reservation.itemPrice,
     deliveryFee: reservation.deliveryFee,
     total: reservation.total,

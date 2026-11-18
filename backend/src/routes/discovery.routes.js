@@ -42,6 +42,7 @@ router.get('/vocabulary', async (_req, res) => {
 });
 
 router.get('/listings/:id', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   const detail = await discovery.getListingDetail(req.params.id); // FR-25
   if (!detail) return res.status(404).json({ error: 'Listing not found' });
   if (detail.removed) return res.status(410).json({ error: 'Listing is no longer available' });

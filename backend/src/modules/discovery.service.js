@@ -1,11 +1,11 @@
 /**
- * Owns favorites; reviews are read through orders.service.js. Public listing
+ * Owns favorites; review aggregates are read through reviews.service.js. Public listing
  * image reads go through listings.service.js, which owns listing_images.
  */
 const crypto = require('node:crypto');
 const db = require('../db.service');
 const users = require('./users.service');
-const orders = require('./orders.service');
+const reviews = require('./reviews.service');
 const listings = require('./listings.service');
 const catalog = require('./catalog.service');
 const { buildSeoPayload } = require('../lib/listingSeo');
@@ -469,9 +469,10 @@ async function getListingDetail(listingKey) {
     seller_id: sellerId, status: _status, has_reservation: _hasReservation,
     has_sold: _hasSold, ...listing
   } = row;
-  const [seller, images] = await Promise.all([
+  const [seller, images, itemRating] = await Promise.all([
     getSellerPublicCard(sellerId),
     listings.getListingImages(row.id),
+    reviews.getListingItemRatingAggregate(row.id),
   ]);
   const [subCategory, city] = await Promise.all([
     catalog.getSubCategoryName(row.sub_category_id),
@@ -488,6 +489,7 @@ async function getListingDetail(listingKey) {
     }),
     ...liveStatusFields(liveStatus),
     seller,
+    itemRating,
     images,
   };
   if (liveStatus === 'sold') {
@@ -598,11 +600,12 @@ async function buildShareUrl(listingId) {
 /** FR-27a: buyer-facing seller summary contains rating and join date only. */
 async function getSellerPublicCard(sellerId) {
   const profile = await users.getSellerProfile(sellerId);
-  const ratingSummary = await orders.getSellerRatingSummary(sellerId);
+  const ratingSummary = await reviews.getSellerRatingAggregate(sellerId);
   return {
     joinDate: profile.created_at,
-    averageRating: ratingSummary.averageRating,
-    ratingCount: ratingSummary.ratingCount,
+    averageRating: ratingSummary.average,
+    ratingCount: ratingSummary.count,
+    ratingDistribution: ratingSummary.distribution,
   };
 }
 

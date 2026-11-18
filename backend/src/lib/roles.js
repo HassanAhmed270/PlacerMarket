@@ -27,6 +27,8 @@ const MODERATOR_ALLOWED_ACTIONS = new Set([
   'seller_application.approve', // FR-07, FR-53
   'seller_application.reject',
   'delivery_outcome.view', // FR-33b
+  'review.queue', // FR-27b
+  'review.hide', // FR-27b
 ]);
 
 // Explicitly Admin-only per FR-05a / FR-58 — listed for clarity even though
@@ -56,6 +58,7 @@ const ADMIN_ONLY_ACTIONS = new Set([
   'order.resolve_exception', // FR-72e
   'dispute.resolve', // FR-45: only an Admin may resolve disputes
   'order.log_delivery_status', // FR-41
+  'review.restore', // FR-27b
   'advertising.manage', // FR-59
   'operations.view', // FR-55
   'search.synonyms.manage', // FR-80a
