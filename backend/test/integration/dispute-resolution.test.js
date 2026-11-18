@@ -593,32 +593,48 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
 
   describe('FR-44, FR-45, FR-56 dispute queue and timeline', () => {
       test('FR-44: status filters and cursor pagination return the matching dispute queue', async () => {
-        const firstDispute = await fileBuyerDispute();
+        const cursorAnchor = await fileBuyerDispute();
+        await db.query(
+          "UPDATE disputes SET created_at = '9998-12-31 23:59:59.999999+00' WHERE id = $1",
+          [cursorAnchor.body.id]
+        );
         const extraScenario = await createScenario(harness);
         extraScenarios.push(extraScenario);
         await deliverScenario(extraScenario);
-        const secondDispute = await fileDispute(extraScenario.buyerId, extraScenario.orderId).expect(201);
+        const firstDispute = await fileDispute(extraScenario.buyerId, extraScenario.orderId).expect(201);
+        await db.query(
+          "UPDATE disputes SET created_at = '9999-01-01 10:00:00.000123+00' WHERE id = $1",
+          [firstDispute.body.id]
+        );
+        const lastScenario = await createScenario(harness);
+        extraScenarios.push(lastScenario);
+        await deliverScenario(lastScenario);
+        const secondDispute = await fileDispute(lastScenario.buyerId, lastScenario.orderId).expect(201);
+        await db.query(
+          "UPDATE disputes SET created_at = '9999-01-01 10:00:00.000456+00' WHERE id = $1",
+          [secondDispute.body.id]
+        );
 
         const openIds = new Set();
         let before;
         let pages = 0;
         do {
-          const path = `/api/disputes?status=open&limit=1${before ? `&before=${before}` : ''}`;
+          const path = `/api/disputes?status=open&limit=1&before=${before || cursorAnchor.body.id}`;
           const page = await request(getApp())
             .get(path)
             .set('Authorization', adminHeader())
             .expect(200);
           if (pages === 0) expect(page.headers['cache-control']).toBe('private, no-store');
           expect(page.body).toHaveLength(1);
+          expect(openIds.has(page.body[0].id)).toBe(false);
           openIds.add(page.body[0].id);
           before = page.headers['x-next-before'] || null;
           pages += 1;
-          expect(pages).toBeLessThanOrEqual(100);
+          expect(pages).toBeLessThan(3);
         } while (before);
 
-        expect(openIds.size).toBe(pages);
-        expect(openIds.has(firstDispute.body.id)).toBe(true);
-        expect(openIds.has(secondDispute.body.id)).toBe(true);
+        expect(pages).toBe(2);
+        expect([...openIds]).toEqual([firstDispute.body.id, secondDispute.body.id]);
         const decided = await request(getApp())
           .get('/api/disputes?status=decided&limit=100')
           .set('Authorization', adminHeader())
@@ -628,6 +644,52 @@ describe('FR-65 reservation-backed dispute-resolution payout outcomes', () => {
         )).toBe(true);
         expect(decided.body.map((row) => row.id)).not.toContain(firstDispute.body.id);
         expect(decided.body.map((row) => row.id)).not.toContain(secondDispute.body.id);
+      });
+
+      test('FR-44: microsecond dispute timestamps paginate each cursor exactly once', async () => {
+        const cursorAnchor = await fileBuyerDispute();
+        await db.query(
+          "UPDATE disputes SET created_at = '9998-12-31 23:59:59.999999+00' WHERE id = $1",
+          [cursorAnchor.body.id]
+        );
+
+        const timestamps = [
+          '9999-01-01 10:00:00.000123+00',
+          '9999-01-01 10:00:00.000456+00',
+          '9999-01-01 10:00:00.000789+00',
+        ];
+        const disputeIds = [];
+        for (const createdAt of timestamps) {
+          const target = await createScenario(harness);
+          extraScenarios.push(target);
+          await deliverScenario(target);
+          const dispute = await fileDispute(target.buyerId, target.orderId).expect(201);
+          await db.query(
+            'UPDATE disputes SET created_at = $2::timestamptz WHERE id = $1',
+            [dispute.body.id, createdAt]
+          );
+          disputeIds.push(dispute.body.id);
+        }
+
+        const receivedIds = [];
+        let before = cursorAnchor.body.id;
+        let pageCount = 0;
+        do {
+          const page = await request(getApp())
+            .get(`/api/disputes?status=open&limit=1&before=${before}`)
+            .set('Authorization', adminHeader())
+            .expect(200);
+          expect(page.body).toHaveLength(1);
+          receivedIds.push(page.body[0].id);
+          before = page.headers['x-next-before'] || null;
+          pageCount += 1;
+          expect(pageCount).toBeLessThan(4);
+        } while (before);
+
+        expect(receivedIds).toEqual(disputeIds);
+        expect(new Set(receivedIds).size).toBe(3);
+        expect(pageCount).toBe(3);
+        expect(before).toBeNull();
       });
 
       test('FR-56: buyer, seller, and Admin reads expose event timelines without Admin IDs', async () => {

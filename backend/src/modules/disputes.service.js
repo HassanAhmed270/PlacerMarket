@@ -504,14 +504,12 @@ async function getDisputeQueue({
       throw new ConfigurationError(`${DISPUTE_SLA_SETTING} must be an integer from 1 to 365.`);
     }
 
-    let cursor = null;
     if (before) {
       const { rows: cursorRows } = await client.query(
-        'SELECT created_at, id FROM disputes WHERE id = $1',
+        'SELECT id FROM disputes WHERE id = $1',
         [before]
       );
       if (!cursorRows[0]) throw new NotFoundError('dispute', before);
-      cursor = cursorRows[0];
     }
 
     const { rows } = await client.query(
@@ -555,16 +553,19 @@ async function getDisputeQueue({
             OR ($3 = 'decided' AND d.status IN ('resolved_refund', 'resolved_release', 'resolved_other'))
             OR d.status::text = $3)
          AND ($4::text IS NULL OR d.age_bucket = $4)
-         AND ($5::timestamptz IS NULL OR (d.created_at, d.id) > ($5, $6::uuid))
+         AND ($5::uuid IS NULL OR (d.created_at, d.id) > (
+           SELECT c.created_at, c.id
+           FROM disputes c
+           WHERE c.id = $5::uuid
+         ))
        ORDER BY d.created_at, d.id
-       LIMIT $7`,
+       LIMIT $6`,
       [
         businessDate,
         slaDays,
         status ?? null,
         ageBucket ?? null,
-        cursor?.created_at ?? null,
-        cursor?.id ?? null,
+        before ?? null,
         pageSize + 1,
       ]
     );

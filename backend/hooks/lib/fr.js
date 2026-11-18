@@ -34,10 +34,8 @@ function allCodes(specsText) {
 
 /** True if some title names `code` in full (FR-45 is NOT satisfied by a title that only says FR-45a). */
 function namesFr(titles, code) {
-  if (!code || typeof code !== 'string') return false;
-  const escapedCode = code.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp(`(^|[^A-Za-z0-9])${escapedCode}([^A-Za-z0-9]|$)`);
-  return titles.some((t) => typeof t === 'string' && re.test(t));
+  const re = new RegExp(`\\b${code}\\b`);
+  return titles.some((t) => re.test(t));
 }
 
 /** FR codes ticked in `stagedSpecs` that were not already ticked in `headSpecs`. */
