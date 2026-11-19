@@ -31,7 +31,7 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
 
   afterEach(async () => {
     for (const fixture of fixtures) {
-      await waitForListingSearchJobs(fixture.listingId);
+      await waitForListingSearchJobs(fixture.listingId, 60000, { allowNoJobs: true });
       await cleanupListingProjections(fixture.listingId);
       await db.query('DELETE FROM orders WHERE listing_id = $1', [fixture.listingId]);
       await db.query('DELETE FROM reservations WHERE listing_id = $1', [fixture.listingId]);
@@ -58,17 +58,18 @@ describe('FR-80a listing search indexing on PostgreSQL', () => {
     return fixture;
   }
 
-  async function waitForListingSearchJobs(listingId, timeoutMs = 60000) {
+  async function waitForListingSearchJobs(listingId, timeoutMs = 60000, { allowNoJobs = false } = {}) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       const { rows } = await db.query(
-        `SELECT count(*) FILTER (WHERE state NOT IN ('completed', 'failed'))::int AS pending,
+        `SELECT count(*)::int AS total,
+                count(*) FILTER (WHERE state NOT IN ('completed', 'failed'))::int AS pending,
                 count(*) FILTER (WHERE state = 'failed')::int AS failed
          FROM pgboss.job WHERE name = $1 AND data->>'listingId' = $2`,
         [queue.QUEUES.LISTING_SEARCH, listingId]
       );
       if (rows[0].failed) throw new Error(`Listing-search job failed for listing ${listingId}.`);
-      if (rows[0].pending === 0) return;
+      if (rows[0].pending === 0 && (rows[0].total > 0 || allowNoJobs)) return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     throw new Error(`Timed out waiting for listing-search jobs for listing ${listingId}.`);

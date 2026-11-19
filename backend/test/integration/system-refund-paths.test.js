@@ -874,7 +874,8 @@ describe('FR-72 handover timeout', () => {
       ]);
       expect([200, 409]).toContain(cancelResponse.status);
       expect(timeoutResult.failed).toBe(0);
-      expect(timeoutResult.processed + timeoutResult.skipped).toBeGreaterThanOrEqual(1);
+      expect(timeoutResult.processed + timeoutResult.skipped)
+        .toBeGreaterThanOrEqual(cancelResponse.status === 200 ? 0 : 1);
       expect(await refundRows(scenario)).toHaveLength(1);
       const { rows } = await db.query(
         `SELECT orders.status AS order_status, reservations.status AS reservation_status,

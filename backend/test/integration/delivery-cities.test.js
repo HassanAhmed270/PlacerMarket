@@ -3,6 +3,7 @@ const express = require('express');
 const request = require('supertest');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { getSharedRedisClient, setSharedRedisClient } = require('../../src/lib/redis');
+const nextTestPhone = require('../helpers/testPhone');
 
 const JWT_SECRET = 'delivery-cities-integration-secret';
 const ENV_KEYS = [
@@ -58,7 +59,7 @@ async function createUser(role) {
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'delivery-cities-test-hash', $3, $4)
      RETURNING id`,
-    [`Delivery cities ${role} ${suffix}`, `+155${Date.now().toString().slice(-9)}${suffix.replace(/\D/g, '').slice(0, 3)}`, fixture.cityId, role]
+    [`Delivery cities ${role} ${suffix}`, nextTestPhone(), fixture.cityId, role]
   );
   return rows[0].id;
 }
