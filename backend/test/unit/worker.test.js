@@ -38,6 +38,7 @@ const mockEscrowPayments = {
 const mockSellerHeldFunds = { processReminders: jest.fn() };
 const mockDisputes = { processDisputeSlaReminders: jest.fn().mockResolvedValue(0) };
 const mockSellerPayouts = { getBusinessDate: jest.fn() };
+const mockSettlementConsistency = { runSettlementConsistencyCheck: jest.fn() };
 const { encryptEmailPayload } = require('../../src/lib/emailQueuePayload');
 
 jest.mock('../../src/lib/queue', () => mockQueue);
@@ -51,6 +52,7 @@ jest.mock('../../src/modules/escrowPayments.service', () => mockEscrowPayments);
 jest.mock('../../src/modules/sellerHeldFunds.service', () => mockSellerHeldFunds);
 jest.mock('../../src/modules/disputes.service', () => mockDisputes);
 jest.mock('../../src/modules/sellerPayouts.service', () => mockSellerPayouts);
+jest.mock('../../src/modules/settlementConsistency.service', () => mockSettlementConsistency);
 
 const { startWorker } = require('../../worker');
 
@@ -185,6 +187,12 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
       );
       expect(boss.schedule).toHaveBeenCalledWith(
         'money-maintenance',
+        '*/10 * * * *',
+        { task: 'settlement-consistency' },
+        { key: 'settlement-consistency', singletonKey: 'money-maintenance:settlement-consistency' }
+      );
+      expect(boss.schedule).toHaveBeenCalledWith(
+        'money-maintenance',
         '0 * * * *',
         { task: 'held-funds-reminders' },
         { key: 'held-funds-reminders', singletonKey: 'money-maintenance:held-funds-reminders' }
@@ -202,6 +210,8 @@ describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
       expect(mockEscrowPayments.sweepUnhandedOverOrders).toHaveBeenCalledTimes(1);
       await maintenanceHandler([{ data: { task: 'reconciliation' } }]);
       expect(mockEscrowPayments.reconcileMoneyState).toHaveBeenCalledTimes(1);
+      await maintenanceHandler([{ data: { task: 'settlement-consistency' } }]);
+      expect(mockSettlementConsistency.runSettlementConsistencyCheck).toHaveBeenCalledTimes(1);
       await maintenanceHandler([{ data: { task: 'held-funds-reminders' } }]);
       expect(mockSellerHeldFunds.processReminders).toHaveBeenCalledTimes(1);
       await maintenanceHandler([{ data: { task: 'dispute-sla-reminders' } }]);

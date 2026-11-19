@@ -5,6 +5,7 @@ const payout = require('../modules/payout.service');
 const settlement = require('../modules/settlement.service');
 const sellerPayouts = require('../modules/sellerPayouts.service');
 const sellerHeldFunds = require('../modules/sellerHeldFunds.service');
+const settlementConsistency = require('../modules/settlementConsistency.service');
 const reservations = require('../modules/reservations.service');
 const queue = require('../lib/queue');
 const { requireAuth, requirePermission } = require('../middleware/auth');
@@ -24,6 +25,7 @@ router.use('/orders', noStoreOrderResponses);
 router.use('/refunds', noStoreOrderResponses);
 router.use('/returns', noStoreOrderResponses);
 router.use('/seller-payouts', noStoreOrderResponses);
+router.use('/consistency-findings', noStoreOrderResponses);
 router.use(requireAuth);
 // Permission checks live HERE, per route (rules.md Section 5) — admin.service.js
 // does not check roles. Every route below must carry its own requirePermission();
@@ -304,6 +306,15 @@ router.get(
       payoutTwoAdminThreshold: values.payoutTwoAdminThreshold,
       currency: 'PKR',
     });
+  }
+);
+
+router.get(
+  '/consistency-findings',
+  requirePermission('operations.view'),
+  limiters.adminOps,
+  async (req, res) => {
+    res.json(await settlementConsistency.listSettlementConsistencyFindings(req.query)); // FR-70
   }
 );
 

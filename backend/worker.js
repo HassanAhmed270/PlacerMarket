@@ -20,6 +20,7 @@ const reviews = require('./src/modules/reviews.service');
 const sellerPayouts = require('./src/modules/sellerPayouts.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 const { assertPaymentsAdminGate } = require('./src/lib/paymentsAdminGate');
+const settlementConsistency = require('./src/modules/settlementConsistency.service');
 
 async function registerMoneyMaintenanceSchedules(boss) {
   await boss.schedule(
@@ -39,6 +40,12 @@ async function registerMoneyMaintenanceSchedules(boss) {
     '*/10 * * * *',
     { task: 'reconciliation' },
     { key: 'reconciliation', singletonKey: 'money-maintenance:reconciliation' }
+  );
+  await boss.schedule(
+    QUEUES.MONEY_MAINTENANCE,
+    '*/10 * * * *',
+    { task: 'settlement-consistency' },
+    { key: 'settlement-consistency', singletonKey: 'money-maintenance:settlement-consistency' }
   );
   await boss.schedule(
     QUEUES.MONEY_MAINTENANCE,
@@ -69,6 +76,9 @@ async function processMoneyMaintenanceJob(job) {
   }
   if (job.data?.task === 'reconciliation') {
     return escrowPayments.reconcileMoneyState();
+  }
+  if (job.data?.task === 'settlement-consistency') {
+    return settlementConsistency.runSettlementConsistencyCheck();
   }
   if (job.data?.task === 'held-funds-reminders') {
     return sellerHeldFunds.processReminders();

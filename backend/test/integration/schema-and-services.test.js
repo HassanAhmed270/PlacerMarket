@@ -11,8 +11,8 @@ describe('real PostgreSQL baseline', () => {
       const { rows } = await pool.query(
         "SELECT count(*)::int AS count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
       );
-      // Migration 040 adds review_reports and review_moderation_events.
-      expect(rows[0].count).toBe(58);
+      // Migrations 040 and 042 add review audit and consistency findings tables.
+      expect(rows[0].count).toBe(59);
     } finally {
       await pool.end();
     }
