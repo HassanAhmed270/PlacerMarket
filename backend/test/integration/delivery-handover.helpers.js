@@ -3,6 +3,7 @@ const { Pool } = require('pg');
 const request = require('supertest');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { getSharedRedisClient, setSharedRedisClient } = require('../../src/lib/redis');
+const nextTestPhone = require('../helpers/testPhone');
 
 const JWT_SECRET = 'delivery-handover-integration-secret';
 const ENV_KEYS = [
@@ -55,7 +56,7 @@ async function createUser(harness, role) {
      VALUES ($1, $2, 'fixture-hash', $3, $4) RETURNING id`,
     [
       `Handover ${role} ${suffix}`,
-      `+1557${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
+      nextTestPhone(),
       harness.fixture.cityId,
       role,
     ]

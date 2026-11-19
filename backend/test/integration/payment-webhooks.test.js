@@ -19,6 +19,7 @@ const reservationsRoutes = require('../../src/routes/reservations.routes');
 const { signAccessToken } = require('../../src/lib/jwt');
 const errorHandler = require('../../src/middleware/errorHandler');
 const { createFixture, cleanupListingProjections } = require('./fixtures');
+const nextTestPhone = require('../helpers/testPhone');
 
 const JWT_SECRET = 'payment-webhook-integration-access-secret';
 const ADDRESS = {
@@ -116,7 +117,7 @@ async function createReconciliationScenario() {
   const { rows: buyerRows } = await db.query(
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'fixture-hash', $3, 'buyer') RETURNING id`,
-    [`Reconciliation buyer ${suffix}`, `+1556${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, scenarioFixture.cityId]
+    [`Reconciliation buyer ${suffix}`, nextTestPhone(), scenarioFixture.cityId]
   );
   record.buyerId = buyerRows[0].id;
   await db.query(
@@ -158,7 +159,7 @@ beforeEach(async () => {
   const { rows: buyerRows } = await db.query(
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'fixture-hash', $3, 'buyer') RETURNING id`,
-    [`Webhook buyer ${buyerSuffix}`, `+1557${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, fixture.cityId]
+    [`Webhook buyer ${buyerSuffix}`, nextTestPhone(), fixture.cityId]
   );
   buyerId = buyerRows[0].id;
   await db.query(
@@ -1498,7 +1499,7 @@ describe('FR-61, FR-62 payment webhook worker', () => {
        VALUES ($1, $2, 'fixture-hash', $3, 'buyer') RETURNING id`,
       [
         `Webhook E2E buyer ${e2eBuyerSuffix}`,
-        `+1559${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`,
+        nextTestPhone(),
         e2eFixture.cityId,
       ]
     );

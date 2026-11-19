@@ -19,6 +19,7 @@ const legacyOrdersRouter = require('../../src/routes/orders.routes');
 const { buildSignedFakeEvent } = require('../../src/lib/adapters/fakePaymentGateway');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { createFixture, cleanupListingProjections } = require('./fixtures');
+const nextTestPhone = require('../helpers/testPhone');
 
 const PARALLEL_RACE_REPETITIONS = 20;
 const JWT_SECRET = 'system-refund-integration-access-secret';
@@ -77,7 +78,7 @@ async function createBuyer(cityId) {
   const { rows } = await db.query(
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'fixture-hash', $3, 'buyer') RETURNING id`,
-    [`System refund buyer ${suffix}`, `+1559${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, cityId]
+    [`System refund buyer ${suffix}`, nextTestPhone(), cityId]
   );
   extraUserIds.push(rows[0].id);
   return rows[0].id;

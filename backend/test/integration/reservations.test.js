@@ -11,6 +11,7 @@ const payout = require('../../src/modules/payout.service');
 const queue = require('../../src/lib/queue');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { createFixture, cleanupListingProjections } = require('./fixtures');
+const nextTestPhone = require('../helpers/testPhone');
 
 const JWT_SECRET = 'integration-reservation-access-secret-with-32-bytes';
 const ADDRESS = {
@@ -55,7 +56,7 @@ async function createBuyer() {
   const { rows } = await db.query(
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'fixture-hash', $3, 'buyer') RETURNING id`,
-    [`Reservation buyer ${suffix}`, `+1557${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, fixture.cityId]
+    [`Reservation buyer ${suffix}`, nextTestPhone(), fixture.cityId]
   );
   additionalUserIds.push(rows[0].id);
   return rows[0].id;

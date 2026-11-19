@@ -13,6 +13,7 @@ const {
   restoreHandoverTestEnvironment,
 } = require('./delivery-handover.helpers');
 const { signAccessToken } = require('../../src/lib/jwt');
+const nextTestPhone = require('../helpers/testPhone');
 
 let harness;
 let scenario;
@@ -317,7 +318,7 @@ describe('seller order earnings and payout reads', () => {
        VALUES ($1, $2, 'fixture-hash', $3, 'seller') RETURNING id`,
       [
         `Other seller ${crypto.randomUUID()}`,
-        `+1557${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
+        nextTestPhone(),
         harness.fixture.cityId,
       ]
     );

@@ -12,6 +12,7 @@ const { signAccessToken } = require('../../src/lib/jwt');
 const { createEscrowPaymentsRouter } = require('../../src/routes/escrowPayments.routes');
 const { createFakeGatewayRouter } = require('../../src/routes/fakeGateway.routes');
 const { createFixture, cleanupListingProjections } = require('./fixtures');
+const nextTestPhone = require('../helpers/testPhone');
 
 const JWT_SECRET = 'integration-escrow-payments-access-secret';
 const ADDRESS = {
@@ -73,7 +74,7 @@ async function createBuyer() {
   const { rows } = await db.query(
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'fixture-hash', $3, 'buyer') RETURNING id`,
-    [`Escrow buyer ${suffix}`, `+1558${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, fixture.cityId]
+    [`Escrow buyer ${suffix}`, nextTestPhone(), fixture.cityId]
   );
   additionalUserIds.push(rows[0].id);
   return rows[0].id;

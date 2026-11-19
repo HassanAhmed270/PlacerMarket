@@ -1,5 +1,6 @@
 const db = require('../../src/db.service');
 const queue = require('../../src/lib/queue');
+const nextTestPhone = require('../helpers/testPhone');
 require('../../src/modules/notifications.service');
 
 async function cleanupListingProjections(listingId) {
@@ -54,7 +55,7 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
   const { rows: userRows } = await db.query(
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'fixture-hash', $3, 'seller') RETURNING id`,
-    [`Fixture seller ${suffix}`, `+1555${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, cityRows[0].id]
+    [`Fixture seller ${suffix}`, nextTestPhone(), cityRows[0].id]
   );
   const userId = userRows[0].id;
   await db.query(
@@ -65,7 +66,7 @@ async function createFixture({ askingPrice = 10, listingStatus = 'draft' } = {})
   const { rows: otherUserRows } = await db.query(
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'fixture-hash', $3, 'seller') RETURNING id`,
-    [`Other fixture seller ${suffix}`, `+1556${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, cityRows[0].id]
+    [`Other fixture seller ${suffix}`, nextTestPhone(), cityRows[0].id]
   );
   const otherUserId = otherUserRows[0].id;
   await db.query(

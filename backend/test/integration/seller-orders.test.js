@@ -11,6 +11,7 @@ const {
   request,
   restoreHandoverTestEnvironment,
 } = require('./delivery-handover.helpers');
+const nextTestPhone = require('../helpers/testPhone');
 
 let harness;
 let scenario;
@@ -68,7 +69,7 @@ async function createOtherSeller() {
      RETURNING id`,
     [
       `Other order seller ${suffix}`,
-      `+1557${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000).toString().padStart(3, '0')}`,
+      nextTestPhone(),
       harness.fixture.cityId,
     ]
   );

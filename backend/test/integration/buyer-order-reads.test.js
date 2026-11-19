@@ -8,6 +8,7 @@ const { getSharedRedisClient, setSharedRedisClient } = require('../../src/lib/re
 const reservations = require('../../src/modules/reservations.service');
 const { signAccessToken } = require('../../src/lib/jwt');
 const { createFixture, cleanupListingProjections } = require('./fixtures');
+const nextTestPhone = require('../helpers/testPhone');
 
 const JWT_SECRET = 'integration-buyer-order-reads-access-secret';
 const ADDRESS = {
@@ -47,7 +48,7 @@ async function createBuyer(label) {
   const { rows } = await db.query(
     `INSERT INTO users (full_name, phone, password_hash, city_id, role)
      VALUES ($1, $2, 'fixture-hash', $3, 'buyer') RETURNING id`,
-    [`${label} ${suffix}`, `+1557${Date.now().toString().slice(-9)}${Math.floor(Math.random() * 1000)}`, fixture.cityId]
+    [`${label} ${suffix}`, nextTestPhone(), fixture.cityId]
   );
   return rows[0].id;
 }
