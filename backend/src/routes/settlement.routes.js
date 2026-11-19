@@ -20,8 +20,11 @@ router.post('/orders/:id/initiate-payout', requireAuth, requirePermission('user.
   res.json(await settlement.initiateSellerPayout(req.params.id, req.user.id, users.assertPayoutAllowed)); // FR-48 / FR-66 / FR-83l
 });
 
-router.patch('/commission', requirePermission('fee.configure'), limiters.adminOps, async (req, res) => {
+const updateCommissionPercent = async (req, res) => {
   res.json(await settlement.adjustCommissionPercent(req.body.percent, req.user.id)); // FR-50, Admin-only
-});
+};
+
+router.put('/commission', requireAuth, requirePermission('fee.configure'), limiters.adminOps, updateCommissionPercent);
+router.patch('/commission', requireAuth, requirePermission('fee.configure'), limiters.adminOps, updateCommissionPercent);
 
 module.exports = router;

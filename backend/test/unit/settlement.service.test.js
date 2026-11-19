@@ -12,6 +12,52 @@ describe('settlement.service', () => {
     expect(result).toEqual({ percent: '5', commissionAmount: '250.00' });
   });
 
+  test.each([
+    { label: 'string zero', value: '0', valid: true, stored: '0' },
+    { label: 'string integer', value: '5', valid: true, stored: '5' },
+    { label: 'string decimal', value: '7.5', valid: true, stored: '7.5' },
+    { label: 'string maximum', value: '100', valid: true, stored: '100' },
+    { label: 'string maximum with trailing zeroes', value: '100.00', valid: true, stored: '100.00' },
+    { label: 'number decimal', value: 7.5, valid: true, stored: '7.5' },
+    { label: 'number zero', value: 0, valid: true, stored: '0' },
+    { label: 'number maximum', value: 100, valid: true, stored: '100' },
+    { label: 'three decimal places', value: '12.345', valid: false },
+    { label: 'exponent string', value: '1e1', valid: false },
+    { label: 'leading whitespace', value: ' 5', valid: false },
+    { label: 'hex string', value: '0x10', valid: false },
+    { label: 'trailing decimal point', value: '5.', valid: false },
+    { label: 'negative string', value: '-1', valid: false },
+    { label: 'above maximum', value: '100.01', valid: false },
+    { label: 'boolean', value: true, valid: false },
+    { label: 'null', value: null, valid: false },
+    { label: 'object', value: {}, valid: false },
+    { label: 'array', value: [], valid: false },
+    { label: 'undefined', value: undefined, valid: false },
+    { label: 'number outside decimal format', value: 1e-7, valid: false },
+    { label: 'number above maximum', value: 100.01, valid: false },
+  ])('FR-50: commission percent $label is validated without changing calculation math', async ({
+    value, valid, stored,
+  }) => {
+    if (!valid) {
+      await expect(settlement.adjustCommissionPercent(value, 'admin-1')).rejects.toBeInstanceOf(ValidationError);
+      expect(db.query).not.toHaveBeenCalled();
+      expect(() => settlement.calculateReservationSettlement('100.00', value)).toThrow(ValidationError);
+      return;
+    }
+
+    db.query.mockResolvedValueOnce({ rows: [{ value: stored }] });
+    await expect(settlement.adjustCommissionPercent(value, 'admin-1'))
+      .resolves.toEqual({ value: stored });
+    expect(db.query).toHaveBeenCalledTimes(1);
+    expect(settlement.calculateReservationSettlement('100.00', value).commissionPercent).toBe(stored);
+  });
+
+  test('FR-50: a malformed stored commission percent is rejected during a calculation', async () => {
+    db.query.mockResolvedValueOnce({ rows: [{ value: '1e1' }] });
+    await expect(settlement.calculateCommission('100.00')).rejects.toBeInstanceOf(ValidationError);
+    expect(db.query).toHaveBeenCalledTimes(1);
+  });
+
   test('FR-46, FR-50a: legacy commission and settlement reject JavaScript number amounts', async () => {
     db.query.mockResolvedValue({ rows: [{ value: '5' }] });
     await expect(settlement.calculateCommission(5000)).rejects.toThrow(ValidationError);

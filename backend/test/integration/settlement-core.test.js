@@ -186,6 +186,58 @@ describe('settlement core integration', () => {
     await expect(settlement.adjustCommissionPercent(5, harness.adminId)).resolves.toMatchObject({ value: '5' });
   });
 
+  describe('FR-50 Admin commission setting route', () => {
+    let originalCommissionPercent;
+
+    beforeEach(async () => {
+      originalCommissionPercent = await settlement.getSetting('commission_percent');
+    });
+
+    afterEach(async () => {
+      await settlement.adjustCommissionPercent(originalCommissionPercent, harness.adminId);
+    });
+
+    test('FR-50: rejected commission updates preserve the setting and valid PUT repairs malformed stored data', async () => {
+      const commissionRequest = (percent) => request(getApp())
+        .put('/api/settlement/commission')
+        .set('Authorization', authHeader(harness.adminId))
+        .send({ percent });
+
+      await commissionRequest('12.345').expect(400);
+      expect(await settlement.getSetting('commission_percent')).toBe(originalCommissionPercent);
+
+      const scenario = await createScenario(harness);
+      const { rows: reservationRows } = await db.query(
+        'SELECT item_price_snapshot FROM reservations WHERE id = $1',
+        [scenario.reservationId]
+      );
+      const itemPrice = reservationRows[0].item_price_snapshot;
+      const expectedBeforeRepair = settlement.calculateReservationSettlement(
+        itemPrice,
+        originalCommissionPercent
+      );
+      const beforeRepair = await settlement.calculateSettlement(scenario.orderId, {
+        agreedItemPrice: itemPrice,
+      });
+      expect(beforeRepair.commission_amount).toBe(expectedBeforeRepair.commissionAmount);
+      expect(beforeRepair.seller_net_payout).toBe(expectedBeforeRepair.sellerNetAmount);
+
+      await settlement.setSetting('commission_percent', '1e1', harness.adminId);
+      await expect(settlement.calculateSettlement(scenario.orderId, { agreedItemPrice: itemPrice }))
+        .rejects.toBeInstanceOf(ValidationError);
+
+      await commissionRequest(7.5)
+        .expect(200)
+        .expect(({ body }) => expect(body.value).toBe('7.5'));
+      const expectedAfterRepair = settlement.calculateReservationSettlement(itemPrice, '7.5');
+      const afterRepair = await settlement.calculateSettlement(scenario.orderId, {
+        agreedItemPrice: itemPrice,
+      });
+      expect(afterRepair.commission_amount).toBe(expectedAfterRepair.commissionAmount);
+      expect(afterRepair.seller_net_payout).toBe(expectedAfterRepair.sellerNetAmount);
+    });
+  });
+
   test('FR-46: a reservation inserted without a commission snapshot is rejected because the column has no default', async () => {
     const listingId = harness.fixture.listingId;
     const buyerId = harness.buyerId;

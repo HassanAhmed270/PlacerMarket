@@ -17,6 +17,8 @@
 const db = require('../db.service');
 const { NotFoundError, ValidationError } = require('../lib/errors');
 
+const COMMISSION_PERCENT_PATTERN = /^(0|[1-9]\d{0,2})(\.\d{1,2})?$/;
+
 // ---- FR-50: generic settings accessor (used across modules) ----
 
 /** FR-50: generic platform_settings read, used across modules. */
@@ -113,6 +115,19 @@ function minorUnitsToDecimal(value) {
   return `${value / 100n}.${String(value % 100n).padStart(2, '0')}`;
 }
 
+function parseCommissionPercent(value) {
+  const percentString = typeof value === 'number' ? String(value) : value;
+  if (typeof percentString !== 'string' || !COMMISSION_PERCENT_PATTERN.test(percentString)) {
+    throw new ValidationError('commission percent must be a decimal value from 0 to 100');
+  }
+  const [whole, fraction = ''] = percentString.split('.');
+  const percentMinor = BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'));
+  if (percentMinor > 10000n) {
+    throw new ValidationError('commission percent must be a decimal value from 0 to 100');
+  }
+  return { percentString, percentMinor };
+}
+
 /** FR-46, FR-47, FR-50a: calculate reservation settlement amounts exactly from decimal strings and snapshots. */
 function calculateReservationSettlement(itemPrice, commissionPercent, refundedItemAmount = '0.00') {
   if (typeof itemPrice === 'object' && itemPrice !== null) {
@@ -124,16 +139,7 @@ function calculateReservationSettlement(itemPrice, commissionPercent, refundedIt
 
   const itemPriceMinor = decimalToMinorUnits(itemPrice, 'itemPrice');
 
-  const percentStr = commissionPercent;
-  if (typeof percentStr !== 'string' ||
-      !/^(?:0|[1-9]\d{0,2})(?:\.\d{1,2})?$/.test(percentStr)) {
-    throw new ValidationError('commissionPercent must be a decimal string from 0 to 100.');
-  }
-  const percentParts = percentStr.split('.');
-  const percentMinor = BigInt(percentParts[0]) * 100n + BigInt((percentParts[1] || '').padEnd(2, '0'));
-  if (percentMinor > 10000n) {
-    throw new ValidationError('commissionPercent must be a decimal string from 0 to 100.');
-  }
+  const { percentString: percentStr, percentMinor } = parseCommissionPercent(commissionPercent);
 
   const refundedMinor = decimalToMinorUnits(refundedItemAmount, 'refundedItemAmount');
   if (refundedMinor > itemPriceMinor) {
@@ -267,14 +273,8 @@ async function getSettlementRecord(orderId) {
 
 /** FR-50: Admin-only (enforced at route level via lib/roles.js ADMIN_ONLY_ACTIONS 'fee.configure'). */
 async function adjustCommissionPercent(newPercent, adminId) {
-  if (typeof newPercent === 'boolean' || newPercent === null || newPercent === undefined) {
-    throw new ValidationError('commission percent must be between 0 and 100');
-  }
-  const numeric = Number(newPercent);
-  if (Number.isNaN(numeric) || numeric < 0 || numeric > 100) {
-    throw new ValidationError('commission percent must be between 0 and 100');
-  }
-  return setSetting('commission_percent', String(newPercent), adminId);
+  const { percentString } = parseCommissionPercent(newPercent);
+  return setSetting('commission_percent', percentString, adminId);
 }
 
 module.exports = {
