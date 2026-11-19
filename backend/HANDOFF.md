@@ -5,17 +5,28 @@ instructions: `DEVELOPMENT_HANDOFF.md`. Full state and architecture:
 `MASTER_PROJECT_CONTEXT.md`. Poshaak is the single name of the project (it was
 first called "Marketplace").
 
-Current phase: 4 closed by owner amendment on 2026-11-08 (Option A, as for Phase 3; evidence and carried-forward list in `PHASE4_GATE_REPORT.md`). Phase 5 rows FR-45b-h, FR-65 and dispute ownership were pulled forward and accepted by the owner on 2026-11-07. Launch blockers, not gate blockers: payment gateway, legal clearance, courier, a real second Admin; the owner's browser click-through is still pending (Scenarios A and B passed on 2026-11-10; Scenario C through the new Buyer "Report a problem" screen, Scenario D and the notifications remain). Post-closure changes on main `4c011b0`: the Buyer problem-report screen (FR-43, FR-43a, FR-43b rows still unticked) and the one-origin session fix (FR-84); see `open-questions.md` Resolved 2026-11-10.
+Current phase: Phase 5 backend complete (stages 5.1 to 5.8b merged to main at 0460ecc51c26da877f294177174ab7453b018da9, verified 2026-11-19). Frontend for Phase 5 flows and the owner's browser click-through are not done. Launch blockers, not gate blockers: payment gateway, legal clearance, courier, a real second Admin; the owner's browser click-through is still pending (Scenarios A and B passed on 2026-11-10; Scenario C through the new Buyer "Report a problem" screen, Scenario D and the notifications remain). Post-closure changes on main `4c011b0`: the Buyer problem-report screen (FR-43, FR-43a, FR-43b rows still unticked) and the one-origin session fix (FR-84); see `open-questions.md` Resolved 2026-11-10.
 Stage P5-S1 (2026-11-13): Settlement core implemented with 5% launch commission snapshotted at Buy, partial-refund settlement maths (FR-46, FR-46a, FR-47, FR-50, FR-50a), idempotent settlement recording with ledger entries, and migration 028.
 Stage P5-S2a (2026-11-15): Payout lifecycle implemented with migration 029 (seller_payouts), release initiating attempt 1 without cash ledger, paid/failed/retry state transitions, Admin-only payout.record permission, money audit, and in-app/email notifications (FR-48, FR-49, FR-51, FR-65).
 Stage P5-S2b (2026-11-15): Two-Admin approval is required strictly above the configured PKR threshold; retries need fresh approval and invalid thresholds fail closed. Unverified sellers' proceeds are held, reminded at 7/30/90 days, and listed for Admin decision at 180 days (migration 031); forfeiture is undecided and defaults to none. P7, P10, and P3 remain open.
 Stage P5-S2b-3 (2026-11-15): Admin-only payout CSV export supports status/date filters, is capped at 5,000 rows, requires step-up, excludes seller contact and bank/wallet details, audits each export, and escapes formula-like values.
 Stage P5-S2c (2026-11-16): Seller order read-only earnings, payout summary and held-funds flags are exposed to the seller order API, plus the admin payout-settings read endpoint. D1 note: the commission change has no step-up grant; hardening candidate.
+Stage P5-S3: Seller earnings reads, Admin payout and held-funds screens, payout settings, seller earnings screens.
+Stage P5-S4: Partial refunds with item/delivery split, dispute outcomes (`buyer_favor`, `seller_favor`, `split`), durable dispute hold.
+Stage P5-S5a: Business dates use Asia/Karachi; refused delivery (record only); lost parcel (full refund, no clawback).
+Stage P5-S5b: Return requests; chargebacks (platform absorbs, no clawback); refund-cap guard.
+Stage P5-S6: Dispute evidence/withdrawal, Admin dispute queue, SLA reminders (3 business days, weekdays), cursor pagination fix.
+Stage P5-S7: Two-way reviews (migrations 040, 041), blind reveal, reports, moderation queue; Moderator or Admin may hide, only Admin restores; average rating is null until 3 visible ratings.
+Stage P5-S8: Settlement consistency job (migration 042, `consistency_findings`, append-only, detect and report only, every 10 minutes); log redaction.
+Stage P5-S8b: Commission validation fix; test flake fixes; SEC-31 exception re-accepted until 2026-12-10.
+Stage P5-S9b (branch `review/phase5-close-out`, not yet on main): Collision-free test phone numbers after a rare `users_phone_key` flake seen on 2026-11-19.
 
 ## 0. Inspect before you propose anything
 
 1. Extract the ZIP. In `backend/` run `npm install`, then `npm test` — expect
-   **192 tests in 12 suites, all passing** — and `npm audit --omit=dev` — expect 0.
+   backend unit 68 suites / 1016 tests and integration 47 suites / 568 tests on
+   main 0460ecc; `npm audit --omit=dev` shows only the 3 known moderate
+   node-pg-migrate findings (owner exception SEC-31).
 2. Read, in order: this file, `DEVELOPMENT_HANDOFF.md`, `MASTER_PROJECT_CONTEXT.md`,
    `agent.md`, `rules.md`, `Phases.md`, `security.md`, `specs.md`, `open-questions.md`.
 3. Compare what you find with section 1 below and tell the human about any

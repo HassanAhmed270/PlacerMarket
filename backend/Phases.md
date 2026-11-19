@@ -1,7 +1,7 @@
 # Phases.md — build order (backend and frontend in parallel)
 
 Created 2026-10-13, **consolidated 2026-10-14** with the Poshaak scale, auth and
-listing-media decisions. **Current phase: 4 (Phase 3 gate remains open by owner decision; Phase 5 rows FR-45b-h, FR-65 and dispute ownership pulled forward and accepted by the owner on 2026-11-07)**.
+listing-media decisions. **Current phase: Phase 5 backend complete (stages 5.1 to 5.8b on main 0460ecc51c26da877f294177174ab7453b018da9, verified 2026-11-19); Phase 6 not started.**
 
 ## How phases work
 
