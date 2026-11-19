@@ -343,9 +343,14 @@ describe('FR-27b two-way reviews', () => {
       'SELECT full_name, phone FROM users WHERE id = $1',
       [visible[2].scenario.buyerId]
     );
-    expect(pages[0].reviewer.displayName).toBe(buyerRows[0].full_name);
+    const fullNameParts = buyerRows[0].full_name.trim().split(/\s+/);
+    const expectedDisplayName = fullNameParts.length < 2
+      ? fullNameParts[0]
+      : `${fullNameParts[0]} ${Array.from(fullNameParts[fullNameParts.length - 1])[0]}.`;
+    expect(pages[0].reviewer.displayName).toBe(expectedDisplayName);
     const publicJson = JSON.stringify(pages);
     expect(publicJson).not.toContain(buyerRows[0].phone);
+    expect(publicJson).not.toContain(fullNameParts[fullNameParts.length - 1]);
     expect(publicJson).not.toContain('Seller private review');
     expect(publicJson).not.toContain(harness.adminId);
     expect(pages[0]).not.toHaveProperty('reviewerId');
@@ -377,6 +382,7 @@ describe('FR-27b two-way reviews', () => {
       visible[1].review.id,
       visible[0].review.id,
     ]);
+    expect(queuePages[0].reviewer.displayName).toBe(buyerRows[0].full_name);
 
     await request(getApp())
       .post(`/api/reviews/${visible[1].review.id}/hide`)
@@ -389,6 +395,52 @@ describe('FR-27b two-way reviews', () => {
       visible[0].review.id,
     ]);
     expect(publicAfterHide.body.reviews.map((review) => review.id)).not.toContain(waiting.body.id);
+  });
+
+  test('FR-27b: unrevealed buyer ratings are excluded until the seller review reveals the pair', async () => {
+    const scenario = await createReviewScenario();
+    const emptySellerAggregate = await reviews.getSellerRatingAggregate(scenario.sellerId);
+    const emptyListingAggregate = await reviews.getListingItemRatingAggregate(scenario.listingId);
+    expect(emptySellerAggregate).toEqual({
+      average: null,
+      count: 0,
+      distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    });
+    expect(emptyListingAggregate).toEqual({
+      average: null,
+      count: 0,
+      distribution: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+    });
+
+    const buyerReview = await submit(scenario, scenario.buyerId, {
+      rating: 1,
+      itemRating: 1,
+    }).expect(201);
+    expect(buyerReview.body.state).toBe('hidden_until_reveal');
+    await expect(reviews.getSellerRatingAggregate(scenario.sellerId))
+      .resolves.toEqual(emptySellerAggregate);
+    await expect(reviews.getListingItemRatingAggregate(scenario.listingId))
+      .resolves.toEqual(emptyListingAggregate);
+
+    await submit(scenario, scenario.sellerId, { rating: 4 }).expect(201);
+    const { rows } = await db.query(
+      'SELECT state FROM reviews WHERE order_id = $1 ORDER BY direction',
+      [scenario.orderId]
+    );
+    expect(rows).toEqual([
+      { state: 'visible' },
+      { state: 'visible' },
+    ]);
+    await expect(reviews.getSellerRatingAggregate(scenario.sellerId)).resolves.toEqual({
+      average: null,
+      count: 1,
+      distribution: { 1: 1, 2: 0, 3: 0, 4: 0, 5: 0 },
+    });
+    await expect(reviews.getListingItemRatingAggregate(scenario.listingId)).resolves.toEqual({
+      average: null,
+      count: 1,
+      distribution: { 1: 1, 2: 0, 3: 0, 4: 0, 5: 0 },
+    });
   });
 
   test('FR-27b P35: seller and listing averages require three visible ratings and hide drops them below threshold', async () => {

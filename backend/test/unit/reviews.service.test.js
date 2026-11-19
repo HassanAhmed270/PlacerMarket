@@ -95,6 +95,17 @@ beforeEach(() => {
 });
 
 describe('FR-27b reviews service', () => {
+  test.each([
+    ['two-word name', 'Ada Lovelace', null, 'Ada L.'],
+    ['three-word name', 'Ada Byron Lovelace', null, 'Ada L.'],
+    ['single-word name', 'Madonna', null, 'Madonna'],
+    ['extra spaces', '  Ada   Byron    Lovelace  ', null, 'Ada L.'],
+    ['present alias', 'Ada Byron Lovelace', 'The Analytical Engine', 'The Analytical Engine'],
+    ['blank alias', 'Ada Lovelace', '   ', 'Ada L.'],
+  ])('FR-27b: public reviewer display name handles a %s', (_case, fullName, alias, expected) => {
+    expect(reviews.publicReviewerDisplayName(fullName, alias)).toBe(expected);
+  });
+
   test('FR-27b: submission stores buyer item rating and initially hides the review', async () => {
     await expect(reviews.submitReview(orderId, buyerId, {
       rating: 5,

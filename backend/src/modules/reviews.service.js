@@ -229,8 +229,15 @@ function distributionFrom(row, prefix) {
   };
 }
 
-function reviewDisplayName(row, prefix) {
-  return row[`${prefix}_alias`]?.trim() || row[`${prefix}_name`];
+/** FR-27b: format public reviewer names without exposing the full surname. */
+function publicReviewerDisplayName(fullName, alias) {
+  const normalizedAlias = typeof alias === 'string' ? alias.trim() : '';
+  if (normalizedAlias) return normalizedAlias;
+
+  const nameParts = String(fullName ?? '').trim().split(/\s+/).filter(Boolean);
+  if (nameParts.length < 2) return nameParts[0] || '';
+  const surnameInitial = Array.from(nameParts[nameParts.length - 1])[0];
+  return `${nameParts[0]} ${surnameInitial}.`;
 }
 
 /** FR-27b, P35: only visible buyer-to-seller ratings contribute to the seller profile. */
@@ -368,7 +375,7 @@ async function listPublicSellerReviews(sellerId, { cursor, limit = 20 } = {}) {
     itemRating: row.item_rating,
     body: row.body,
     createdAt: row.created_at,
-    reviewer: { displayName: reviewDisplayName(row, 'reviewer') },
+    reviewer: { displayName: publicReviewerDisplayName(row.reviewer_name, row.reviewer_alias) },
   }));
   return {
     reviews: page,
@@ -429,8 +436,8 @@ async function getReviewModerationQueue({ cursor, limit = 50, role = 'admin' } =
        LEFT JOIN LATERAL (
          SELECT r.id, r.order_id, r.direction, r.rating, r.item_rating, r.body,
                 r.state, r.revealed_at, r.created_at,
-                reviewer.full_name AS reviewer_name, reviewer_profile.display_alias AS reviewer_alias,
-                reviewee.full_name AS reviewee_name, reviewee_profile.display_alias AS reviewee_alias,
+                reviewer.full_name AS reviewer_name,
+                reviewee.full_name AS reviewee_name,
                 (SELECT count(*)::int FROM review_reports rr WHERE rr.review_id = r.id) AS report_count,
                 COALESCE((
                   SELECT json_agg(json_build_object(
@@ -444,9 +451,7 @@ async function getReviewModerationQueue({ cursor, limit = 50, role = 'admin' } =
                 ), '[]'::json) AS reports
            FROM reviews r
            JOIN users reviewer ON reviewer.id = r.reviewer_id
-           LEFT JOIN seller_profiles reviewer_profile ON reviewer_profile.user_id = reviewer.id
            JOIN users reviewee ON reviewee.id = r.reviewee_id
-           LEFT JOIN seller_profiles reviewee_profile ON reviewee_profile.user_id = reviewee.id
           WHERE (r.state = 'hidden_by_admin'
                  OR EXISTS (SELECT 1 FROM review_reports rr WHERE rr.review_id = r.id))
             AND ($1::uuid IS NULL OR (r.created_at, r.id) < (
@@ -474,8 +479,8 @@ async function getReviewModerationQueue({ cursor, limit = 50, role = 'admin' } =
       state: row.state,
       revealedAt: row.revealed_at,
       createdAt: row.created_at,
-      reviewer: blindToModerator ? null : { displayName: reviewDisplayName(row, 'reviewer') },
-      reviewee: blindToModerator ? null : { displayName: reviewDisplayName(row, 'reviewee') },
+      reviewer: blindToModerator ? null : { displayName: row.reviewer_name },
+      reviewee: blindToModerator ? null : { displayName: row.reviewee_name },
       reportCount: row.report_count,
       reports: row.reports,
     };
@@ -566,6 +571,7 @@ module.exports = {
   submitReview,
   revealEligibleReviews,
   MIN_VISIBLE_RATINGS,
+  publicReviewerDisplayName,
   getSellerRatingAggregate,
   getListingItemRatingAggregate,
   getOrderReviewRead,
