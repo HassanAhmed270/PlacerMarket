@@ -73,6 +73,10 @@ async function waitForCode(email, afterTime) {
   throw new Error('Timed out waiting for the dev email outbox; confirm the worker is running with DEV_FAKES=1.');
 }
 
+function logDemoCompletion(sellerId, logger = console) {
+  logger.log(`Demo seller id: ${sellerId}. Demo Admin credentials remain in backend/.demo.env; secrets and codes were omitted.`);
+}
+
 function totpCode(secret) {
   return require('../src/lib/totp').generateTotpCode(secret);
 }
@@ -448,14 +452,18 @@ async function main() {
   if (!pageCache.headers.get('cache-control')?.includes('stale-while-revalidate=60')) throw new Error('Public-page cache policy did not hold.');
   console.log('24. The route cache policy held for the API and browser-facing public routes.');
 
-  console.log(`Demo seller: ${sellerEmail}. Demo Admin credentials remain in backend/.demo.env; secrets and codes were omitted.`);
+  logDemoCompletion(application.user_id);
 }
 
-main().catch((error) => {
-  console.error(`Demo smoke failed: ${error.message}`);
-  process.exitCode = 1;
-}).finally(async () => {
-  try {
-    await queue.stopProducer();
-  } catch {}
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`Demo smoke failed: ${error.message}`);
+    process.exitCode = 1;
+  }).finally(async () => {
+    try {
+      await queue.stopProducer();
+    } catch {}
+  });
+}
+
+module.exports = { logDemoCompletion };

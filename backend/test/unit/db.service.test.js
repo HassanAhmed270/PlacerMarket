@@ -1,6 +1,7 @@
 const mockQuery = jest.fn();
 const mockClientQuery = jest.fn();
 const mockRelease = jest.fn();
+const mockPoolErrorHandlers = [];
 const mockConnect = jest.fn(async () => ({
   query: (...a) => mockClientQuery(...a),
   release: (...a) => mockRelease(...a),
@@ -9,7 +10,9 @@ jest.mock('pg', () => ({
   Pool: jest.fn(() => ({
     query: (...a) => mockQuery(...a),
     connect: (...a) => mockConnect(...a),
-    on: jest.fn(),
+    on: (event, handler) => {
+      if (event === 'error') mockPoolErrorHandlers.push(handler);
+    },
   })),
 }));
 const db = require('../../src/db.service');
@@ -40,6 +43,33 @@ describe('db.service helpers', () => {
       name: 'ServiceUnavailableError', statusCode: 503,
       message: 'Database connection is temporarily unavailable',
     });
+  });
+
+  test.each([
+    [0, 'Unexpected error on idle Postgres client'],
+    [1, 'Unexpected error on idle search Postgres client'],
+  ])('SEC-27: pool %s errors log only a safe code', (poolIndex, message) => {
+    const output = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const error = Object.assign(
+      new Error('secret-token-step-up-grant buyer@example.test +15551234567 4111111111111111'),
+      { code: 'XX000', detail: 'phone and email details' }
+    );
+    try {
+      mockPoolErrorHandlers[poolIndex](error);
+      expect(output).toHaveBeenCalledWith(message, { code: 'XX000' });
+      const logged = JSON.stringify(output.mock.calls);
+      for (const sensitiveValue of [
+        'secret-token-step-up-grant',
+        'buyer@example.test',
+        '+15551234567',
+        '4111111111111111',
+        'phone and email details',
+      ]) {
+        expect(logged).not.toContain(sensitiveValue);
+      }
+    } finally {
+      output.mockRestore();
+    }
   });
 
   test('query passes the full result through', async () => {
