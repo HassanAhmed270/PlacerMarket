@@ -28,6 +28,32 @@ describe('FR-86 delivery city integration phone fixtures', () => {
     expect(new Set(phones).size).toBe(phones.length);
   });
 
+  test('300 isolated module instances stay unique with a 7-digit process ID', () => {
+    const processIdDescriptor = Object.getOwnPropertyDescriptor(process, 'pid');
+    const moduleSequenceKey = Symbol.for('placermarket.testPhone.moduleSequence');
+    const moduleSequenceDescriptor = Object.getOwnPropertyDescriptor(process, moduleSequenceKey);
+    Object.defineProperty(process, 'pid', { configurable: true, value: 1234567 });
+
+    try {
+      const phones = [];
+      for (let index = 0; index < 300; index += 1) {
+        delete process[moduleSequenceKey];
+        jest.isolateModules(() => {
+          phones.push(require('../helpers/testPhone')());
+        });
+      }
+
+      expect(new Set(phones).size).toBe(300);
+    } finally {
+      Object.defineProperty(process, 'pid', processIdDescriptor);
+      if (moduleSequenceDescriptor) {
+        Object.defineProperty(process, moduleSequenceKey, moduleSequenceDescriptor);
+      } else {
+        delete process[moduleSequenceKey];
+      }
+    }
+  });
+
   test('generates phone values in the international format and database length', () => {
     const phones = Array.from({ length: 1000 }, nextTestPhone);
     for (const phone of phones) {
