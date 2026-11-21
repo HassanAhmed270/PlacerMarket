@@ -288,6 +288,7 @@ test('FR-48, FR-58, FR-65: payout Admin APIs use protected paths and keep step-u
       }
     },
   })
+
   client.setAccessToken('short-lived-memory-token')
   await client.getAdminPayoutSettings()
   await client.getAdminSellerPayouts({ status: 'failed', limit: 20 })
@@ -314,7 +315,7 @@ test('FR-48, FR-58, FR-65: payout Admin APIs use protected paths and keep step-u
     note: 'Identity review is pending.',
     stepUpGrant: 'held-grant',
   })
-  await client.updateAdminCommission('6.50')
+  await client.updateAdminCommission('6.50', 'commission-grant')
   client.clearAccessToken()
 
   assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
@@ -349,10 +350,36 @@ test('FR-48, FR-58, FR-65: payout Admin APIs use protected paths and keep step-u
     note: 'Identity review is pending.',
     stepUpGrant: 'held-grant',
   })
-  assert.deepEqual(JSON.parse(calls[10].options.body), { percent: '6.50' })
+  assert.deepEqual(JSON.parse(calls[10].options.body), { percent: '6.50', stepUpGrant: 'commission-grant' })
   assert.ok(calls.every(({ options }) => options.headers.Authorization === 'Bearer short-lived-memory-token'))
   assert.ok(calls.every(({ url }) => !url.includes('grant')))
   assert.equal(calls[7].options.headers.Accept.includes('text/csv'), true)
+})
+
+test('FR-58: commission update includes its step-up grant and sends no request without one', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return new Response(JSON.stringify({ value: '6.50' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    },
+  })
+  client.setAccessToken('commission-test-token')
+  await client.updateAdminCommission('6.50', 'commission-step-up-grant')
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    percent: '6.50',
+    stepUpGrant: 'commission-step-up-grant',
+  })
+  assert.throws(
+    () => client.updateAdminCommission('6.50'),
+    /step-up grant is required/
+  )
+  assert.equal(calls.length, 1)
+  client.clearAccessToken()
 })
 
 test('FR-48: payout CSV errors preserve structured API messages', async () => {

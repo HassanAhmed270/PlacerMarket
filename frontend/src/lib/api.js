@@ -234,7 +234,12 @@ export function createApiClient({
     setPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold`, { reason }, { authenticated: true }),
     clearPayoutHold: (id, reason) => post(`admin/payouts/${encodeURIComponent(id)}/hold/clear`, { reason }, { authenticated: true }),
     getAdminPayoutSettings: () => get('admin/payout-settings', { authenticated: true }),
-    updateAdminCommission: (percent) => send('PATCH', 'admin/fees/commission', { percent }, { authenticated: true }),
+    updateAdminCommission: (percent, stepUpGrant) => {
+      if (typeof stepUpGrant !== 'string' || !stepUpGrant.trim()) {
+        throw new Error('A step-up grant is required to update commission.')
+      }
+      return send('PATCH', 'admin/fees/commission', { percent, stepUpGrant }, { authenticated: true })
+    },
     getAdminSellerPayouts: (filters = {}) => get(`admin/seller-payouts${queryString(filters)}`, { authenticated: true }),
     getAdminSellerPayout: (id) => get(`admin/seller-payouts/${encodeURIComponent(id)}`, { authenticated: true }),
     approveAdminSellerPayout: (id, input) => post(`admin/seller-payouts/${encodeURIComponent(id)}/approve`, input, { authenticated: true }),

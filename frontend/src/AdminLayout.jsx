@@ -1,6 +1,7 @@
 import { useState } from 'react'
+import { visibleAdminLinks } from './lib/adminNavigation.js'
 
-export default function AdminLayout({ children, onLogout }) {
+export default function AdminLayout({ children, onLogout, role }) {
   const [logoutPending, setLogoutPending] = useState(false)
 
   async function logout() {
@@ -17,14 +18,9 @@ export default function AdminLayout({ children, onLogout }) {
       <header className="admin-header">
         <a className="admin-brand" href="/admin/orders">Poshaak Admin</a>
         <nav className="admin-nav" aria-label="Admin navigation">
-          <a href="/admin/orders">Orders</a>
-          <a href="/admin/exceptions">Exceptions</a>
-          <a href="/admin/disputes">Disputes</a>
-          <a href="/admin/refunds">Refunds</a>
-          <a href="/admin/seller-payouts">Seller payouts</a>
-          <a href="/admin/held-funds">Held funds</a>
-          <a href="/admin/payout-settings">Payout settings</a>
-          <a href="/admin/delivery-cities">Delivery cities</a>
+          {visibleAdminLinks(role).map((link) => (
+            <a key={link.href} href={link.href}>{link.label}</a>
+          ))}
           <button className="admin-text-button" type="button" onClick={logout} disabled={logoutPending}>
             {logoutPending ? 'Signing out…' : 'Logout'}
           </button>

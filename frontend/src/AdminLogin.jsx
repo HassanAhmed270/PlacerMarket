@@ -23,7 +23,7 @@ export default function AdminLogin({ initialMessage = '', onAuthenticated }) {
         }
         const result = await api.login(nextCredentials)
         if (result.accessToken) {
-          await completeLogin(result.accessToken)
+          await completeLogin(result)
         } else if (result.factor === 'totp') {
           setCredentials(nextCredentials)
           setFactorRequired(true)
@@ -35,7 +35,7 @@ export default function AdminLogin({ initialMessage = '', onAuthenticated }) {
       } else {
         const code = String(form.get('code') || '')
         const result = await api.staffLogin({ ...credentials, code })
-        await completeLogin(result.accessToken)
+        await completeLogin(result)
       }
     } catch (cause) {
       setError(adminLoginErrorMessage(cause))
@@ -44,9 +44,9 @@ export default function AdminLogin({ initialMessage = '', onAuthenticated }) {
     }
   }
 
-  async function completeLogin(token) {
+  async function completeLogin(session) {
     try {
-      const result = await onAuthenticated(token)
+      const result = await onAuthenticated(session.accessToken, session.role)
       setCredentials(null)
       if (!result.allowed) {
         setFactorRequired(false)

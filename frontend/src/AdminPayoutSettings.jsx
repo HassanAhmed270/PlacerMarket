@@ -8,6 +8,7 @@ export default function AdminPayoutSettings() {
   const [commissionPercent, setCommissionPercent] = useState('')
   const [loading, setLoading] = useState(true)
   const [pending, setPending] = useState(false)
+  const [stepUpCode, setStepUpCode] = useState('')
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [reload, setReload] = useState(0)
@@ -36,18 +37,24 @@ export default function AdminPayoutSettings() {
       return
     }
     if (!window.confirm('Applies to new orders only; existing orders keep their rate. Continue?')) return
+    if (!stepUpCode.trim()) {
+      setError('Enter your authenticator code to continue.')
+      return
+    }
 
     setPending(true)
     setError('')
     setNotice('')
     try {
-      await api.updateAdminCommission(commissionPercent.trim())
+      const stepUp = await api.createStepUpGrant('commission.update', stepUpCode.trim())
+      await api.updateAdminCommission(commissionPercent.trim(), stepUp.grant)
       setNotice('Commission updated. It applies to new orders only.')
       setLoading(true)
       setReload((current) => current + 1)
     } catch (cause) {
       setError(adminErrorMessage(cause))
     } finally {
+      setStepUpCode('')
       setPending(false)
     }
   }
@@ -72,6 +79,18 @@ export default function AdminPayoutSettings() {
                   value={commissionPercent}
                   onChange={(event) => setCommissionPercent(event.target.value)}
                   maxLength={8}
+                  required
+                />
+              </label>
+              <label>Authenticator code
+                <input
+                  name="commission-step-up-code"
+                  value={stepUpCode}
+                  onChange={(event) => setStepUpCode(event.target.value)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
                   required
                 />
               </label>

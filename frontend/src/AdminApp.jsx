@@ -52,6 +52,7 @@ export default function AdminApp({ path }) {
   const [sessionState, setSessionState] = useState('checking')
   const [sessionMessage, setSessionMessage] = useState('')
   const [currentAdminId, setCurrentAdminId] = useState(null)
+  const [currentRole, setCurrentRole] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -61,6 +62,7 @@ export default function AdminApp({ path }) {
         if (!active) return
         api.setAccessToken(session.accessToken)
         setCurrentAdminId(adminIdFromAccessToken(session.accessToken))
+        setCurrentRole(session.role || null)
         await api.getAdminOrders({ limit: 1 })
         if (active) setSessionState('ready')
       } catch (error) {
@@ -75,12 +77,14 @@ export default function AdminApp({ path }) {
           if (!active) return
           api.clearAccessToken()
           setCurrentAdminId(null)
+          setCurrentRole(null)
           setSessionState('signed-out')
           setSessionMessage(`This account cannot use the Admin area.${logoutMessage}`)
           return
         }
         api.clearAccessToken()
         setCurrentAdminId(null)
+        setCurrentRole(null)
         if (isAdminOrderAccessError(error)) {
           setSessionState('signed-out')
           setSessionMessage('Sign in with an Admin account to continue.')
@@ -94,9 +98,10 @@ export default function AdminApp({ path }) {
     return () => { active = false }
   }, [])
 
-  async function acceptAuthenticatedToken(token) {
+  async function acceptAuthenticatedToken(token, role) {
     api.setAccessToken(token)
     setCurrentAdminId(adminIdFromAccessToken(token))
+    setCurrentRole(role || null)
     try {
       await api.getAdminOrders({ limit: 1 })
       setSessionState('ready')
@@ -106,6 +111,7 @@ export default function AdminApp({ path }) {
       if (!isAdminOrderAccessError(error)) {
         api.clearAccessToken()
         setCurrentAdminId(null)
+        setCurrentRole(null)
         throw error
       }
       let logoutMessage = ''
@@ -116,6 +122,7 @@ export default function AdminApp({ path }) {
       }
       api.clearAccessToken()
       setCurrentAdminId(null)
+      setCurrentRole(null)
       return {
         allowed: false,
         message: `This account cannot use the Admin area.${logoutMessage}`,
@@ -132,6 +139,7 @@ export default function AdminApp({ path }) {
     }
     api.clearAccessToken()
     setCurrentAdminId(null)
+    setCurrentRole(null)
     setSessionState('signed-out')
     setSessionMessage(message)
   }
@@ -169,5 +177,5 @@ export default function AdminApp({ path }) {
   else if (path === '/admin/delivery-cities') page = <AdminDeliveryCities />
   else page = <AdminOrders />
 
-  return <AdminLayout onLogout={signOut}>{page}</AdminLayout>
+  return <AdminLayout onLogout={signOut} role={currentRole}>{page}</AdminLayout>
 }
