@@ -21,7 +21,11 @@ router.post('/orders/:id/initiate-payout', requireAuth, requirePermission('user.
 });
 
 const updateCommissionPercent = async (req, res) => {
-  res.json(await settlement.adjustCommissionPercent(req.body.percent, req.user.id)); // FR-50, Admin-only
+  res.json(await settlement.adjustCommissionPercent(req.body.percent, req.user.id, {
+    sessionId: req.authSessionId,
+    stepUpGrant: req.body.stepUpGrant,
+    consumeStepUpGrantWithClient: users.consumeStepUpGrantWithClient,
+  })); // FR-50, FR-58, Admin-only
 };
 
 router.put('/commission', requireAuth, requirePermission('fee.configure'), limiters.adminOps, updateCommissionPercent);

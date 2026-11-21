@@ -15,7 +15,8 @@
  */
 
 const db = require('../db.service');
-const { NotFoundError, ValidationError } = require('../lib/errors');
+const moneyAudit = require('./moneyAudit.service');
+const { NotFoundError, ValidationError, ForbiddenError } = require('../lib/errors');
 
 const COMMISSION_PERCENT_PATTERN = /^(0|[1-9]\d{0,2})(\.\d{1,2})?$/;
 
@@ -44,6 +45,18 @@ async function getSettingsForTransaction(client, keys) {
 /** FR-50: generic platform_settings upsert. */
 async function setSetting(key, value, adminId) {
   const { rows } = await db.query(
+    `INSERT INTO platform_settings (key, value, updated_by, updated_at)
+     VALUES ($1, $2, $3, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
+     RETURNING *`,
+    [key, String(value), adminId]
+  );
+  return rows[0];
+}
+
+/** FR-50, FR-58: write a platform setting in the caller's existing transaction. */
+async function setSettingWithClient(client, key, value, adminId) {
+  const { rows } = await client.query(
     `INSERT INTO platform_settings (key, value, updated_by, updated_at)
      VALUES ($1, $2, $3, now())
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by = EXCLUDED.updated_by, updated_at = now()
@@ -272,15 +285,40 @@ async function getSettlementRecord(orderId) {
 }
 
 /** FR-50: Admin-only (enforced at route level via lib/roles.js ADMIN_ONLY_ACTIONS 'fee.configure'). */
-async function adjustCommissionPercent(newPercent, adminId) {
+async function adjustCommissionPercent(newPercent, adminId, {
+  sessionId,
+  stepUpGrant,
+  consumeStepUpGrantWithClient,
+} = {}) {
   const { percentString } = parseCommissionPercent(newPercent);
-  return setSetting('commission_percent', percentString, adminId);
+  if (typeof consumeStepUpGrantWithClient !== 'function') {
+    throw new ForbiddenError('A valid step-up grant is required.');
+  }
+  return db.withTransaction(async (client) => {
+    await consumeStepUpGrantWithClient(client, adminId, sessionId, 'commission.update', stepUpGrant);
+    const { rows } = await client.query(
+      `SELECT value FROM platform_settings WHERE key = 'commission_percent' FOR UPDATE`
+    );
+    const updatedSetting = await setSettingWithClient(client, 'commission_percent', percentString, adminId);
+    await moneyAudit.recordMoneyAuditEvent(client, {
+      actorId: adminId,
+      action: 'commission_percent_changed',
+      metadata: {
+        previousPercent: rows[0]?.value === undefined || rows[0]?.value === null
+          ? null
+          : String(rows[0].value),
+        newPercent: percentString,
+      },
+    });
+    return updatedSetting;
+  });
 }
 
 module.exports = {
   getSetting,
   getSettingsForTransaction,
   setSetting,
+  setSettingWithClient,
   getSellerOrderSettlements,
   calculateCommission,
   calculateReservationSettlement,

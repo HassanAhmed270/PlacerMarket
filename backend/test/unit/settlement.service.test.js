@@ -45,10 +45,19 @@ describe('settlement.service', () => {
       return;
     }
 
-    db.query.mockResolvedValueOnce({ rows: [{ value: stored }] });
-    await expect(settlement.adjustCommissionPercent(value, 'admin-1'))
-      .resolves.toEqual({ value: stored });
-    expect(db.query).toHaveBeenCalledTimes(1);
+    db.withTransaction.mockImplementation(async (callback) => callback({
+      query: jest.fn()
+        .mockResolvedValueOnce({ rows: [{ value: stored }] })
+        .mockResolvedValueOnce({ rows: [{ value: stored }] })
+        .mockResolvedValueOnce({ rows: [{ key: 'commission_percent', value: stored }] }),
+    }));
+    await expect(settlement.adjustCommissionPercent(value, 'admin-1', {
+      sessionId: 'session-1',
+      stepUpGrant: 'grant',
+      consumeStepUpGrantWithClient: jest.fn().mockResolvedValue(undefined),
+    }))
+      .resolves.toMatchObject({ value: stored });
+    expect(db.query).not.toHaveBeenCalled();
     expect(settlement.calculateReservationSettlement('100.00', value).commissionPercent).toBe(stored);
   });
 

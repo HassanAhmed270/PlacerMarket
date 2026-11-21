@@ -2470,3 +2470,13 @@ CREATE TRIGGER consistency_findings_no_truncate
   BEFORE TRUNCATE ON consistency_findings
   FOR EACH STATEMENT
   EXECUTE FUNCTION reject_append_only_mutation();
+
+-- Migration: 043_commission_step_up_action.sql
+ALTER TABLE step_up_grants
+  DROP CONSTRAINT step_up_grants_action_check,
+  ADD CONSTRAINT step_up_grants_action_check
+    CHECK (action IN (
+      'payout.update', 'password.change', 'security.change', 'payout.force_release',
+      'refund.request', 'refund.decide', 'payout.record', 'payout.approve',
+      'payout.export', 'commission.update'
+    ));

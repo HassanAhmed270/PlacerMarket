@@ -54,6 +54,7 @@ function sendSession(res, session) {
     accessToken: session.accessToken,
     tokenType: 'Bearer',
     expiresIn: session.accessExpiresIn,
+    role: session.user?.role || null,
   });
 }
 

@@ -385,8 +385,8 @@ describe('FR-79b PostgreSQL migration runner', () => {
     const schema = newSchemaName();
     await resetPgBossSchema();
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    // Migrations 040 through 042 add three migrations to the full schema run.
-    expect(applied).toHaveLength(41);
+    // Migrations 040 through 043 add four migrations to the full schema run.
+    expect(applied).toHaveLength(42);
 
     const relations = await db.query(
       `SELECT table_name FROM information_schema.tables
@@ -476,8 +476,8 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     await expect(runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir }))
-      // Migrations 040 through 042 add three migrations after the pre-availability baseline.
-      .resolves.toHaveLength(22);
+      // Migrations 040 through 043 add four migrations after the pre-availability baseline.
+      .resolves.toHaveLength(23);
     await withSchemaClient(schema, async (client) => {
       const { rows } = await client.query(
         'SELECT title, search_text, is_reserved, reserved_until, is_sold FROM listing_search WHERE listing_id = $1',
@@ -529,8 +529,8 @@ describe('FR-79b PostgreSQL migration runner', () => {
     });
 
     const applied = await runMigrations({ databaseUrl, schema, migrationsDir: phase4MigrationDir });
-    // Migrations 035 through 042 follow the previous-head baseline.
-    expect(applied).toHaveLength(23);
+    // Migrations 035 through 043 follow the previous-head baseline.
+    expect(applied).toHaveLength(24);
 
     await withSchemaClient(schema, async (client) => {
       const preservedOrders = await client.query(

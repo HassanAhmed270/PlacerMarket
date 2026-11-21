@@ -190,8 +190,11 @@ async function manageDeliveryPartner(action, ...args) {
 // ---- FR-58: fee configuration ----
 
 /** FR-58, FR-50: admin adjusts the commission % (delegates to settlement.service). */
-async function configureFees(newCommissionPercent, adminId) {
-  return settlement.adjustCommissionPercent(newCommissionPercent, adminId);
+async function configureFees(newCommissionPercent, adminId, options = {}) {
+  return settlement.adjustCommissionPercent(newCommissionPercent, adminId, {
+    ...options,
+    consumeStepUpGrantWithClient: users.consumeStepUpGrantWithClient,
+  });
 }
 
 // ---- FR-59: advertising/analytics ----

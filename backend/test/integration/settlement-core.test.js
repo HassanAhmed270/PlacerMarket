@@ -13,14 +13,81 @@ const {
 const crypto = require('crypto');
 const { signAccessToken } = require('../../src/lib/jwt');
 const settlement = require('../../src/modules/settlement.service');
+const users = require('../../src/modules/users.service');
+const { encryptStaffTotpSecret, generateTotpCode, generateTotpSecret } = require('../../src/lib/totp');
 const { ValidationError } = require('../../src/lib/errors');
 
 let harness;
 let businessDate;
+let staffTotpSecret;
+let previousTotpEncryptionSecret;
+
+async function adjustCommissionForTest(value) {
+  const grant = await createCommissionGrant('commission.update');
+  return settlement.adjustCommissionPercent(value, harness.adminId, {
+    sessionId: grant.sessionId,
+    stepUpGrant: grant.grant,
+    consumeStepUpGrantWithClient: users.consumeStepUpGrantWithClient,
+  });
+}
+
+async function createCommissionSession(userId = harness.adminId) {
+  const sessionId = crypto.randomUUID();
+  await db.query(
+    `INSERT INTO auth_sessions
+       (id, family_id, user_id, refresh_token_hash, expires_at, absolute_expires_at)
+     VALUES ($1, $2, $3, $4, now() + interval '1 hour', now() + interval '1 day')`,
+    [sessionId, crypto.randomUUID(), userId, crypto.randomBytes(32).toString('base64url')]
+  );
+  return sessionId;
+}
+
+async function createCommissionGrant(action = 'commission.update', userId = harness.adminId) {
+  const sessionId = await createCommissionSession(userId);
+  const grant = crypto.randomBytes(32).toString('base64url');
+  await db.query(
+    `INSERT INTO step_up_grants (token_hash, user_id, session_id, action, expires_at)
+     VALUES ($1, $2, $3, $4, now() + interval '5 minutes')`,
+    [crypto.createHash('sha256').update(grant).digest('hex'), userId, sessionId, action]
+  );
+  return {
+    grant,
+    sessionId,
+    authorization: `Bearer ${signAccessToken(userId, {
+      secret: 'delivery-handover-integration-secret',
+      sessionId,
+    })}`,
+  };
+}
+
+async function commissionAuditCount(adminId = harness.adminId) {
+  const { rows } = await db.query(
+    `SELECT count(*)::int AS count FROM money_audit_events
+     WHERE actor_id = $1 AND action = 'commission_percent_changed'`,
+    [adminId]
+  );
+  return rows[0].count;
+}
 
 beforeAll(async () => {
   harness = await createHarness();
   businessDate = await getBusinessDate();
+  previousTotpEncryptionSecret = process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+  process.env.STAFF_TOTP_ENCRYPTION_SECRET = 'settlement-core-totp-test-secret-material-over-32-bytes';
+  staffTotpSecret = generateTotpSecret();
+  const encrypted = encryptStaffTotpSecret(staffTotpSecret);
+  await db.query(
+    `INSERT INTO staff_totp_credentials
+       (user_id, encrypted_secret, nonce, auth_tag, key_version, enabled_at)
+     VALUES ($1, $2, $3, $4, $5, now())`,
+    [
+      harness.adminId,
+      encrypted.encryptedSecret,
+      encrypted.nonce,
+      encrypted.authTag,
+      encrypted.keyVersion,
+    ]
+  );
   harness.retained = true;
 });
 
@@ -30,13 +97,15 @@ afterEach(async () => {
 
 afterAll(async () => {
   await global.drainIntegrationListeners(5000);
+  if (previousTotpEncryptionSecret === undefined) delete process.env.STAFF_TOTP_ENCRYPTION_SECRET;
+  else process.env.STAFF_TOTP_ENCRYPTION_SECRET = previousTotpEncryptionSecret;
   await cleanupHarness(harness);
   restoreHandoverTestEnvironment();
 });
 
 describe('settlement core integration', () => {
   test('FR-46, FR-47: Buy snapshots the commission percent on the reservation', async () => {
-    await settlement.adjustCommissionPercent('5', harness.adminId);
+    await adjustCommissionForTest('5');
     const scenario = await createScenario(harness);
     const { rows } = await db.query(
       'SELECT commission_percent_snapshot FROM reservations WHERE id = $1',
@@ -46,7 +115,7 @@ describe('settlement core integration', () => {
   });
 
   test("FR-46: changing the commission setting later does not change an existing reservation's snapshot or its settlement, and applies to the next Buy", async () => {
-    await settlement.adjustCommissionPercent('5', harness.adminId);
+    await adjustCommissionForTest('5');
     const firstScenario = await createScenario(harness);
     const { rows: firstBefore } = await db.query(
       'SELECT commission_percent_snapshot, item_price_snapshot FROM reservations WHERE id = $1',
@@ -55,7 +124,7 @@ describe('settlement core integration', () => {
     expect(firstBefore[0].commission_percent_snapshot).toBe('5.00');
 
     // Change global commission setting to 8%
-    await settlement.adjustCommissionPercent('8', harness.adminId);
+    await adjustCommissionForTest('8');
 
     // Existing reservation snapshot remains untouched
     const { rows: firstAfter } = await db.query(
@@ -86,11 +155,11 @@ describe('settlement core integration', () => {
     expect(secondSettlement.commissionPercent).toBe('8.00');
 
     // Reset setting back to 5%
-    await settlement.adjustCommissionPercent('5', harness.adminId);
+    await adjustCommissionForTest('5');
   });
 
   test('FR-47: recording a settlement is idempotent under ten parallel calls (one settlement row, zero commission or payable entries)', async () => {
-    await settlement.adjustCommissionPercent('5', harness.adminId);
+    await adjustCommissionForTest('5');
     const scenario = await createScenario(harness);
 
     // Ten parallel calls to recordReservationSettlement
@@ -134,7 +203,7 @@ describe('settlement core integration', () => {
   });
 
   test('FR-50a: a succeeded partial refund reduces commission and seller net, and the stored refunded_item_amount matches', async () => {
-    await settlement.adjustCommissionPercent('5', harness.adminId);
+    await adjustCommissionForTest('5');
     const scenario = await createScenario(harness);
 
     const refundId = require('node:crypto').randomUUID();
@@ -181,9 +250,9 @@ describe('settlement core integration', () => {
     await expect(settlement.adjustCommissionPercent('invalid', harness.adminId)).rejects.toThrow(ValidationError);
     await expect(settlement.adjustCommissionPercent(null, harness.adminId)).rejects.toThrow(ValidationError);
 
-    await expect(settlement.adjustCommissionPercent(0, harness.adminId)).resolves.toMatchObject({ value: '0' });
-    await expect(settlement.adjustCommissionPercent(100, harness.adminId)).resolves.toMatchObject({ value: '100' });
-    await expect(settlement.adjustCommissionPercent(5, harness.adminId)).resolves.toMatchObject({ value: '5' });
+    await expect(adjustCommissionForTest(0)).resolves.toMatchObject({ value: '0' });
+    await expect(adjustCommissionForTest(100)).resolves.toMatchObject({ value: '100' });
+    await expect(adjustCommissionForTest(5)).resolves.toMatchObject({ value: '5' });
   });
 
   describe('FR-50 Admin commission setting route', () => {
@@ -194,16 +263,16 @@ describe('settlement core integration', () => {
     });
 
     afterEach(async () => {
-      await settlement.adjustCommissionPercent(originalCommissionPercent, harness.adminId);
+      await adjustCommissionForTest(originalCommissionPercent);
     });
 
     test('FR-50: rejected commission updates preserve the setting and valid PUT repairs malformed stored data', async () => {
-      const commissionRequest = (percent) => request(getApp())
+      const malformedGrant = await createCommissionGrant();
+      await request(getApp())
         .put('/api/settlement/commission')
-        .set('Authorization', authHeader(harness.adminId))
-        .send({ percent });
-
-      await commissionRequest('12.345').expect(400);
+        .set('Authorization', malformedGrant.authorization)
+        .send({ percent: '12.345', stepUpGrant: malformedGrant.grant })
+        .expect(400);
       expect(await settlement.getSetting('commission_percent')).toBe(originalCommissionPercent);
 
       const scenario = await createScenario(harness);
@@ -226,7 +295,11 @@ describe('settlement core integration', () => {
       await expect(settlement.calculateSettlement(scenario.orderId, { agreedItemPrice: itemPrice }))
         .rejects.toBeInstanceOf(ValidationError);
 
-      await commissionRequest(7.5)
+      const validGrant = await createCommissionGrant();
+      await request(getApp())
+        .put('/api/settlement/commission')
+        .set('Authorization', validGrant.authorization)
+        .send({ percent: 7.5, stepUpGrant: validGrant.grant })
         .expect(200)
         .expect(({ body }) => expect(body.value).toBe('7.5'));
       const expectedAfterRepair = settlement.calculateReservationSettlement(itemPrice, '7.5');
@@ -235,6 +308,158 @@ describe('settlement core integration', () => {
       });
       expect(afterRepair.commission_amount).toBe(expectedAfterRepair.commissionAmount);
       expect(afterRepair.seller_net_payout).toBe(expectedAfterRepair.sellerNetAmount);
+    });
+
+    test('FR-58: commission.update grants are created and every existing action remains allowed while unknown actions are rejected', async () => {
+      const sessionId = await createCommissionSession();
+      const actions = [
+        'payout.update', 'password.change', 'security.change', 'payout.force_release',
+        'refund.request', 'refund.decide', 'payout.record', 'payout.approve', 'payout.export',
+      ];
+      for (const action of actions) {
+        await db.query(
+          `INSERT INTO step_up_grants (token_hash, user_id, session_id, action, expires_at)
+           VALUES ($1, $2, $3, $4, now() + interval '5 minutes')`,
+          [crypto.randomBytes(32).toString('hex'), harness.adminId, sessionId, action]
+        );
+      }
+      await expect(db.query(
+        `INSERT INTO step_up_grants (token_hash, user_id, session_id, action, expires_at)
+         VALUES ($1, $2, $3, 'unknown.action', now() + interval '5 minutes')`,
+        [crypto.randomBytes(32).toString('hex'), harness.adminId, sessionId]
+      )).rejects.toMatchObject({ code: '23514' });
+
+      const { grant } = await users.createStepUpGrant(
+        harness.adminId,
+        sessionId,
+        'commission.update',
+        generateTotpCode(staffTotpSecret)
+      );
+      expect(grant).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      await expect(users.createStepUpGrant(
+        harness.adminId,
+        sessionId,
+        'unknown.action',
+        'unused-code'
+      )).rejects.toBeInstanceOf(ValidationError);
+    });
+
+    test('FR-50, FR-58: all three commission routes reject a missing grant without changing the setting or writing an audit', async () => {
+      const sessionId = await createCommissionSession();
+      const authorization = `Bearer ${signAccessToken(harness.adminId, {
+        secret: 'delivery-handover-integration-secret',
+        sessionId,
+      })}`;
+      const beforeAuditCount = await commissionAuditCount();
+      const requests = [
+        request(getApp()).put('/api/settlement/commission'),
+        request(getApp()).patch('/api/settlement/commission'),
+        request(getApp()).patch('/api/admin/fees/commission'),
+      ];
+      for (const call of requests) {
+        await call
+          .set('Authorization', authorization)
+          .send({ percent: '6.25' })
+          .expect(403);
+      }
+      expect(await settlement.getSetting('commission_percent')).toBe(originalCommissionPercent);
+      expect(await commissionAuditCount()).toBe(beforeAuditCount);
+    });
+
+    test('FR-50, FR-58: a payout.record grant cannot change commission or write an audit', async () => {
+      const wrongAction = await createCommissionGrant('payout.record');
+      const beforeAuditCount = await commissionAuditCount();
+      await request(getApp())
+        .put('/api/settlement/commission')
+        .set('Authorization', wrongAction.authorization)
+        .send({ percent: '6.25', stepUpGrant: wrongAction.grant })
+        .expect(403);
+      expect(await settlement.getSetting('commission_percent')).toBe(originalCommissionPercent);
+      expect(await commissionAuditCount()).toBe(beforeAuditCount);
+    });
+
+    test('FR-50, FR-58: a valid grant updates commission and writes one event with actor and previous/new values', async () => {
+      const validGrant = await createCommissionGrant();
+      const beforeAuditCount = await commissionAuditCount();
+      await request(getApp())
+        .put('/api/settlement/commission')
+        .set('Authorization', validGrant.authorization)
+        .send({ percent: '6.75', stepUpGrant: validGrant.grant })
+        .expect(200);
+      expect(await settlement.getSetting('commission_percent')).toBe('6.75');
+      expect(await commissionAuditCount()).toBe(beforeAuditCount + 1);
+      const { rows } = await db.query(
+        `SELECT actor_id, action, order_id, payment_id, metadata
+         FROM money_audit_events
+         WHERE actor_id = $1 AND action = 'commission_percent_changed'
+         ORDER BY created_at DESC LIMIT 1`,
+        [harness.adminId]
+      );
+      expect(rows[0]).toEqual({
+        actor_id: harness.adminId,
+        action: 'commission_percent_changed',
+        order_id: null,
+        payment_id: null,
+        metadata: { previousPercent: originalCommissionPercent, newPercent: '6.75' },
+      });
+    });
+
+    test('FR-50, FR-58: submitting the current commission value still writes an audit event', async () => {
+      const validGrant = await createCommissionGrant();
+      const beforeAuditCount = await commissionAuditCount();
+      await request(getApp())
+        .patch('/api/settlement/commission')
+        .set('Authorization', validGrant.authorization)
+        .send({ percent: originalCommissionPercent, stepUpGrant: validGrant.grant })
+        .expect(200);
+      expect(await commissionAuditCount()).toBe(beforeAuditCount + 1);
+    });
+
+    test('FR-50, FR-58: reusing a commission grant is rejected without a second event', async () => {
+      const validGrant = await createCommissionGrant();
+      const beforeAuditCount = await commissionAuditCount();
+      const payload = { percent: '6.80', stepUpGrant: validGrant.grant };
+      await request(getApp())
+        .patch('/api/settlement/commission')
+        .set('Authorization', validGrant.authorization)
+        .send(payload)
+        .expect(200);
+      await request(getApp())
+        .patch('/api/admin/fees/commission')
+        .set('Authorization', validGrant.authorization)
+        .send(payload)
+        .expect(403);
+      expect(await settlement.getSetting('commission_percent')).toBe('6.80');
+      expect(await commissionAuditCount()).toBe(beforeAuditCount + 1);
+    });
+
+    test.each(['12.345', '1e1', ' 5'])('FR-50, FR-58: malformed percent %j is rejected without consuming its grant', async (percent) => {
+      const validGrant = await createCommissionGrant();
+      const beforeAuditCount = await commissionAuditCount();
+      await request(getApp())
+        .put('/api/settlement/commission')
+        .set('Authorization', validGrant.authorization)
+        .send({ percent, stepUpGrant: validGrant.grant })
+        .expect(400);
+      const { rows } = await db.query(
+        'SELECT consumed_at FROM step_up_grants WHERE token_hash = $1',
+        [crypto.createHash('sha256').update(validGrant.grant).digest('hex')]
+      );
+      expect(rows[0].consumed_at).toBeNull();
+      expect(await settlement.getSetting('commission_percent')).toBe(originalCommissionPercent);
+      expect(await commissionAuditCount()).toBe(beforeAuditCount);
+    });
+
+    test('FR-50, FR-58: a Moderator is forbidden from changing commission even with a valid grant', async () => {
+      const moderatorGrant = await createCommissionGrant('commission.update', harness.moderatorId);
+      const beforeAuditCount = await commissionAuditCount();
+      await request(getApp())
+        .patch('/api/admin/fees/commission')
+        .set('Authorization', moderatorGrant.authorization)
+        .send({ percent: '6.90', stepUpGrant: moderatorGrant.grant })
+        .expect(403);
+      expect(await settlement.getSetting('commission_percent')).toBe(originalCommissionPercent);
+      expect(await commissionAuditCount()).toBe(beforeAuditCount);
     });
   });
 
@@ -267,7 +492,7 @@ describe('settlement core integration', () => {
   });
 
   test('FR-47: a payout release writes exactly one cash ledger entry (seller_payout_manual) and no commission or seller_payable entries', async () => {
-    await settlement.adjustCommissionPercent('5', harness.adminId);
+    await adjustCommissionForTest('5');
     const scenario = await createScenario(harness);
 
     await db.query(

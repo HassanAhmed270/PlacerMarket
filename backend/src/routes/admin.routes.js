@@ -531,7 +531,10 @@ router.post('/delivery-partners', requirePermission('delivery_partner.configure'
 });
 
 router.patch('/fees/commission', requirePermission('fee.configure'), limiters.adminOps, async (req, res) => {
-  res.json(await admin.configureFees(req.body.percent, req.user.id)); // FR-58
+  res.json(await admin.configureFees(req.body.percent, req.user.id, {
+    sessionId: req.authSessionId,
+    stepUpGrant: req.body.stepUpGrant,
+  })); // FR-58
 });
 
 router.get('/advertising-overview', requirePermission('advertising.manage'), async (req, res) => {

@@ -46,6 +46,7 @@ const STAFF_ROLES = new Set(['admin', 'moderator']);
 const STEP_UP_ACTIONS = Object.freeze([
   'payout.update', 'password.change', 'security.change', 'payout.force_release',
   'refund.request', 'refund.decide', 'payout.record', 'payout.approve', 'payout.export',
+  'commission.update',
 ]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

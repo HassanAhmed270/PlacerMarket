@@ -22,6 +22,7 @@ const sessionId = '2147b9fc-9971-46ce-9f29-c55471c48345';
 const session = {
   accessToken: 'test-access-token', refreshToken: 'r'.repeat(43),
   refreshMaxAge: 600, accessExpiresIn: 900,
+  user: { id: userId, role: 'buyer' },
 };
 
 describe('FR-84: login and refresh tokens use the approved transport boundaries', () => {
@@ -136,7 +137,7 @@ describe('FR-84: login and refresh tokens use the approved transport boundaries'
       .set('Origin', 'https://poshaak.test')
       .set('Cookie', `poshaak_refresh=${session.refreshToken}`);
     expect(rotated.status).toBe(200);
-    expect(rotated.body).toEqual({ accessToken: session.accessToken, tokenType: 'Bearer', expiresIn: 900 });
+    expect(rotated.body).toEqual({ accessToken: session.accessToken, tokenType: 'Bearer', expiresIn: 900, role: 'buyer' });
     expect(rotated.headers['set-cookie'][0]).toContain('HttpOnly; Secure; SameSite=Strict');
     expect(rotated.headers['set-cookie'][0]).toContain('Path=/api/users/auth/refresh');
     expect(rotated.headers['cache-control']).toBe('private, no-store');

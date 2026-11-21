@@ -1596,7 +1596,7 @@ async function recordManualSellerPayout(client, {
 }) {
   await moneyAudit.recordMoneyAuditEvent(client, {
     actorId: adminId,
-    action: 'seller_payout_manual_released',
+    action: 'order_payout_hold_released',
     orderId,
     paymentId,
     reason: note,

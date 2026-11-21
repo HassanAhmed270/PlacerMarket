@@ -280,7 +280,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
     const { rows: auditRows } = await db.query(
       `SELECT actor_id, action, reason, metadata
        FROM money_audit_events
-       WHERE order_id = $1 AND action = 'seller_payout_manual_released'`,
+       WHERE order_id = $1 AND action = 'order_payout_hold_released'`,
       [scenario.orderId]
     );
     const { rows: afterPaymentRows } = await db.query(
@@ -312,7 +312,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
     expect(auditRows).toHaveLength(1);
     expect(auditRows[0]).toMatchObject({
       actor_id: harness.adminId,
-      action: 'seller_payout_manual_released',
+      action: 'order_payout_hold_released',
       reason: 'Manual transfer confirmed',
       metadata: {
         payoutReference: 'bank-ref-123',
@@ -377,6 +377,41 @@ describe('FR-65 manual reservation-backed payout release', () => {
     expect(ledgerRowsAfterPaid).toHaveLength(1);
     expect(ledgerRowsAfterPaid[0].entry_type).toBe('seller_payout_manual');
     expect(Number(ledgerRowsAfterPaid[0].amount)).toBeLessThan(0);
+  });
+
+  test('FR-65: releasing for an unverified seller audits held funds and creates no payout row', async () => {
+    await elapsePayoutWindows(scenario);
+    await db.query(
+      'UPDATE seller_profiles SET id_verified = false WHERE user_id = $1',
+      [scenario.sellerId]
+    );
+    await releaseRequest(harness.adminId, scenario.orderId).expect(200);
+    await db.query(
+      'UPDATE seller_profiles SET id_verified = true WHERE user_id = $1',
+      [scenario.sellerId]
+    );
+
+    const { rows: auditRows } = await db.query(
+      `SELECT action FROM money_audit_events
+       WHERE order_id = $1 AND action IN ('seller_funds_held', 'order_payout_hold_released')
+       ORDER BY action`,
+      [scenario.orderId]
+    );
+    expect(auditRows.map(({ action }) => action)).toEqual([
+      'order_payout_hold_released',
+      'seller_funds_held',
+    ]);
+    const { rows: oldAuditRows } = await db.query(
+      `SELECT id FROM money_audit_events
+       WHERE order_id = $1 AND action = 'seller_payout_manual_released'`,
+      [scenario.orderId]
+    );
+    expect(oldAuditRows).toHaveLength(0);
+    const { rows: payoutRows } = await db.query(
+      'SELECT id FROM seller_payouts WHERE order_id = $1',
+      [scenario.orderId]
+    );
+    expect(payoutRows).toHaveLength(0);
   });
 
   test('FR-65: repeating a successful release returns 409 without a second financial record', async () => {
