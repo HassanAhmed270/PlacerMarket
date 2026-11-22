@@ -56,7 +56,7 @@ describe('settlement.service', () => {
       stepUpGrant: 'grant',
       consumeStepUpGrantWithClient: jest.fn().mockResolvedValue(undefined),
     }))
-      .resolves.toMatchObject({ value: stored });
+      .resolves.toEqual({ value: stored });
     expect(db.query).not.toHaveBeenCalled();
     expect(settlement.calculateReservationSettlement('100.00', value).commissionPercent).toBe(stored);
   });
