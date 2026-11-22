@@ -5,7 +5,7 @@ instructions: `DEVELOPMENT_HANDOFF.md`. Full state and architecture:
 `MASTER_PROJECT_CONTEXT.md`. Poshaak is the single name of the project (it was
 first called "Marketplace").
 
-Current phase: Phase 5 backend complete (stages 5.1 to 5.8b merged to main at 0460ecc51c26da877f294177174ab7453b018da9, verified 2026-11-19). On main 0460ecc, backend unit 68 suites / 1020 tests and integration 47 suites / 568 tests. Frontend for Phase 5 flows and the owner's browser click-through are not done. Launch blockers, not gate blockers: payment gateway, legal clearance, courier, a real second Admin; the owner's browser click-through is still pending (Scenarios A and B passed on 2026-11-10; Scenario C through the new Buyer "Report a problem" screen, Scenario D and the notifications remain). Post-closure changes on main `4c011b0`: the Buyer problem-report screen (FR-43, FR-43a, FR-43b rows still unticked) and the one-origin session fix (FR-84); see `open-questions.md` Resolved 2026-11-10.
+Current phase: Phase 5 backend complete (stages 5.1 to 5.8b merged to main at 0460ecc51c26da877f294177174ab7453b018da9, verified 2026-11-19). After Stage 6.0, expect backend unit 68 suites / 1021 tests and integration 47 suites / 579 tests. Frontend for Phase 5 flows and the owner's browser click-through are not done. Launch blockers, not gate blockers: payment gateway, legal clearance, courier, a real second Admin; the owner's browser click-through is still pending (Scenarios A and B passed on 2026-11-10; Scenario C through the new Buyer "Report a problem" screen, Scenario D and the notifications remain). Post-closure changes on main `4c011b0`: the Buyer problem-report screen (FR-43, FR-43a, FR-43b rows still unticked) and the one-origin session fix (FR-84); see `open-questions.md` Resolved 2026-11-10.
 Stage 6.0 - hardening: commission changes require a `commission.update` step-up grant (migration 043) and write a `commission_percent_changed` audit event; payout hold release uses `order_payout_hold_released`; Moderator navigation hides Admin-only links. Verified: backend unit 68 suites / 1021 tests; integration 47 suites / 579 tests (three runs); frontend 66 tests, lint/build/bundle check passed (largest public route 76.6 KB gzip). Second-Admin script diagnosis is documented in the stage report.
 Stage P5-S1 (2026-11-13): Settlement core implemented with 5% launch commission snapshotted at Buy, partial-refund settlement maths (FR-46, FR-46a, FR-47, FR-50, FR-50a), idempotent settlement recording with ledger entries, and migration 028.
 Stage P5-S2a (2026-11-15): Payout lifecycle implemented with migration 029 (seller_payouts), release initiating attempt 1 without cash ledger, paid/failed/retry state transitions, Admin-only payout.record permission, money audit, and in-app/email notifications (FR-48, FR-49, FR-51, FR-65).
@@ -26,8 +26,8 @@ Stage P5-S9c: Test phone numbers no longer depend on process id length (collisio
 ## 0. Inspect before you propose anything
 
 1. Extract the ZIP. In `backend/` run `npm install`, then `npm test` — expect
-   backend unit 68 suites / 1020 tests and integration 47 suites / 568 tests on
-   main 0460ecc; `npm audit --omit=dev` shows only the 3 known moderate
+   After Stage 6.0, expect backend unit 68 suites / 1021 tests and integration
+   47 suites / 579 tests; `npm audit --omit=dev` shows only the 3 known moderate
    node-pg-migrate findings (owner exception SEC-31).
 2. Read, in order: this file, `DEVELOPMENT_HANDOFF.md`, `MASTER_PROJECT_CONTEXT.md`,
    `agent.md`, `rules.md`, `Phases.md`, `security.md`, `specs.md`, `open-questions.md`.
