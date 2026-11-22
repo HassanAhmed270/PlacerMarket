@@ -11,7 +11,9 @@ import {
   getSellerPayoutStatusLabel,
 } from './lib/sellerOrders.js'
 import {
+  getDeliveryOutcomeLabel,
   getDisputeFlowLabel,
+  getReviewFlowLabel,
   getReturnFlowLabel,
   getSellerOrderAllowedActions,
 } from './lib/orderFlows.js'
@@ -29,6 +31,8 @@ function SellerOrderPage({ orderId }) {
   const [evidenceNote, setEvidenceNote] = useState('')
   const [evidenceUrl, setEvidenceUrl] = useState('')
   const [partyEvidence, setPartyEvidence] = useState([])
+  const [reviewRating, setReviewRating] = useState('')
+  const [reviewBody, setReviewBody] = useState('')
 
   async function refreshOrder(showLoading = false) {
     if (showLoading) setLoading(true)
@@ -155,6 +159,28 @@ function SellerOrderPage({ orderId }) {
     }
   }
 
+  async function submitReview(event) {
+    event.preventDefault()
+    if (busyAction || !allowedActions.includes('review_buyer')) return
+    setBusyAction('review')
+    setSuccess('')
+    setError('')
+    try {
+      await api.submitOrderReview(orderId, {
+        rating: Number(reviewRating),
+        ...(reviewBody.trim() ? { body: reviewBody } : {}),
+      })
+      setSuccess('Your review was submitted.')
+      setReviewRating('')
+      setReviewBody('')
+      await refreshOrder()
+    } catch (cause) {
+      setError(getCheckoutError(cause).message)
+    } finally {
+      setBusyAction('')
+    }
+  }
+
 
   return (
     <main className="seller-order-page">
@@ -221,6 +247,17 @@ function SellerOrderPage({ orderId }) {
           {disputeLabel && <div><dt>Dispute</dt><dd>{disputeLabel}</dd></div>}
         </dl>
         {success && <p className="seller-flow-success" role="status">{success}</p>}
+        {order.deliveryOutcome && (
+          <section className="seller-flow-section" aria-labelledby="delivery-outcome-title">
+            <h2 id="delivery-outcome-title">Delivery outcome</h2>
+            <p>{getDeliveryOutcomeLabel(order.deliveryOutcome)}</p>
+            {order.deliveryOutcome.recordedAt && (
+              <time dateTime={order.deliveryOutcome.recordedAt}>
+                Recorded {new Date(order.deliveryOutcome.recordedAt).toLocaleString()}
+              </time>
+            )}
+          </section>
+        )}
 
         {order.returnRequest && (
           <section className="seller-flow-section" aria-labelledby="return-title">
@@ -314,6 +351,41 @@ function SellerOrderPage({ orderId }) {
           </section>
         )}
 
+        {allowedActions.includes('review_buyer') && (
+          <section className="seller-flow-section" aria-labelledby="review-title">
+            <h2 id="review-title">Review the buyer</h2>
+            <form className="seller-flow-form" onSubmit={submitReview}>
+              <label htmlFor="review-rating">Rating</label>
+              <select id="review-rating" required value={reviewRating} onChange={(event) => setReviewRating(event.currentTarget.value)}>
+                <option value="">Select 1 to 5</option>
+                {[1, 2, 3, 4, 5].map((rating) => <option key={rating} value={rating}>{rating}</option>)}
+              </select>
+              <label htmlFor="review-body">Comment (optional)</label>
+              <textarea id="review-body" minLength={3} maxLength={1000} value={reviewBody} onChange={(event) => setReviewBody(event.currentTarget.value)} />
+              <button className="button button-primary" type="submit" disabled={busyAction === 'review'}>
+                {busyAction === 'review' ? 'Submitting…' : 'Submit review'}
+              </button>
+            </form>
+          </section>
+        )}
+        {order.myReview && (
+          <section className="seller-flow-section" aria-labelledby="my-review-title">
+            <h2 id="my-review-title">Your review</h2>
+            <p>{getReviewFlowLabel(order.myReview)}</p>
+            {order.myReview.state === 'visible' && (
+              <><p>{order.myReview.rating} out of 5</p>{order.myReview.body && <p>{order.myReview.body}</p>}</>
+            )}
+          </section>
+        )}
+        {order.reviewOfMe && (
+          <section className="seller-flow-section" aria-labelledby="received-review-title">
+            <h2 id="received-review-title">Buyer review of you</h2>
+            <p>{getReviewFlowLabel(order.reviewOfMe)}</p>
+            {order.reviewOfMe.state === 'visible' && (
+              <><p>{order.reviewOfMe.rating} out of 5</p>{order.reviewOfMe.body && <p>{order.reviewOfMe.body}</p>}</>
+            )}
+          </section>
+        )}
         <p className="seller-order-pickup-note">Handover is recorded by our team after courier pickup.</p>
         <a className="checkout-back-link" href="/seller/orders">Back to My sales</a>
       </section>
