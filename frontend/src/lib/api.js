@@ -193,6 +193,109 @@ export function createApiClient({
     getListingStatus: (id) => get(`discovery/listings/${encodeURIComponent(id)}/status`),
     buyListing: (id, input) => post(`listings/${encodeURIComponent(id)}/buy`, input, { authenticated: true }),
     fileDispute: (id, input) => post(`disputes/orders/${encodeURIComponent(id)}`, input, { authenticated: true }),
+    fileReturnRequest: (orderId, input) => {
+      if (typeof orderId !== 'string' || !orderId.trim()) throw new Error('An order is required.')
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).some((key) => key !== 'reason') ||
+          typeof input.reason !== 'string' || input.reason.trim().length < 3 ||
+          input.reason.trim().length > 500) {
+        throw new Error('Return reason must be 3 to 500 characters.')
+      }
+      return post(`returns/orders/${encodeURIComponent(orderId)}`, { reason: input.reason.trim() }, { authenticated: true })
+    },
+    respondToReturnRequest: (returnId, sellerNote) => {
+      if (typeof returnId !== 'string' || !returnId.trim()) throw new Error('A return request is required.')
+      if (typeof sellerNote !== 'string' || sellerNote.trim().length < 3 || sellerNote.trim().length > 300) {
+        throw new Error('Seller note must be 3 to 300 characters.')
+      }
+      return post(`returns/${encodeURIComponent(returnId)}/respond`, { sellerNote: sellerNote.trim() }, { authenticated: true })
+    },
+    submitCounterEvidence: (disputeId, input) => {
+      if (typeof disputeId !== 'string' || !disputeId.trim()) throw new Error('A dispute is required.')
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).some((key) => !['responseText', 'evidenceUrls'].includes(key))) {
+        throw new Error('Counter-evidence fields are invalid.')
+      }
+      const evidenceUrls = input.evidenceUrls === undefined ? [] : input.evidenceUrls
+      if (!Array.isArray(evidenceUrls) || evidenceUrls.length > 2 ||
+          evidenceUrls.some((value) => {
+            if (typeof value !== 'string') return true
+            try {
+              const url = new URL(value.trim())
+              return url.protocol !== 'https:' || !url.hostname || url.username || url.password
+            } catch {
+              return true
+            }
+          })) {
+        throw new Error('Add no more than 2 valid HTTPS evidence URLs.')
+      }
+      return post(`disputes/${encodeURIComponent(disputeId)}/counter-evidence`, {
+        responseText: typeof input.responseText === 'string' ? input.responseText : null,
+        evidenceUrls: evidenceUrls.map((value) => value.trim()),
+      }, { authenticated: true })
+    },
+    addDisputeEvidence: (disputeId, input) => {
+      if (typeof disputeId !== 'string' || !disputeId.trim()) throw new Error('A dispute is required.')
+      if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Evidence is required.')
+      const keys = Object.keys(input)
+      if (keys.length !== 1) throw new Error('Provide exactly one evidence note or HTTPS link.')
+      let body
+      if (Object.hasOwn(input, 'note')) {
+        if (typeof input.note !== 'string' || input.note.trim().length < 3 || input.note.trim().length > 500) {
+          throw new Error('Evidence note must be 3 to 500 characters.')
+        }
+        body = { note: input.note.trim() }
+      } else if (Object.hasOwn(input, 'mediaReference')) {
+        if (typeof input.mediaReference !== 'string') throw new Error('Evidence link must use HTTPS.')
+        try {
+          const url = new URL(input.mediaReference.trim())
+          if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) {
+            throw new Error('Evidence link must use HTTPS.')
+          }
+          body = { mediaReference: url.href }
+        } catch {
+          throw new Error('Evidence link must use HTTPS.')
+        }
+      } else {
+        throw new Error('Provide exactly one evidence note or HTTPS link.')
+      }
+      return post(`disputes/${encodeURIComponent(disputeId)}/evidence`, body, { authenticated: true })
+    },
+    getPartyDisputeEvidence: (disputeId) => {
+      if (typeof disputeId !== 'string' || !disputeId.trim()) throw new Error('A dispute is required.')
+      return get(`disputes/${encodeURIComponent(disputeId)}/party-evidence`, { authenticated: true })
+    },
+    withdrawDispute: (disputeId) => {
+      if (typeof disputeId !== 'string' || !disputeId.trim()) throw new Error('A dispute is required.')
+      return post(`disputes/${encodeURIComponent(disputeId)}/withdraw`, {}, { authenticated: true })
+    },
+    submitOrderReview: (orderId, input) => {
+      if (typeof orderId !== 'string' || !orderId.trim()) throw new Error('An order is required.')
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).some((key) => !['rating', 'body'].includes(key)) ||
+          !Number.isInteger(input.rating) || input.rating < 1 || input.rating > 5) {
+        throw new Error('Review rating must be an integer from 1 to 5.')
+      }
+      if (Object.hasOwn(input, 'body') && input.body !== null && input.body !== undefined &&
+          (typeof input.body !== 'string' || input.body.trim().length < 3 || input.body.trim().length > 1000)) {
+        throw new Error('Review body must be 3 to 1000 characters.')
+      }
+      return post(`orders/${encodeURIComponent(orderId)}/reviews`, {
+        rating: input.rating,
+        ...(Object.hasOwn(input, 'body') ? { body: input.body === null ? null : input.body.trim() } : {}),
+      }, { authenticated: true })
+    },
+    reportReview: (reviewId, reason) => {
+      if (typeof reviewId !== 'string' || !reviewId.trim()) throw new Error('A review is required.')
+      if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 300) {
+        throw new Error('Report reason must be 3 to 300 characters.')
+      }
+      return post(`reviews/${encodeURIComponent(reviewId)}/reports`, { reason: reason.trim() }, { authenticated: true })
+    },
+    getSellerReviews: (sellerId, options = {}) => {
+      if (typeof sellerId !== 'string' || !sellerId.trim()) throw new Error('A seller is required.')
+      return get(`reviews/sellers/${encodeURIComponent(sellerId)}${queryString(options)}`)
+    },
     getOrderSummary: (id) => get(`orders/${encodeURIComponent(id)}/summary`, { authenticated: true }),
     getMyOrders: (options = {}) => get(`orders/mine${queryString(options)}`, { authenticated: true }),
     getSellingOrders: (options = {}) => get(`orders/selling${queryString(options)}`, { authenticated: true }),

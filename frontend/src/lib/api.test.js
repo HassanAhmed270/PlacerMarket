@@ -443,3 +443,64 @@ test('FR-43, FR-43a, FR-43b: Buyer dispute filing sends reason and evidence to t
     evidenceUrls: ['https://evidence.example/photo.jpg'],
   })
 })
+
+test('FR-43, FR-43c, FR-27b: seller order mutation APIs use exact authenticated paths and bodies', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({}) }
+    },
+  })
+  client.setAccessToken('seller-memory-token')
+
+  await client.fileReturnRequest('order-1', { reason: 'The item arrived damaged.' })
+  await client.respondToReturnRequest('return-1', 'I will provide a pickup response.')
+  await client.submitCounterEvidence('dispute-1', {
+    responseText: 'The listing accurately described the item.',
+    evidenceUrls: ['https://evidence.example/counter.jpg'],
+  })
+  await client.addDisputeEvidence('dispute-1', { note: 'The buyer also confirmed the package condition.' })
+  await client.addDisputeEvidence('dispute-2', { mediaReference: 'https://evidence.example/photo.jpg' })
+  await client.getPartyDisputeEvidence('dispute-1')
+  await client.withdrawDispute('dispute-1')
+  await client.submitOrderReview('order-1', { rating: 5, body: 'Completed the handover promptly.' })
+  await client.reportReview('review-1', 'This review contains inappropriate content.')
+  await client.getSellerReviews('seller-1', { limit: 20, cursor: 'review-cursor' })
+
+  assert.deepEqual(calls.map(({ url, options }) => [url, options.method]), [
+    ['https://api.example.test/api/returns/orders/order-1', 'POST'],
+    ['https://api.example.test/api/returns/return-1/respond', 'POST'],
+    ['https://api.example.test/api/disputes/dispute-1/counter-evidence', 'POST'],
+    ['https://api.example.test/api/disputes/dispute-1/evidence', 'POST'],
+    ['https://api.example.test/api/disputes/dispute-2/evidence', 'POST'],
+    ['https://api.example.test/api/disputes/dispute-1/party-evidence', 'GET'],
+    ['https://api.example.test/api/disputes/dispute-1/withdraw', 'POST'],
+    ['https://api.example.test/api/orders/order-1/reviews', 'POST'],
+    ['https://api.example.test/api/reviews/review-1/reports', 'POST'],
+    ['https://api.example.test/api/reviews/sellers/seller-1?limit=20&cursor=review-cursor', 'GET'],
+  ])
+  assert.deepEqual(JSON.parse(calls[0].options.body), { reason: 'The item arrived damaged.' })
+  assert.deepEqual(JSON.parse(calls[1].options.body), { sellerNote: 'I will provide a pickup response.' })
+  assert.deepEqual(JSON.parse(calls[2].options.body), {
+    responseText: 'The listing accurately described the item.',
+    evidenceUrls: ['https://evidence.example/counter.jpg'],
+  })
+  assert.deepEqual(JSON.parse(calls[3].options.body), { note: 'The buyer also confirmed the package condition.' })
+  assert.deepEqual(JSON.parse(calls[4].options.body), { mediaReference: 'https://evidence.example/photo.jpg' })
+  assert.deepEqual(JSON.parse(calls[6].options.body), {})
+  assert.deepEqual(JSON.parse(calls[7].options.body), {
+    rating: 5,
+    body: 'Completed the handover promptly.',
+  })
+  assert.deepEqual(JSON.parse(calls[8].options.body), { reason: 'This review contains inappropriate content.' })
+  assert.ok(calls.slice(0, 9).every(({ options }) => options.headers.Authorization === 'Bearer seller-memory-token'))
+  assert.equal(calls[9].options.headers.Authorization, undefined)
+
+  let requestCount = calls.length
+  assert.throws(() => client.respondToReturnRequest('return-1', 'xx'), /3 to 300/)
+  assert.throws(() => client.submitOrderReview('order-1', { rating: 0 }), /1 to 5/)
+  assert.throws(() => client.addDisputeEvidence('dispute-1', { note: 'no' }), /3 to 500/)
+  assert.equal(calls.length, requestCount)
+})
