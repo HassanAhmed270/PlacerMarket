@@ -10,41 +10,65 @@ import {
   getSellerPayoutLabel,
   getSellerPayoutStatusLabel,
 } from './lib/sellerOrders.js'
+import {
+  getDisputeFlowLabel,
+  getReturnFlowLabel,
+  getSellerOrderAllowedActions,
+} from './lib/orderFlows.js'
 
 function SellerOrderPage({ orderId }) {
   const [order, setOrder] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [now, setNow] = useState(null)
+  const [success, setSuccess] = useState('')
+  const [busyAction, setBusyAction] = useState('')
+  const [returnNote, setReturnNote] = useState('')
+  const [counterResponse, setCounterResponse] = useState('')
+  const [counterEvidenceUrl, setCounterEvidenceUrl] = useState('')
+  const [evidenceNote, setEvidenceNote] = useState('')
+  const [evidenceUrl, setEvidenceUrl] = useState('')
+  const [partyEvidence, setPartyEvidence] = useState([])
+
+  async function refreshOrder(showLoading = false) {
+    if (showLoading) setLoading(true)
+    try {
+      if (!api.isAuthenticated()) {
+        const session = await api.refresh()
+        api.setAccessToken(session.accessToken)
+      }
+      const result = await api.getSellingOrder(orderId)
+      setNow(Date.now())
+      setOrder(result)
+      setError('')
+    } catch (cause) {
+      if (cause.status === 401 || cause.status === 403) {
+        const returnTo = `${window.location.pathname}${window.location.search}`
+        window.location.replace(`/login?${new URLSearchParams({ returnTo })}`)
+        return
+      }
+      setError(getCheckoutError(cause).message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    refreshOrder(true)
+    // orderId is the route key for this read.
+  }, [orderId])
 
   useEffect(() => {
     let active = true
-    async function loadOrder() {
-      try {
-        if (!api.isAuthenticated()) {
-          const session = await api.refresh()
-          api.setAccessToken(session.accessToken)
-        }
-        const result = await api.getSellingOrder(orderId)
-        if (active) {
-          setNow(Date.now())
-          setOrder(result)
-        }
-      } catch (cause) {
-        if (!active) return
-        if (cause.status === 401 || cause.status === 403) {
-          const returnTo = `${window.location.pathname}${window.location.search}`
-          window.location.replace(`/login?${new URLSearchParams({ returnTo })}`)
-          return
-        }
-        setError(getCheckoutError(cause).message)
-      } finally {
-        if (active) setLoading(false)
-      }
+    if (!order?.disputeId) {
+      setPartyEvidence([])
+      return undefined
     }
-    loadOrder()
+    api.getPartyDisputeEvidence(order.disputeId)
+      .then((result) => { if (active) setPartyEvidence(Array.isArray(result) ? result : []) })
+      .catch((cause) => { if (active) setError(getCheckoutError(cause).message) })
     return () => { active = false }
-  }, [orderId])
+  }, [order?.disputeId])
 
   if (loading) return <main className="route-loading" role="status">Loading your sale…</main>
   if (!order) {
@@ -67,6 +91,70 @@ function SellerOrderPage({ orderId }) {
   const earningsRows = getSellerEarningsRows(order)
   const payoutStatusLabel = getSellerPayoutStatusLabel(order.payout)
   const heldFundsBanner = getHeldFundsBanner(order)
+  const allowedActions = getSellerOrderAllowedActions(order)
+
+  async function respondToReturn(event) {
+    event.preventDefault()
+    if (busyAction || !order?.returnRequest?.id) return
+    setBusyAction('return')
+    setSuccess('')
+    setError('')
+    try {
+      await api.respondToReturnRequest(order.returnRequest.id, returnNote)
+      setSuccess('Your return response was sent. The Admin will decide the return.')
+      await refreshOrder()
+    } catch (cause) {
+      setError(getCheckoutError(cause).message)
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  async function submitCounter(event) {
+    event.preventDefault()
+    if (busyAction || !order?.disputeId) return
+    setBusyAction('counter')
+    setSuccess('')
+    setError('')
+    try {
+      await api.submitCounterEvidence(order.disputeId, {
+        responseText: counterResponse,
+        evidenceUrls: counterEvidenceUrl.trim() ? [counterEvidenceUrl.trim()] : [],
+      })
+      setSuccess('Your dispute response and evidence were submitted.')
+      setCounterResponse('')
+      setCounterEvidenceUrl('')
+      await refreshOrder()
+    } catch (cause) {
+      setError(getCheckoutError(cause).message)
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  async function submitEvidence(event) {
+    event.preventDefault()
+    if (busyAction || !order?.disputeId) return
+    setBusyAction('evidence')
+    setSuccess('')
+    setError('')
+    try {
+      if (evidenceNote.trim()) {
+        await api.addDisputeEvidence(order.disputeId, { note: evidenceNote })
+        setEvidenceNote('')
+      } else {
+        await api.addDisputeEvidence(order.disputeId, { mediaReference: evidenceUrl })
+        setEvidenceUrl('')
+      }
+      setSuccess('Your additional evidence was submitted.')
+      await refreshOrder()
+    } catch (cause) {
+      setError(getCheckoutError(cause).message)
+    } finally {
+      setBusyAction('')
+    }
+  }
+
 
   return (
     <main className="seller-order-page">
@@ -132,6 +220,100 @@ function SellerOrderPage({ orderId }) {
           <div><dt>Payout</dt><dd>{getSellerPayoutLabel(order.payoutHoldState)}</dd></div>
           {disputeLabel && <div><dt>Dispute</dt><dd>{disputeLabel}</dd></div>}
         </dl>
+        {success && <p className="seller-flow-success" role="status">{success}</p>}
+
+        {order.returnRequest && (
+          <section className="seller-flow-section" aria-labelledby="return-title">
+            <h2 id="return-title">Return request</h2>
+            <p>{getReturnFlowLabel(order.returnRequest.status)}</p>
+            <dl className="seller-flow-details">
+              <div><dt>Buyer reason</dt><dd>{order.returnRequest.reason || 'Reason unavailable'}</dd></div>
+              {order.returnRequest.sellerNote && <div><dt>Your response</dt><dd>{order.returnRequest.sellerNote}</dd></div>}
+              {order.returnRequest.createdAt && <div><dt>Requested</dt><dd><time dateTime={order.returnRequest.createdAt}>{new Date(order.returnRequest.createdAt).toLocaleString()}</time></dd></div>}
+              {order.returnRequest.respondedAt && <div><dt>Responded</dt><dd><time dateTime={order.returnRequest.respondedAt}>{new Date(order.returnRequest.respondedAt).toLocaleString()}</time></dd></div>}
+              {order.returnRequest.decidedAt && <div><dt>Decided</dt><dd><time dateTime={order.returnRequest.decidedAt}>{new Date(order.returnRequest.decidedAt).toLocaleString()}</time></dd></div>}
+            </dl>
+            {allowedActions.includes('respond_to_return') && (
+              <form className="seller-flow-form" onSubmit={respondToReturn}>
+                <label htmlFor="return-note">Your response note</label>
+                <textarea id="return-note" required minLength={3} maxLength={300} value={returnNote} onChange={(event) => {
+                  setReturnNote(event.currentTarget.value)
+                  setError('')
+                }} />
+                <button className="button button-primary" type="submit" disabled={busyAction === 'return'}>
+                  {busyAction === 'return' ? 'Sending…' : 'Send response'}
+                </button>
+              </form>
+            )}
+          </section>
+        )}
+
+        {order.disputeStatus && (
+          <section className="seller-flow-section" aria-labelledby="dispute-title">
+            <h2 id="dispute-title">Dispute</h2>
+            <p>{getDisputeFlowLabel(order.disputeStatus)}</p>
+            {order.disputeReason && <p><strong>Resolution reason:</strong> {order.disputeReason}</p>}
+            {order.disputeDecidedAt && (
+              <p>Decided <time dateTime={order.disputeDecidedAt}>{new Date(order.disputeDecidedAt).toLocaleString()}</time></p>
+            )}
+            {Array.isArray(order.disputeTimeline) && order.disputeTimeline.length > 0 && (
+              <ul className="seller-flow-timeline">
+                {order.disputeTimeline.map((item, index) => (
+                  <li key={`${item.event}-${item.at}-${index}`}>
+                    {item.event.replaceAll('_', ' ')}
+                    {item.at && <> — <time dateTime={item.at}>{new Date(item.at).toLocaleString()}</time></>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {allowedActions.includes('submit_counter_evidence') && (
+              <form className="seller-flow-form" onSubmit={submitCounter}>
+                <label htmlFor="counter-response">Your response</label>
+                <textarea id="counter-response" value={counterResponse} onChange={(event) => setCounterResponse(event.currentTarget.value)} />
+                <label htmlFor="counter-evidence">Evidence HTTPS link (optional)</label>
+                <input id="counter-evidence" type="url" value={counterEvidenceUrl} onChange={(event) => setCounterEvidenceUrl(event.currentTarget.value)} />
+                <button className="button button-primary" type="submit" disabled={busyAction === 'counter'}>
+                  {busyAction === 'counter' ? 'Submitting…' : 'Submit counter-evidence'}
+                </button>
+              </form>
+            )}
+            {allowedActions.includes('add_dispute_evidence') && (
+              <form className="seller-flow-form" onSubmit={submitEvidence}>
+                <label htmlFor="evidence-note">Additional text evidence (3 to 500 characters)</label>
+                <textarea id="evidence-note" value={evidenceNote} onChange={(event) => {
+                  setEvidenceNote(event.currentTarget.value)
+                  setEvidenceUrl('')
+                }} />
+                <label htmlFor="evidence-url">Or an HTTPS evidence link</label>
+                <input id="evidence-url" type="url" value={evidenceUrl} onChange={(event) => {
+                  setEvidenceUrl(event.currentTarget.value)
+                  setEvidenceNote('')
+                }} />
+                <button className="button button-primary" type="submit" disabled={busyAction === 'evidence'}>
+                  {busyAction === 'evidence' ? 'Submitting…' : 'Add evidence'}
+                </button>
+              </form>
+            )}
+            {partyEvidence.length > 0 && (
+              <div>
+                <h3>Your submitted evidence</h3>
+                <ul className="seller-flow-evidence">
+                  {partyEvidence.filter((item) => item.submittedBy === 'seller').map((item, index) => (
+                    <li key={`${item.createdAt}-${index}`}>
+                      {item.note && <span>{item.note}</span>}
+                      {item.mediaReference && (
+                        /^https:\/\//.test(item.mediaReference)
+                          ? <a href={item.mediaReference} target="_blank" rel="noopener noreferrer">Evidence link</a>
+                          : <span>Evidence link unavailable</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </section>
+        )}
+
         <p className="seller-order-pickup-note">Handover is recorded by our team after courier pickup.</p>
         <a className="checkout-back-link" href="/seller/orders">Back to My sales</a>
       </section>

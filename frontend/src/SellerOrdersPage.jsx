@@ -6,6 +6,7 @@ import {
   getSellerOrderStatusMessage,
   getSellerPayoutStatusLabel,
 } from './lib/sellerOrders.js'
+import { getDeliveryOutcomeLabel, getDisputeFlowLabel, getReturnFlowLabel } from './lib/orderFlows.js'
 
 const PAGE_SIZE = 20
 
@@ -90,6 +91,15 @@ function SellerOrdersPage() {
                   <span className="seller-order-summary">
                     <span className="seller-order-title">{order.title}</span>
                     <span>{status.title}</span>
+                    {order.returnRequest && (
+                      <span className="seller-flow-badge">Return: {getReturnFlowLabel(order.returnRequest.status)}</span>
+                    )}
+                    {order.disputeStatus && (
+                      <span className="seller-flow-badge">Dispute: {getDisputeFlowLabel(order.disputeStatus)}</span>
+                    )}
+                    {order.deliveryOutcome && (
+                      <span className="seller-flow-badge">Delivery: {getDeliveryOutcomeLabel(order.deliveryOutcome)}</span>
+                    )}
                     <span className="seller-payout-status">{getSellerPayoutStatusLabel(order.payout)}</span>
                     <span>{order.currency} {order.itemPrice}</span>
                     <span>{order.deliveryCity}</span>

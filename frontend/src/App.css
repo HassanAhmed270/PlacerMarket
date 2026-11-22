@@ -723,6 +723,28 @@ a:focus-visible {
 .seller-order-details dd { margin: 0; color: var(--green-950); font-size: 14px; overflow-wrap: anywhere; }
 .seller-order-overdue { color: var(--color-error-ink); }
 .seller-order-panel .checkout-back-link { margin-top: 16px; }
+.seller-flow-badge { width: fit-content; max-width: 100%; padding: 4px 8px; border: 1px solid var(--cream-200); background: var(--cream-100); color: var(--green-900); font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.seller-flow-section { margin: 22px 0 0; padding: 18px; border: 1px solid var(--cream-200); background: var(--cream-100); }
+.seller-flow-section h2 { margin: 0 0 10px; color: var(--green-950); font: 400 22px/1.2 var(--font-display); }
+.seller-flow-section h3 { margin: 16px 0 8px; color: var(--green-950); font-size: 15px; }
+.seller-flow-section p { line-height: 1.6; }
+.seller-flow-success { margin: 16px 0; padding: 12px; border: 1px solid #a9bda9; background: #edf4ed; color: var(--green-950); font-size: 13px; line-height: 1.6; }
+.seller-flow-details { display: grid; gap: 8px; margin: 12px 0; }
+.seller-flow-details div { display: grid; grid-template-columns: minmax(110px, 1fr) minmax(0, 2fr); gap: 12px; }
+.seller-flow-details dt { color: var(--muted); font-size: 13px; }
+.seller-flow-details dd { margin: 0; overflow-wrap: anywhere; }
+.seller-flow-form { display: grid; gap: 8px; margin-top: 14px; }
+.seller-flow-form label { color: var(--color-label); font-size: 13px; font-weight: 700; }
+.seller-flow-form input,
+.seller-flow-form textarea,
+.seller-flow-form select { width: 100%; min-height: 44px; padding: 10px 12px; border: 1px solid var(--color-control-border); border-radius: 3px; background: var(--color-white); color: var(--color-ink); font: inherit; }
+.seller-flow-form textarea { min-height: 92px; resize: vertical; }
+.seller-flow-form .button { width: fit-content; margin-top: 6px; border: 0; cursor: pointer; }
+.seller-flow-form .button:disabled { opacity: .55; cursor: wait; }
+.seller-flow-timeline,
+.seller-flow-evidence { margin: 10px 0 0; padding-left: 20px; }
+.seller-flow-timeline li,
+.seller-flow-evidence li { margin: 6px 0; overflow-wrap: anywhere; }
 .payment-return-page .order-panel > p { line-height: 1.7; }
 .payment-return-page .button { margin-top: 16px; }
 .newest-section { margin-top: 74px; }
@@ -846,6 +868,7 @@ a:focus-visible {
   .seller-orders-list img,
   .seller-order-image-placeholder { width: 64px; height: 76px; }
   .seller-order-details div { grid-template-columns: 1fr; gap: 4px; }
+  .seller-flow-details div { grid-template-columns: 1fr; gap: 4px; }
   .seller-earnings-details div { grid-template-columns: 1fr; gap: 4px; }
   .order-actions { align-items: stretch; flex-direction: column; }
   .order-actions .button { width: 100%; }
