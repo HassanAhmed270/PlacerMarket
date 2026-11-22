@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from './lib/api.js'
-import { getCheckoutError } from './lib/checkout.js'
 import {
   getHeldFundsBanner,
   getSellerDisputeLabel,
@@ -15,12 +14,12 @@ import {
   getDisputeFlowLabel,
   getReviewFlowLabel,
   getReturnFlowLabel,
+  getSellerFlowError,
   getSellerOrderAllowedActions,
 } from './lib/orderFlows.js'
 
 function SellerOrderPage({ orderId }) {
-  const [order, setOrder] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [orderResult, setOrderResult] = useState({ orderId: null, order: null })
   const [error, setError] = useState('')
   const [now, setNow] = useState(null)
   const [success, setSuccess] = useState('')
@@ -30,12 +29,17 @@ function SellerOrderPage({ orderId }) {
   const [counterEvidenceUrl, setCounterEvidenceUrl] = useState('')
   const [evidenceNote, setEvidenceNote] = useState('')
   const [evidenceUrl, setEvidenceUrl] = useState('')
-  const [partyEvidence, setPartyEvidence] = useState([])
+  const [partyEvidence, setPartyEvidence] = useState({ disputeId: null, items: [] })
   const [reviewRating, setReviewRating] = useState('')
   const [reviewBody, setReviewBody] = useState('')
 
-  async function refreshOrder(showLoading = false) {
-    if (showLoading) setLoading(true)
+  const order = orderResult.orderId === orderId ? orderResult.order : null
+  const loading = orderResult.orderId !== orderId
+  const visiblePartyEvidence = order?.disputeId === partyEvidence.disputeId
+    ? partyEvidence.items
+    : []
+
+  const refreshOrder = useCallback(async () => {
     try {
       if (!api.isAuthenticated()) {
         const session = await api.refresh()
@@ -43,34 +47,60 @@ function SellerOrderPage({ orderId }) {
       }
       const result = await api.getSellingOrder(orderId)
       setNow(Date.now())
-      setOrder(result)
+      setOrderResult({ orderId, order: result })
       setError('')
     } catch (cause) {
-      if (cause.status === 401 || cause.status === 403) {
+      if (cause?.status === 401 || cause?.status === 403) {
         const returnTo = `${window.location.pathname}${window.location.search}`
         window.location.replace(`/login?${new URLSearchParams({ returnTo })}`)
         return
       }
-      setError(getCheckoutError(cause).message)
-    } finally {
-      setLoading(false)
+      setError(getSellerFlowError(cause))
     }
-  }
-
-  useEffect(() => {
-    refreshOrder(true)
-    // orderId is the route key for this read.
   }, [orderId])
 
   useEffect(() => {
     let active = true
-    if (!order?.disputeId) {
-      setPartyEvidence([])
-      return undefined
+    async function loadOrder() {
+      try {
+        if (!api.isAuthenticated()) {
+          const session = await api.refresh()
+          api.setAccessToken(session.accessToken)
+        }
+        const result = await api.getSellingOrder(orderId)
+        if (!active) return
+        setNow(Date.now())
+        setOrderResult({ orderId, order: result })
+        setError('')
+      } catch (cause) {
+        if (!active) return
+        if (cause?.status === 401 || cause?.status === 403) {
+          const returnTo = `${window.location.pathname}${window.location.search}`
+          window.location.replace(`/login?${new URLSearchParams({ returnTo })}`)
+          return
+        }
+        setOrderResult({ orderId, order: null })
+        setError(getSellerFlowError(cause))
+      }
     }
-    api.getPartyDisputeEvidence(order.disputeId)
-      .then((result) => { if (active) setPartyEvidence(Array.isArray(result) ? result : []) })
-      .catch((cause) => { if (active) setError(getCheckoutError(cause).message) })
+    loadOrder()
+    return () => { active = false }
+  }, [orderId])
+
+  useEffect(() => {
+    let active = true
+    if (order?.disputeId) {
+      api.getPartyDisputeEvidence(order.disputeId)
+        .then((result) => {
+          if (active) {
+            setPartyEvidence({
+              disputeId: order.disputeId,
+              items: Array.isArray(result) ? result : [],
+            })
+          }
+        })
+        .catch((cause) => { if (active) setError(getSellerFlowError(cause)) })
+    }
     return () => { active = false }
   }, [order?.disputeId])
 
@@ -108,7 +138,7 @@ function SellerOrderPage({ orderId }) {
       setSuccess('Your return response was sent. The Admin will decide the return.')
       await refreshOrder()
     } catch (cause) {
-      setError(getCheckoutError(cause).message)
+      setError(getSellerFlowError(cause))
     } finally {
       setBusyAction('')
     }
@@ -130,7 +160,7 @@ function SellerOrderPage({ orderId }) {
       setCounterEvidenceUrl('')
       await refreshOrder()
     } catch (cause) {
-      setError(getCheckoutError(cause).message)
+      setError(getSellerFlowError(cause))
     } finally {
       setBusyAction('')
     }
@@ -153,7 +183,7 @@ function SellerOrderPage({ orderId }) {
       setSuccess('Your additional evidence was submitted.')
       await refreshOrder()
     } catch (cause) {
-      setError(getCheckoutError(cause).message)
+      setError(getSellerFlowError(cause))
     } finally {
       setBusyAction('')
     }
@@ -175,7 +205,7 @@ function SellerOrderPage({ orderId }) {
       setReviewBody('')
       await refreshOrder()
     } catch (cause) {
-      setError(getCheckoutError(cause).message)
+      setError(getSellerFlowError(cause))
     } finally {
       setBusyAction('')
     }
@@ -331,11 +361,11 @@ function SellerOrderPage({ orderId }) {
                 </button>
               </form>
             )}
-            {partyEvidence.length > 0 && (
+            {visiblePartyEvidence.length > 0 && (
               <div>
                 <h3>Your submitted evidence</h3>
                 <ul className="seller-flow-evidence">
-                  {partyEvidence.filter((item) => item.submittedBy === 'seller').map((item, index) => (
+                  {visiblePartyEvidence.filter((item) => item.submittedBy === 'seller').map((item, index) => (
                     <li key={`${item.createdAt}-${index}`}>
                       {item.note && <span>{item.note}</span>}
                       {item.mediaReference && (

@@ -1,3 +1,23 @@
+export function getSellerFlowError(error) {
+  const status = error?.status
+  const message = typeof error?.message === 'string' ? error.message.trim() : ''
+  const serverMessage = typeof error?.payload?.error === 'string'
+    ? error.payload.error.trim()
+    : ''
+
+  if (typeof status !== 'number' && message) return error.message
+  if ((status === 0 || status === undefined) && !message) {
+    return 'Could not reach the marketplace. Check your connection and retry.'
+  }
+  if ([400, 409, 422].includes(status)) {
+    return serverMessage || 'This action is no longer available. Refresh the page and try again.'
+  }
+  if (status === 401 || status === 403) return 'Your session expired. Sign in again.'
+  if (status === 404) return 'This item could not be found.'
+  if (status === 429) return 'Too many attempts. Please wait a moment and try again.'
+  return 'The request could not be completed. Please try again.'
+}
+
 export function getReturnFlowLabel(status) {
   const labels = {
     requested: 'Return requested; the Admin has not decided it yet.',
@@ -40,11 +60,7 @@ export function getSellerOrderAllowedActions(order) {
   if (order?.returnRequest?.status === 'requested') actions.push('respond_to_return')
   if (order?.disputeActions?.canCounter) actions.push('submit_counter_evidence')
   if (order?.disputeActions?.canAddEvidence) actions.push('add_dispute_evidence')
-  if (order?.status === 'completed' && !order?.myReview &&
-      !order?.disputeStatus && !order?.returnStatus &&
-      !order?.disputeActions?.canCounter && !order?.disputeActions?.canAddEvidence &&
-      order?.returnRequest?.status !== 'requested' &&
-      !order?.chargebacks?.length) {
+  if (order?.status === 'completed' && !order?.myReview) {
     actions.push('review_buyer')
   }
   return actions
