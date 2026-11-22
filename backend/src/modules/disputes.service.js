@@ -46,6 +46,22 @@ function validateDisputeId(disputeId) {
   }
 }
 
+/** FR-43c: return the shared dispute action predicates used by mutation and read routes. */
+function getDisputeActionPredicates(dispute) {
+  const status = dispute?.status ?? null;
+  const sellerResponded = Boolean(dispute?.sellerRespondedAt || dispute?.seller_responded_at);
+  return {
+    seller: {
+      canCounter: status === 'open',
+      canAddEvidence: ['open', 'seller_responded'].includes(status),
+    },
+    buyer: {
+      canWithdraw: status === 'open' && !sellerResponded,
+      canAddEvidence: ['open', 'seller_responded'].includes(status),
+    },
+  };
+}
+
 function normalizeAdditionalEvidence(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new ValidationError('Evidence must contain a note or mediaReference.');
@@ -207,7 +223,7 @@ async function fileDispute(orderId, buyerId, { reasonText, evidenceUrls }, {
 /** FR-43: report whether a buyer may file against an order and expose its filing limit. */
 async function getBuyerDisputeFilingStatus(order) {
   const { rows } = await db.read(
-    `SELECT id, status, outcome, resolution_note, resolved_at
+    `SELECT id, status, outcome, resolution_note, resolved_at, seller_responded_at
      FROM disputes WHERE order_id = $1 LIMIT 1`,
     [order.orderId]
   );
@@ -223,6 +239,8 @@ async function getBuyerDisputeFilingStatus(order) {
     withinComplaintWindow = new Date() <= windowCloses;
   }
   return {
+    disputeId: existing?.id ?? null,
+    disputeActions: getDisputeActionPredicates(existing).buyer,
     canFileDispute: Boolean(
       order.deliveredAt &&
       !existing &&
@@ -258,7 +276,9 @@ async function submitCounterEvidence(disputeId, sellerId, { responseText, eviden
     );
     const dispute = disputeRows[0];
     if (!dispute) throw new NotFoundError('dispute', disputeId);
-    if (dispute.status !== 'open') throw new ConflictError('This dispute is no longer open.');
+    if (!getDisputeActionPredicates(dispute).seller.canCounter) {
+      throw new ConflictError('This dispute is no longer open.');
+    }
 
     const orderParties = await orders.getDeliveryOrderParties(dispute.order_id);
     if (!orderParties || orderParties.seller_id !== sellerId) {
@@ -313,7 +333,8 @@ async function addDisputeEvidence(disputeId, actorId, input) {
     );
     const dispute = disputeRows[0];
     if (!dispute) throw new NotFoundError('dispute', disputeId);
-    if (!['open', 'seller_responded'].includes(dispute.status)) {
+    if (!getDisputeActionPredicates(dispute).seller.canAddEvidence &&
+        !getDisputeActionPredicates(dispute).buyer.canAddEvidence) {
       throw new ConflictError('Evidence cannot be added after a dispute is decided.');
     }
     const orderParties = await orders.getDeliveryOrderParties(dispute.order_id);
@@ -436,7 +457,7 @@ async function withdrawDispute(disputeId, buyerId, {
     if (dispute.raised_by !== buyerId) {
       throw new ForbiddenError('Only the buyer who filed the dispute may withdraw it.');
     }
-    if (dispute.status !== 'open' || dispute.seller_responded_at) {
+    if (!getDisputeActionPredicates(dispute).buyer.canWithdraw) {
       throw new ConflictError('A dispute can only be withdrawn before a seller response or decision.');
     }
     const { rows: updated } = await client.query(
@@ -688,6 +709,35 @@ async function getSellerOrderDisputeStatuses(orderIds) {
   return rows.map((row) => ({
     orderId: row.order_id,
     ...formatDisputeRead({ ...row, timeline: timelines.get(row.id) || [] }),
+  }));
+}
+
+/** FR-34, FR-43c: return latest dispute read fields and shared action predicates for buyer/seller order lists. */
+async function getOrderDisputeStatuses(orderIds) {
+  if (!Array.isArray(orderIds)) throw new ValidationError('orderIds must be an array.');
+  if (!orderIds.length) return [];
+  const { rows } = await db.read(
+    `SELECT DISTINCT ON (d.order_id)
+            d.order_id, d.id, d.status, d.outcome, d.resolution_note,
+            d.resolved_at, d.seller_responded_at
+     FROM disputes d
+     WHERE d.order_id = ANY($1::uuid[])
+     ORDER BY d.order_id, d.created_at DESC, d.id DESC`,
+    [orderIds]
+  );
+  const timelines = await getDisputeTimelines(rows.map((row) => row.id));
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    disputeId: row.id,
+    status: row.status,
+    outcome: row.outcome ?? null,
+    reason: row.resolution_note ?? null,
+    decidedAt: row.resolved_at ?? null,
+    timeline: timelines.get(row.id) || [],
+    disputeActions: getDisputeActionPredicates({
+      status: row.status,
+      sellerRespondedAt: row.seller_responded_at,
+    }),
   }));
 }
 
@@ -1013,6 +1063,8 @@ module.exports = {
   getDisputeEvidence,
   getAdminOrderDisputes,
   getSellerOrderDisputeStatuses,
+  getOrderDisputeStatuses,
+  getDisputeActionPredicates,
   resolveDispute,
   hasOpenDispute,
   hasOpenDisputeInTransaction,

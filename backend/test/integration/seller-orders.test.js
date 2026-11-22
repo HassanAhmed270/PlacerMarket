@@ -24,7 +24,10 @@ const SELLER_ORDER_KEYS = [
   'currency',
   'deliveredAt',
   'deliveryCity',
+  'deliveryOutcome',
+  'disputeActions',
   'disputeDecidedAt',
+  'disputeId',
   'disputeOutcome',
   'disputeReason',
   'disputeStatus',
@@ -43,6 +46,7 @@ const SELLER_ORDER_KEYS = [
   'payoutHoldState',
   'returnDecidedAt',
   'returnOutcome',
+  'returnRequest',
   'returnStatus',
   'reviewOfMe',
   'status',
@@ -268,6 +272,11 @@ describe('FR-34 seller reservation-backed order reads', () => {
       status: 'delivered',
       payoutHoldState: 'paused_for_dispute',
       disputeStatus: 'open',
+      disputeId: disputes[0].id,
+      disputeActions: {
+        canCounter: true,
+        canAddEvidence: true,
+      },
     });
     expect(JSON.stringify(filed.body)).not.toContain('Test dispute reason must not be returned.');
 
@@ -279,7 +288,12 @@ describe('FR-34 seller reservation-backed order reads', () => {
       `UPDATE payout_holds SET state = 'held' WHERE order_id = $1`,
       [scenario.orderId]
     );
-    expect((await readDetail()).body.disputeStatus).toBe('resolved_release');
+    const resolved = await readDetail();
+    expect(resolved.body.disputeStatus).toBe('resolved_release');
+    expect(resolved.body.disputeActions).toEqual({
+      canCounter: false,
+      canAddEvidence: false,
+    });
 
     const cancelledScenario = await createScenario(harness);
     scenarios.push(cancelledScenario);

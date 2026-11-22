@@ -15,6 +15,28 @@ const moneyAudit = require('../../src/modules/moneyAudit.service');
 const eventBus = require('../../src/lib/eventBus');
 const { NotFoundError } = require('../../src/lib/errors');
 
+describe('FR-43c dispute action predicates', () => {
+  test('FR-43c: open, responded, decided, and withdrawn disputes expose shared seller and buyer actions', () => {
+    expect(disputes.getDisputeActionPredicates({ status: 'open' })).toEqual({
+      seller: { canCounter: true, canAddEvidence: true },
+      buyer: { canWithdraw: true, canAddEvidence: true },
+    });
+    expect(disputes.getDisputeActionPredicates({
+      status: 'seller_responded',
+      sellerRespondedAt: '2026-11-20T10:00:00Z',
+    })).toEqual({
+      seller: { canCounter: false, canAddEvidence: true },
+      buyer: { canWithdraw: false, canAddEvidence: true },
+    });
+    for (const status of ['resolved_refund', 'resolved_release', 'resolved_other', 'withdrawn']) {
+      expect(disputes.getDisputeActionPredicates({ status })).toEqual({
+        seller: { canCounter: false, canAddEvidence: false },
+        buyer: { canWithdraw: false, canAddEvidence: false },
+      });
+    }
+  });
+});
+
 function fileDispute(orderId, buyerId, input, dependencies = {}) {
   return disputes.fileDispute(orderId, buyerId, input, {
     getOrderPayoutStatus: jest.fn().mockResolvedValue(null),

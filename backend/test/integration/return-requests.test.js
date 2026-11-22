@@ -176,6 +176,33 @@ afterEach(async () => {
 });
 
 describe('FR-43, FR-56 returns', () => {
+  test('FR-43, FR-56: seller and buyer reads select the latest return request', async () => {
+    await db.query(
+      `INSERT INTO return_requests
+         (id, order_id, buyer_id, reason, status, decided_by, decision_note, decided_at, created_at)
+       VALUES
+         ($1, $2, $3, 'Older return reason', 'rejected', $5, 'Older return decision',
+          now() - INTERVAL '2 hours', now() - INTERVAL '2 hours'),
+         ($4, $2, $3, 'Latest return reason', 'requested', NULL, NULL, NULL,
+          now() - INTERVAL '1 hour')`,
+      [
+        crypto.randomUUID(), scenario.orderId, scenario.buyerId,
+        crypto.randomUUID(),
+        harness.adminId,
+      ]
+    );
+    const seller = await httpRequest(getApp())
+      .get(`/api/orders/selling/${scenario.orderId}`)
+      .set('Authorization', authHeader(scenario.sellerId))
+      .expect(200);
+    const buyer = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+    expect(seller.body.returnRequest.reason).toBe('Latest return reason');
+    expect(buyer.body.returnRequest.reason).toBe('Latest return reason');
+    await db.query('DELETE FROM return_requests WHERE order_id = $1', [scenario.orderId]);
+  });
   test('FR-43: a delivered buyer can file one return, pauses payout, and buyer/seller reads hide Admin identity', async () => {
     const filed = await createReturn();
     expect(filed.body).toMatchObject({
@@ -200,10 +227,26 @@ describe('FR-43, FR-56 returns', () => {
     expect(buyerSummary.body.returnRequest).toMatchObject({
       status: 'requested',
       outcome: null,
+      id: filed.body.returnId,
+      reason: 'The item is not as described.',
+      sellerNote: null,
+      createdAt: expect.any(String),
+      respondedAt: null,
+      decidedAt: null,
     });
     expect(sellerOrder.body).toMatchObject({
       returnStatus: 'requested',
       returnOutcome: null,
+      returnRequest: {
+        id: filed.body.returnId,
+        status: 'requested',
+        outcome: null,
+        reason: 'The item is not as described.',
+        sellerNote: null,
+        createdAt: expect.any(String),
+        respondedAt: null,
+        decidedAt: null,
+      },
     });
     expect(JSON.stringify([buyerSummary.body.returnRequest, sellerOrder.body]))
       .not.toMatch(/decidedBy|decided_by|adminId|admin_id/i);
@@ -297,6 +340,16 @@ describe('FR-43, FR-56 returns', () => {
       returnId: filed.body.returnId,
       status: 'seller_responded',
       sellerNote: 'I disagree with the return reason.',
+    });
+    const buyerAfterResponse = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+    expect(buyerAfterResponse.body.returnRequest).toMatchObject({
+      status: 'seller_responded',
+      reason: 'The item is not as described.',
+      sellerNote: 'I disagree with the return reason.',
+      respondedAt: expect.any(String),
     });
     const secondResponse = await httpRequest(getApp())
       .post(`/api/returns/${filed.body.returnId}/respond`)

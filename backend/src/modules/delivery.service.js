@@ -989,6 +989,37 @@ async function getAdminOrderDeliveryMetadata(orderId) {
   };
 }
 
+/** FR-33b: return the latest safe delivery outcome for owner-scoped order reads. */
+async function getOrderDeliveryOutcomes(orderIds) {
+  if (!Array.isArray(orderIds)) throw new ValidationError('orderIds must be an array.');
+  if (!orderIds.length) return [];
+  const { rows } = await db.read(
+    `SELECT DISTINCT ON (order_id)
+            order_id, outcome, recorded_at
+     FROM delivery_outcomes
+     WHERE order_id = ANY($1::uuid[])
+       AND outcome IN ('refused', 'lost')
+     ORDER BY order_id, recorded_at DESC, id DESC`,
+    [orderIds]
+  );
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    deliveryOutcome: {
+      outcome: row.outcome,
+      recordedAt: row.recorded_at,
+    },
+  }));
+}
+
+/** FR-33b: return one latest safe delivery outcome for an owner-scoped order read. */
+async function getOrderDeliveryOutcome(orderId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)) {
+    throw new ValidationError('orderId must be a UUID.');
+  }
+  const rows = await getOrderDeliveryOutcomes([orderId]);
+  return rows[0]?.deliveryOutcome ?? null;
+}
+
 /** FR-33b: expose only the delivery-outcome record to Moderator/Ops readers. */
 async function getDeliveryOutcomes(orderId) {
   if (typeof orderId !== 'string' || !UUID.test(orderId)) {
@@ -1097,4 +1128,6 @@ module.exports = {
   getAdminOrderDetail,
   getAdminOrderDeliveryMetadata,
   getDeliveryOutcomes,
+  getOrderDeliveryOutcomes,
+  getOrderDeliveryOutcome,
 };

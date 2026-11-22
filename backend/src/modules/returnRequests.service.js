@@ -349,6 +349,42 @@ async function getOrderReturnStatuses(orderIds) {
   }));
 }
 
+/** FR-43, FR-56: expose the latest full return record to owner-scoped order reads. */
+async function getOrderReturnRequests(orderIds) {
+  if (!Array.isArray(orderIds)) throw new ValidationError('orderIds must be an array.');
+  if (orderIds.length === 0) return [];
+  const { rows } = await db.read(
+    `SELECT DISTINCT ON (order_id)
+            id, order_id, reason, status, seller_note, responded_at, decided_at, created_at
+     FROM return_requests
+     WHERE order_id = ANY($1::uuid[])
+     ORDER BY order_id, created_at DESC, id DESC`,
+    [orderIds]
+  );
+  return rows.map((row) => ({
+    orderId: row.order_id,
+    returnRequest: {
+      id: row.id,
+      status: row.status,
+      outcome: decisionOutcome(row.status),
+      reason: row.reason,
+      sellerNote: row.seller_note ?? null,
+      createdAt: row.created_at,
+      respondedAt: row.responded_at ?? null,
+      decidedAt: row.decided_at ?? null,
+    },
+  }));
+}
+
+/** FR-43, FR-56: expose one latest return record for a single owner-scoped order read. */
+async function getOrderReturnRequest(orderId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)) {
+    throw new ValidationError('orderId must be a UUID.');
+  }
+  const rows = await getOrderReturnRequests([orderId]);
+  return rows[0]?.returnRequest ?? null;
+}
+
 /** FR-43, FR-56: report whether an order has an open return request in a caller transaction. */
 async function hasOpenReturnRequest(client, orderId) {
   const { rows } = await client.query(
@@ -415,6 +451,8 @@ module.exports = {
   decideReturnRequest,
   getOrderReturnStatus,
   getOrderReturnStatuses,
+  getOrderReturnRequests,
+  getOrderReturnRequest,
   hasOpenReturnRequest,
   listAdminReturnRequests,
   getAdminReturnRequest,

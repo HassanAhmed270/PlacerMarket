@@ -208,6 +208,17 @@ describe('record-only refused delivery', () => {
       note: 'Buyer refused delivery at the door.',
       recordedAt: expect.any(String),
     });
+    const sellerOutcome = await request(getApp())
+      .get(`/api/orders/selling/${scenario.orderId}`)
+      .set('Authorization', authHeader(scenario.sellerId))
+      .expect(200);
+    expect(sellerOutcome.body.deliveryOutcome).toEqual({
+      outcome: 'refused',
+      recordedAt: expect.any(String),
+    });
+    expect(Object.keys(sellerOutcome.body.deliveryOutcome).sort()).toEqual(['outcome', 'recordedAt']);
+    expect(sellerOutcome.body.deliveryOutcome).not.toHaveProperty('note');
+    expect(sellerOutcome.body.deliveryOutcome).not.toHaveProperty('recordedBy');
 
     const { rows: orderRows } = await db.query(
       `SELECT status,
@@ -329,6 +340,23 @@ describe('Admin lost-parcel handling', () => {
         sellerAtFault: false,
       },
     });
+    for (const [userId, path] of [
+      [scenario.sellerId, `/api/orders/selling/${scenario.orderId}`],
+      [scenario.buyerId, `/api/orders/${scenario.orderId}/summary`],
+    ]) {
+      const ownerRead = await request(getApp())
+        .get(path)
+        .set('Authorization', authHeader(userId))
+        .expect(200);
+      const deliveryOutcome = ownerRead.body.deliveryOutcome;
+      expect(deliveryOutcome).toEqual({
+        outcome: 'lost',
+        recordedAt: expect.any(String),
+      });
+      expect(Object.keys(deliveryOutcome).sort()).toEqual(['outcome', 'recordedAt']);
+      expect(deliveryOutcome).not.toHaveProperty('note');
+      expect(deliveryOutcome).not.toHaveProperty('recordedBy');
+    }
     expect(minorUnits(response.body.refund.amount)).toBe(
       minorUnits(response.body.refund.itemAmount) +
       minorUnits(response.body.refund.deliveryFeeAmount)
