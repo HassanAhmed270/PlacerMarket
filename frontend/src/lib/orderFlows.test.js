@@ -14,6 +14,32 @@ test('seller flow error rule a preserves client validation messages without an H
     'Rating must be between 1 and 5')
 })
 
+test('seller flow TypeError fetch failures return the connection message', () => {
+  assert.equal(getSellerFlowError(new TypeError('Failed to fetch')),
+    'Could not reach the marketplace. Check your connection and retry.')
+})
+
+test('seller flow AbortError and NetworkError failures return the connection message', () => {
+  const expected = 'Could not reach the marketplace. Check your connection and retry.'
+  assert.equal(getSellerFlowError(new DOMException('Request aborted', 'AbortError')), expected)
+  const abortError = new Error('Request aborted')
+  abortError.name = 'AbortError'
+  assert.equal(getSellerFlowError(abortError), expected)
+  const networkError = new Error('Network failed')
+  networkError.name = 'NetworkError'
+  assert.equal(getSellerFlowError(networkError), expected)
+})
+
+test('seller flow plain Error validation messages remain visible', () => {
+  assert.equal(getSellerFlowError(new Error('Evidence note must be 3 to 500 characters.')),
+    'Evidence note must be 3 to 500 characters.')
+})
+
+test('seller flow ApiError-like status 500 uses the generic message', () => {
+  assert.equal(getSellerFlowError({ name: 'ApiError', status: 500, message: 'Server details' }),
+    'The request could not be completed. Please try again.')
+})
+
 test('seller flow error rule b gives a connection message for status 0 or missing status without a message', () => {
   const expected = 'Could not reach the marketplace. Check your connection and retry.'
   assert.equal(getSellerFlowError({ status: 0 }), expected)

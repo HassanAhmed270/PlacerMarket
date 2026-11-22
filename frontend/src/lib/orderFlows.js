@@ -5,6 +5,10 @@ export function getSellerFlowError(error) {
     ? error.payload.error.trim()
     : ''
 
+  if (error instanceof TypeError ||
+      ['TypeError', 'AbortError', 'NetworkError'].includes(error?.name)) {
+    return 'Could not reach the marketplace. Check your connection and retry.'
+  }
   if (typeof status !== 'number' && message) return error.message
   if ((status === 0 || status === undefined) && !message) {
     return 'Could not reach the marketplace. Check your connection and retry.'
