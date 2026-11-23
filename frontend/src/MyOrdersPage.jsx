@@ -58,11 +58,9 @@ function MyOrdersPage() {
                   <span className="my-order-title">{order.title}</span>
                   <span>{status.title}</span>
                   <span>{formatPkr(order.total)}</span>
-                  <span className="seller-flow-badge">
-                    {order.returnRequest?.status
-                      ? getReturnFlowLabel(order.returnRequest.status)
-                      : 'No return filed'}
-                  </span>
+                  {order.returnRequest?.status && (
+                    <span className="seller-flow-badge">{getReturnFlowLabel(order.returnRequest.status)}</span>
+                  )}
                   {order.disputeId && (
                     <span className="seller-flow-badge">
                       {getDisputeFlowLabel(order.disputeStatus)}
