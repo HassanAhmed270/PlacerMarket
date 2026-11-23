@@ -184,6 +184,25 @@ describe('FR-43, FR-56 returns', () => {
     expect(buyerSummary.body.returnFiling).toEqual({ canRequestReturn: true });
   });
 
+  test('FR-43: a delivered order without a payout hold still returns a complete summary', async () => {
+    const before = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+    await db.query('DELETE FROM payout_holds WHERE order_id = $1', [scenario.orderId]);
+
+    const after = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+
+    const { returnFiling: _beforeReturnFiling, ...beforeFields } = before.body;
+    expect(after.body).toEqual({
+      ...beforeFields,
+      returnFiling: { canRequestReturn: false },
+    });
+  });
+
   test('FR-43: the buyer summary hides return filing before delivery', async () => {
     await db.query(
       'UPDATE orders SET delivered_at = NULL, status = $2 WHERE id = $1',

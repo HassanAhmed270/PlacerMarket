@@ -349,8 +349,13 @@ async function getReturnFilingStatus(orderId) {
     );
     if (!orderRows[0]?.delivered_at) return { canRequestReturn: false };
 
-    const hold = await payout.getReservationOrderHold(client, orderId);
-    if (!hold) return { canRequestReturn: false };
+    let hold;
+    try {
+      hold = await payout.getReservationOrderHold(client, orderId);
+    } catch (cause) {
+      if (cause instanceof NotFoundError) return { canRequestReturn: false };
+      throw cause;
+    }
     if (await disputes.hasOpenDisputeInTransaction(client, orderId)) {
       return { canRequestReturn: false };
     }

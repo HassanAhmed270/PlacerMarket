@@ -86,6 +86,11 @@ afterEach(async () => {
   try {
     if (fixture) await cleanupListingProjections(fixture.listingId);
     if (orderIds?.length) {
+      await db.query(
+        'DELETE FROM dispute_evidence WHERE dispute_id IN (SELECT id FROM disputes WHERE order_id = ANY($1::uuid[]))',
+        [orderIds]
+      );
+      await db.query('DELETE FROM disputes WHERE order_id = ANY($1::uuid[])', [orderIds]);
       await db.query('DELETE FROM payments WHERE order_id = ANY($1::uuid[])', [orderIds]);
       await db.query('DELETE FROM orders WHERE id = ANY($1::uuid[])', [orderIds]);
     }
@@ -213,7 +218,7 @@ describe('FR-61, FR-62 buyer order reads', () => {
     expect(response.body).toHaveLength(1);
     expect(Object.keys(response.body[0]).sort()).toEqual([
       'chargebacks', 'createdAt', 'currency', 'deliveryOutcome', 'disputeActions', 'disputeId',
-      'listingId', 'myReview', 'orderId', 'reservationExpiresAt', 'returnDecidedAt',
+      'disputeStatus', 'listingId', 'myReview', 'orderId', 'reservationExpiresAt', 'returnDecidedAt',
       'returnOutcome', 'returnRequest', 'returnStatus', 'reviewOfMe', 'status', 'title', 'total',
     ]);
     expect(response.body[0]).toMatchObject({
@@ -226,6 +231,7 @@ describe('FR-61, FR-62 buyer order reads', () => {
       returnStatus: null,
       returnOutcome: null,
       returnDecidedAt: null,
+      disputeStatus: null,
       myReview: null,
       reviewOfMe: null,
       chargebacks: [],
@@ -233,6 +239,20 @@ describe('FR-61, FR-62 buyer order reads', () => {
     expect(typeof response.body[0].reservationExpiresAt).toBe('string');
     expect(JSON.stringify(response.body)).not.toContain(fixture.userId);
     expect(JSON.stringify(response.body)).not.toContain(otherBuyerId);
+
+    await db.query(
+      `INSERT INTO disputes (order_id, raised_by, reason_text, status)
+       VALUES ($1, $2, 'The delivered item differs from the listing.', 'open')`,
+      [reservation.orderId, buyerId]
+    );
+    const disputedOrders = await request(mountedApiApp())
+      .get('/api/orders/mine?limit=20')
+      .set('Authorization', authHeader(buyerId))
+      .expect(200);
+    expect(disputedOrders.body[0].disputeStatus).toBe('open');
+    for (const field of ['disputeTimeline', 'disputeReason', 'disputeOutcome', 'disputeDecidedAt']) {
+      expect(disputedOrders.body[0]).not.toHaveProperty(field);
+    }
 
     const otherBuyerOrders = await request(mountedApiApp())
       .get('/api/orders/mine')
