@@ -272,9 +272,13 @@ export function createApiClient({
     submitOrderReview: (orderId, input) => {
       if (typeof orderId !== 'string' || !orderId.trim()) throw new Error('An order is required.')
       if (!input || typeof input !== 'object' || Array.isArray(input) ||
-          Object.keys(input).some((key) => !['rating', 'body'].includes(key)) ||
+          Object.keys(input).some((key) => !['rating', 'itemRating', 'body'].includes(key)) ||
           !Number.isInteger(input.rating) || input.rating < 1 || input.rating > 5) {
         throw new Error('Review rating must be an integer from 1 to 5.')
+      }
+      if (Object.hasOwn(input, 'itemRating') && input.itemRating !== null && input.itemRating !== undefined &&
+          (!Number.isInteger(input.itemRating) || input.itemRating < 1 || input.itemRating > 5)) {
+        throw new Error('Item rating must be an integer from 1 to 5.')
       }
       if (Object.hasOwn(input, 'body') && input.body !== null && input.body !== undefined &&
           (typeof input.body !== 'string' || input.body.trim().length < 3 || input.body.trim().length > 1000)) {
@@ -282,6 +286,7 @@ export function createApiClient({
       }
       return post(`orders/${encodeURIComponent(orderId)}/reviews`, {
         rating: input.rating,
+        ...(Object.hasOwn(input, 'itemRating') ? { itemRating: input.itemRating === null ? null : input.itemRating } : {}),
         ...(Object.hasOwn(input, 'body') ? { body: input.body === null ? null : input.body.trim() } : {}),
       }, { authenticated: true })
     },

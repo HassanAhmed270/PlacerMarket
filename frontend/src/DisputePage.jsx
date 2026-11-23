@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
-import { getCheckoutError } from './lib/checkout.js'
+import { getOrderFlowError } from './lib/orderFlows.js'
 import { getHttpsEvidenceHref, validateDisputeForm } from './lib/disputes.js'
 
 function EvidenceValue({ value }) {
@@ -37,7 +37,7 @@ export default function DisputePage({ orderId }) {
           window.location.replace(`/login?${new URLSearchParams({ returnTo })}`)
           return
         }
-        setError(cause?.payload?.error || getCheckoutError(cause).message)
+        setError(getOrderFlowError(cause))
       } finally {
         if (active) setLoading(false)
       }
@@ -68,7 +68,7 @@ export default function DisputePage({ orderId }) {
       })
       setFiledDispute(result)
     } catch (cause) {
-      setError(cause?.payload?.error || getCheckoutError(cause).message)
+      setError(getOrderFlowError(cause))
     } finally {
       setBusy(false)
     }

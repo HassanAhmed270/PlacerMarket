@@ -196,3 +196,10 @@ test('FR-43: buyer no-chargeback action table ignores chargeback data', () => {
     chargebacks: [{ status: 'open' }],
   })).includes('chargeback'), false)
 })
+
+test('FR-43: buyer review action is not blocked by an open dispute mutation guard', () => {
+  assert.deepEqual(getBuyerOrderAllowedActions({
+    status: 'completed',
+    disputeStatus: 'open',
+  }), ['review_seller'])
+})

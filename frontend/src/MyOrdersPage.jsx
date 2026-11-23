@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
 import { getCheckoutError, getOrderStatusMessage } from './lib/checkout.js'
+import {
+  getDeliveryOutcomeLabel,
+  getDisputeFlowLabel,
+  getReturnFlowLabel,
+  getReviewFlowLabel,
+} from './lib/orderFlows.js'
+import { formatPkr } from './lib/payouts.js'
 
 function MyOrdersPage() {
   const [orders, setOrders] = useState([])
@@ -50,7 +57,27 @@ function MyOrdersPage() {
                 <a href={`/orders/${encodeURIComponent(order.orderId)}`}>
                   <span className="my-order-title">{order.title}</span>
                   <span>{status.title}</span>
-                  <span>{order.currency} {order.total}</span>
+                  <span>{formatPkr(order.total)}</span>
+                  <span className="seller-flow-badge">
+                    {order.returnRequest?.status
+                      ? getReturnFlowLabel(order.returnRequest.status)
+                      : 'No return filed'}
+                  </span>
+                  {order.disputeId && (
+                    <span className="seller-flow-badge">
+                      {getDisputeFlowLabel(order.disputeStatus)}
+                    </span>
+                  )}
+                  {order.deliveryOutcome && ['refused', 'lost'].includes(order.deliveryOutcome.outcome) && (
+                    <span className="seller-flow-badge">{getDeliveryOutcomeLabel(order.deliveryOutcome)}</span>
+                  )}
+                  {order.status === 'completed' && (
+                    <span className="seller-flow-badge">
+                      {order.myReview
+                        ? getReviewFlowLabel(order.myReview)
+                        : 'Review the seller'}
+                    </span>
+                  )}
                   <span className="my-order-date">{new Date(order.createdAt).toLocaleDateString()}</span>
                 </a>
               </li>

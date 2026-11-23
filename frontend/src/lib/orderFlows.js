@@ -24,6 +24,7 @@ export function getOrderFlowError(error) {
 
 export const getSellerFlowError = getOrderFlowError
 
+
 export function getReturnFlowLabel(status) {
   const labels = {
     requested: 'Return requested; the Admin has not decided it yet.',
@@ -66,7 +67,7 @@ export function getSellerOrderAllowedActions(order) {
   if (order?.returnRequest?.status === 'requested') actions.push('respond_to_return')
   if (order?.disputeActions?.canCounter) actions.push('submit_counter_evidence')
   if (order?.disputeActions?.canAddEvidence) actions.push('add_dispute_evidence')
-  if (order?.status === 'completed' && !order?.myReview) {
+  if (order?.status === 'completed' && !order?.myReview && !order?.disputeFiling?.disputeStatus) {
     actions.push('review_buyer')
   }
   return actions

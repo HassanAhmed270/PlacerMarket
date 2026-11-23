@@ -465,7 +465,7 @@ test('FR-43, FR-43c, FR-27b: seller order mutation APIs use exact authenticated 
   await client.addDisputeEvidence('dispute-2', { mediaReference: 'https://evidence.example/photo.jpg' })
   await client.getPartyDisputeEvidence('dispute-1')
   await client.withdrawDispute('dispute-1')
-  await client.submitOrderReview('order-1', { rating: 5, body: 'Completed the handover promptly.' })
+  await client.submitOrderReview('order-1', { rating: 5, itemRating: 4, body: 'Completed the handover promptly.' })
   await client.reportReview('review-1', 'This review contains inappropriate content.')
   await client.getSellerReviews('seller-1', { limit: 20, cursor: 'review-cursor' })
 
@@ -492,6 +492,7 @@ test('FR-43, FR-43c, FR-27b: seller order mutation APIs use exact authenticated 
   assert.deepEqual(JSON.parse(calls[6].options.body), {})
   assert.deepEqual(JSON.parse(calls[7].options.body), {
     rating: 5,
+    itemRating: 4,
     body: 'Completed the handover promptly.',
   })
   assert.deepEqual(JSON.parse(calls[8].options.body), { reason: 'This review contains inappropriate content.' })
@@ -501,6 +502,7 @@ test('FR-43, FR-43c, FR-27b: seller order mutation APIs use exact authenticated 
   let requestCount = calls.length
   assert.throws(() => client.respondToReturnRequest('return-1', 'xx'), /3 to 300/)
   assert.throws(() => client.submitOrderReview('order-1', { rating: 0 }), /1 to 5/)
+  assert.throws(() => client.submitOrderReview('order-1', { rating: 5, itemRating: 0 }), /1 to 5/)
   assert.throws(() => client.addDisputeEvidence('dispute-1', { note: 'no' }), /3 to 500/)
   assert.equal(calls.length, requestCount)
 })
