@@ -3,11 +3,18 @@ import { test } from 'node:test'
 import {
   getDeliveryOutcomeLabel,
   getDisputeFlowLabel,
+  getBuyerOrderAllowedActions,
+  getOrderFlowError,
   getReviewFlowLabel,
   getReturnFlowLabel,
   getSellerFlowError,
   getSellerOrderAllowedActions,
 } from './orderFlows.js'
+
+test('FR-43: neutral and seller order flow error names are identical', () => {
+  const error = { status: 409, payload: { error: 'The action is no longer available.' } }
+  assert.equal(getOrderFlowError(error), getSellerFlowError(error))
+})
 
 test('seller flow error rule a preserves client validation messages without an HTTP status', () => {
   assert.equal(getSellerFlowError(new Error('Rating must be between 1 and 5')),
@@ -153,4 +160,39 @@ test('seller review action remains allowed alongside open return and dispute act
 
 test('seller review action is unavailable before completion', () => {
   assert.deepEqual(getSellerOrderAllowedActions({ status: 'delivered' }), [])
+})
+
+test('FR-43: buyer allowed actions follow return, dispute and review fields', () => {
+  assert.deepEqual(getBuyerOrderAllowedActions({
+    status: 'completed',
+    returnFiling: { canRequestReturn: true },
+    disputeFiling: { canFileDispute: true },
+    disputeActions: { canAddEvidence: true, canWithdraw: true },
+  }), ['request_return', 'file_dispute', 'add_dispute_evidence', 'withdraw_dispute', 'review_seller'])
+
+  assert.deepEqual(getBuyerOrderAllowedActions({
+    status: 'completed',
+    myReview: { state: 'hidden_until_reveal' },
+  }), [])
+  assert.deepEqual(getBuyerOrderAllowedActions({ status: 'delivered' }), [])
+})
+
+test('FR-43: buyer review action ignores disputes and chargebacks', () => {
+  assert.deepEqual(getBuyerOrderAllowedActions({
+    status: 'completed',
+    disputeFiling: { canFileDispute: false },
+    disputeActions: { canAddEvidence: true },
+    chargebacks: [{ status: 'open' }],
+  }), ['add_dispute_evidence', 'review_seller'])
+})
+
+test('FR-43: buyer no-chargeback action table ignores chargeback data', () => {
+  assert.deepEqual(getBuyerOrderAllowedActions({
+    status: 'completed',
+    chargebacks: [{ status: 'open' }],
+  }), ['review_seller'])
+  assert.equal(JSON.stringify(getBuyerOrderAllowedActions({
+    status: 'completed',
+    chargebacks: [{ status: 'open' }],
+  })).includes('chargeback'), false)
 })

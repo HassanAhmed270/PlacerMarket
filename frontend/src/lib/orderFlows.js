@@ -1,4 +1,4 @@
-export function getSellerFlowError(error) {
+export function getOrderFlowError(error) {
   const status = error?.status
   const message = typeof error?.message === 'string' ? error.message.trim() : ''
   const serverMessage = typeof error?.payload?.error === 'string'
@@ -21,6 +21,8 @@ export function getSellerFlowError(error) {
   if (status === 429) return 'Too many attempts. Please wait a moment and try again.'
   return 'The request could not be completed. Please try again.'
 }
+
+export const getSellerFlowError = getOrderFlowError
 
 export function getReturnFlowLabel(status) {
   const labels = {
@@ -66,6 +68,18 @@ export function getSellerOrderAllowedActions(order) {
   if (order?.disputeActions?.canAddEvidence) actions.push('add_dispute_evidence')
   if (order?.status === 'completed' && !order?.myReview) {
     actions.push('review_buyer')
+  }
+  return actions
+}
+
+export function getBuyerOrderAllowedActions(order) {
+  const actions = []
+  if (order?.returnFiling?.canRequestReturn) actions.push('request_return')
+  if (order?.disputeFiling?.canFileDispute) actions.push('file_dispute')
+  if (order?.disputeActions?.canAddEvidence) actions.push('add_dispute_evidence')
+  if (order?.disputeActions?.canWithdraw) actions.push('withdraw_dispute')
+  if (order?.status === 'completed' && !order?.myReview) {
+    actions.push('review_seller')
   }
   return actions
 }

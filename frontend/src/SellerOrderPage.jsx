@@ -14,7 +14,7 @@ import {
   getDisputeFlowLabel,
   getReviewFlowLabel,
   getReturnFlowLabel,
-  getSellerFlowError,
+  getOrderFlowError,
   getSellerOrderAllowedActions,
 } from './lib/orderFlows.js'
 
@@ -55,7 +55,7 @@ function SellerOrderPage({ orderId }) {
         window.location.replace(`/login?${new URLSearchParams({ returnTo })}`)
         return
       }
-      setError(getSellerFlowError(cause))
+      setError(getOrderFlowError(cause))
     }
   }, [orderId])
 
@@ -80,7 +80,7 @@ function SellerOrderPage({ orderId }) {
           return
         }
         setOrderResult({ orderId, order: null })
-        setError(getSellerFlowError(cause))
+        setError(getOrderFlowError(cause))
       }
     }
     loadOrder()
@@ -99,7 +99,7 @@ function SellerOrderPage({ orderId }) {
             })
           }
         })
-        .catch((cause) => { if (active) setError(getSellerFlowError(cause)) })
+        .catch((cause) => { if (active) setError(getOrderFlowError(cause)) })
     }
     return () => { active = false }
   }, [order?.disputeId])
@@ -138,7 +138,7 @@ function SellerOrderPage({ orderId }) {
       setSuccess('Your return response was sent. The Admin will decide the return.')
       await refreshOrder()
     } catch (cause) {
-      setError(getSellerFlowError(cause))
+      setError(getOrderFlowError(cause))
     } finally {
       setBusyAction('')
     }
@@ -160,7 +160,7 @@ function SellerOrderPage({ orderId }) {
       setCounterEvidenceUrl('')
       await refreshOrder()
     } catch (cause) {
-      setError(getSellerFlowError(cause))
+      setError(getOrderFlowError(cause))
     } finally {
       setBusyAction('')
     }
@@ -183,7 +183,7 @@ function SellerOrderPage({ orderId }) {
       setSuccess('Your additional evidence was submitted.')
       await refreshOrder()
     } catch (cause) {
-      setError(getSellerFlowError(cause))
+      setError(getOrderFlowError(cause))
     } finally {
       setBusyAction('')
     }
@@ -205,7 +205,7 @@ function SellerOrderPage({ orderId }) {
       setReviewBody('')
       await refreshOrder()
     } catch (cause) {
-      setError(getSellerFlowError(cause))
+      setError(getOrderFlowError(cause))
     } finally {
       setBusyAction('')
     }
