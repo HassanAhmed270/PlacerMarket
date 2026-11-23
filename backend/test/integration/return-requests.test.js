@@ -176,6 +176,77 @@ afterEach(async () => {
 });
 
 describe('FR-43, FR-56 returns', () => {
+  test('FR-43: the buyer summary can request a return for a delivered order inside the window', async () => {
+    const buyerSummary = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+    expect(buyerSummary.body.returnFiling).toEqual({ canRequestReturn: true });
+  });
+
+  test('FR-43: the buyer summary hides return filing before delivery', async () => {
+    await db.query(
+      'UPDATE orders SET delivered_at = NULL, status = $2 WHERE id = $1',
+      [scenario.orderId, 'out_for_delivery']
+    );
+    const buyerSummary = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+    expect(buyerSummary.body.returnFiling).toEqual({ canRequestReturn: false });
+  });
+
+  test('FR-43: the buyer summary denies return filing with an open dispute', async () => {
+    await httpRequest(getApp())
+      .post(`/api/disputes/orders/${scenario.orderId}`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .send(OPEN_DISPUTE_BODY)
+      .expect(201);
+    const buyerSummary = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+    expect(buyerSummary.body.returnFiling).toEqual({ canRequestReturn: false });
+  });
+
+  test('FR-43: the buyer summary denies return filing with an open return request', async () => {
+    await createReturn();
+    const buyerSummary = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+    expect(buyerSummary.body.returnFiling).toEqual({ canRequestReturn: false });
+    await db.query('DELETE FROM return_requests WHERE order_id = $1', [scenario.orderId]);
+    await db.query(
+      `UPDATE payout_holds SET state = 'held', state_before_pause = NULL, dispute_id = NULL
+       WHERE order_id = $1`,
+      [scenario.orderId]
+    );
+  });
+
+  test('FR-43: the buyer summary denies return filing after the complaint window closes', async () => {
+    const businessDate = await sellerPayouts.getBusinessDate(db);
+    await db.query(
+      `UPDATE orders
+       SET delivered_at = (($1::date - 4)::timestamp + time '12:00')
+                          AT TIME ZONE 'Asia/Karachi'
+       WHERE id = $2`,
+      [businessDate, scenario.orderId]
+    );
+    const buyerSummary = await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(scenario.buyerId))
+      .expect(200);
+    expect(buyerSummary.body.returnFiling).toEqual({ canRequestReturn: false });
+  });
+
+  test('FR-43: another buyer cannot read the return filing summary', async () => {
+    await httpRequest(getApp())
+      .get(`/api/orders/${scenario.orderId}/summary`)
+      .set('Authorization', authHeader(harness.unrelatedBuyerId))
+      .expect(404);
+  });
+
   test('FR-43, FR-56: seller and buyer reads select the latest return request', async () => {
     await db.query(
       `INSERT INTO return_requests

@@ -13,6 +13,7 @@ const payout = require('./payout.service');
 const sellerPayouts = require('./sellerPayouts.service');
 const escrowPayments = require('./escrowPayments.service');
 const moneyAudit = require('./moneyAudit.service');
+const disputes = require('./disputes.service');
 const eventBus = require('../lib/eventBus');
 const events = require('../lib/events');
 const { NotFoundError, ValidationError, ConflictError, ForbiddenError } = require('../lib/errors');
@@ -31,6 +32,19 @@ function decisionOutcome(status) {
   if (status === 'approved') return 'approve_refund';
   if (status === 'rejected') return 'reject';
   return null;
+}
+
+/** FR-43: compute the return complaint window against the Asia/Karachi business date. */
+async function isWithinReturnComplaintWindow(client, deliveredAt, complaintWindowDays) {
+  if (!deliveredAt) return false;
+  const businessDate = await sellerPayouts.getBusinessDate(client);
+  const { rows } = await client.query(
+    `SELECT (
+       ($1::timestamptz AT TIME ZONE 'Asia/Karachi')::date + $2::integer
+     ) >= $3::date AS in_window`,
+    [deliveredAt, complaintWindowDays, businessDate]
+  );
+  return Boolean(rows[0]?.in_window);
 }
 
 async function lockReturnOrder(client, orderId) {
@@ -77,14 +91,7 @@ async function fileReturnRequest(orderId, buyerId, input, {
       throw new ConflictError('An open dispute already exists for this order.');
     }
     const hold = await payout.getReservationOrderHold(client, orderId);
-    const businessDate = await sellerPayouts.getBusinessDate(client);
-    const { rows: windowRows } = await client.query(
-      `SELECT (
-         ($1::timestamptz AT TIME ZONE 'Asia/Karachi')::date + $2::integer
-       ) >= $3::date AS in_window`,
-      [order.delivered_at, hold.complaint_window_days, businessDate]
-    );
-    if (!windowRows[0]?.in_window) {
+    if (!(await isWithinReturnComplaintWindow(client, order.delivered_at, hold.complaint_window_days))) {
       throw new ConflictError('The return complaint window has closed.');
     }
     const { rows: openRows } = await client.query(
@@ -330,6 +337,35 @@ async function getOrderReturnStatus(orderId) {
   } : null;
 }
 
+/** FR-43: report whether the buyer may request a return for an order summary. */
+async function getReturnFilingStatus(orderId) {
+  if (typeof orderId !== 'string' || !UUID.test(orderId)) {
+    throw new ValidationError('orderId must be a UUID.');
+  }
+  return db.withTransaction(async (client) => {
+    const { rows: orderRows } = await client.query(
+      `SELECT delivered_at FROM orders WHERE id = $1`,
+      [orderId]
+    );
+    if (!orderRows[0]?.delivered_at) return { canRequestReturn: false };
+
+    const hold = await payout.getReservationOrderHold(client, orderId);
+    if (!hold) return { canRequestReturn: false };
+    if (await disputes.hasOpenDisputeInTransaction(client, orderId)) {
+      return { canRequestReturn: false };
+    }
+    if (await hasOpenReturnRequest(client, orderId)) {
+      return { canRequestReturn: false };
+    }
+    const canRequestReturn = await isWithinReturnComplaintWindow(
+      client,
+      orderRows[0].delivered_at,
+      hold.complaint_window_days
+    );
+    return { canRequestReturn };
+  });
+}
+
 /** FR-43, FR-56: batch safe return status fields for buyer and seller order reads. */
 async function getOrderReturnStatuses(orderIds) {
   if (!Array.isArray(orderIds)) throw new ValidationError('orderIds must be an array.');
@@ -450,6 +486,7 @@ module.exports = {
   respondToReturnRequest,
   decideReturnRequest,
   getOrderReturnStatus,
+  getReturnFilingStatus,
   getOrderReturnStatuses,
   getOrderReturnRequests,
   getOrderReturnRequest,

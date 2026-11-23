@@ -161,8 +161,8 @@ describe('FR-61, FR-62 buyer order reads', () => {
     expect(Object.keys(response.body).sort()).toEqual([
       'address', 'chargebacks', 'createdAt', 'currency', 'deliveryFee', 'deliveryOutcome',
       'disputeActions', 'disputeFiling', 'disputeId', 'handoverDeadlineAt', 'itemPrice',
-      'listing', 'myReview', 'orderId', 'payment', 'reservation', 'returnRequest',
-      'reviewOfMe', 'status', 'total',
+      'listing', 'myReview', 'orderId', 'payment', 'reservation', 'returnFiling',
+      'returnRequest', 'reviewOfMe', 'status', 'total',
     ]);
     expect(response.body).toMatchObject({
       orderId: reservation.orderId,
@@ -173,6 +173,7 @@ describe('FR-61, FR-62 buyer order reads', () => {
         complaintWindowClosesAt: null,
         maxEvidenceUrls: 2,
       },
+      returnFiling: { canRequestReturn: false },
       listing: { id: fixture.listingId, title: expect.stringContaining('Fixture listing'), imageUrl: null },
       status: 'reserved',
       itemPrice: '1250.50',

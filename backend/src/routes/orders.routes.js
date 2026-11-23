@@ -164,7 +164,7 @@ router.get('/mine', noStore, limiters.payments, async (req, res) => {
 
 router.get('/:orderId/summary', noStore, limiters.payments, async (req, res) => {
   const order = await orders.getBuyerReservationOrder(req.params.orderId, req.user.id);
-  const [reservation, listing, paymentStatus, reviewRead, disputeFiling, returnStatus, returnRequest, deliveryOutcome] = await Promise.all([
+  const [reservation, listing, paymentStatus, reviewRead, disputeFiling, returnStatus, returnRequest, returnFiling, deliveryOutcome] = await Promise.all([
     reservations.getBuyerReservationSnapshot(order.reservationId, req.user.id),
     listings.getBuyerOrderListingSummary(order.listingId),
     escrowPayments.getPaymentStatus({ orderId: order.orderId, buyerId: req.user.id }),
@@ -172,6 +172,7 @@ router.get('/:orderId/summary', noStore, limiters.payments, async (req, res) => 
     disputes.getBuyerDisputeFilingStatus(order),
     returnRequests.getOrderReturnStatus(order.orderId),
     returnRequests.getOrderReturnRequest(order.orderId),
+    returnRequests.getReturnFilingStatus(order.orderId),
     delivery.getOrderDeliveryOutcome(order.orderId),
   ]);
   res.json({
@@ -192,6 +193,7 @@ router.get('/:orderId/summary', noStore, limiters.payments, async (req, res) => 
       checkoutUrl: paymentStatus.checkoutUrl || null,
     },
     disputeFiling,
+    returnFiling,
     disputeId: disputeFiling.disputeId,
     disputeActions: disputeFiling.disputeActions,
     returnRequest: returnStatus || returnRequest
