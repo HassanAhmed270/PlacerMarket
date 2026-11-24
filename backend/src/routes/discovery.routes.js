@@ -53,6 +53,18 @@ router.get('/listings/:id', async (req, res) => {
   res.json(detail);
 });
 
+router.get('/listings/:id/reviews', async (req, res) => {
+  const limit = req.query.limit === undefined ? 20 : Number(req.query.limit);
+  const result = await discovery.listPublicListingReviews(req.params.id, {
+    cursor: req.query.cursor ?? null,
+    limit,
+  });
+  res.set('Cache-Control', 'no-store');
+  if (result?.notFound) return res.status(404).json({ error: 'Listing not found' });
+  if (result?.removed) return res.status(410).json({ error: 'Listing is no longer available' });
+  return res.json(result);
+});
+
 router.get('/listings/:id/status', async (req, res) => {
   const status = await discovery.getListingStatus(req.params.id);
   if (!status) return res.status(404).json({ error: 'Listing not found' });

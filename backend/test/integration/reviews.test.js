@@ -70,6 +70,10 @@ function sellerReviewList(sellerId, userId = null, query = {}) {
   return userId ? route.set('Authorization', authHeader(userId)) : route;
 }
 
+function listingReviewList(listingId, query = {}) {
+  return request(getApp()).get(`/api/discovery/listings/${listingId}/reviews`).query(query);
+}
+
 async function processReviewNotification(orderId, eventName) {
   await global.drainIntegrationListeners(5000);
   const { rows } = await db.query(
@@ -395,6 +399,88 @@ describe('FR-27b two-way reviews', () => {
       visible[0].review.id,
     ]);
     expect(publicAfterHide.body.reviews.map((review) => review.id)).not.toContain(waiting.body.id);
+  });
+
+  test('FR-27b: public listing reviews use listing visibility and expose only the seller review shape', async () => {
+    const scenario = await createReviewScenario();
+    const visible = await submitPair(scenario, {
+      buyerBody: 'A visible listing review.',
+      sellerBody: 'A private seller response.',
+    });
+    await submit(scenario, scenario.buyerId, { rating: 3 }).expect(409);
+
+    const response = await listingReviewList(scenario.listingId).expect(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.reviews).toHaveLength(1);
+    expect(Object.keys(response.body.reviews[0]).sort()).toEqual([
+      'body', 'createdAt', 'id', 'itemRating', 'rating', 'reviewer',
+    ]);
+    expect(Object.keys(response.body.reviews[0].reviewer)).toEqual(['displayName']);
+    expect(response.body.reviews[0].body).toBe('A visible listing review.');
+    const serialized = JSON.stringify(response.body);
+    expect(serialized).not.toContain(scenario.sellerId);
+    expect(serialized).not.toContain(scenario.buyerId);
+    expect(serialized).not.toContain(scenario.orderId);
+    expect(serialized).not.toMatch(/[\w.+-]+@[\w.-]+\.[A-Za-z]+/);
+    const publicReviewId = response.body.reviews[0].id;
+    expect(typeof publicReviewId).toBe('string');
+
+    await request(getApp())
+      .post(`/api/reviews/${publicReviewId}/hide`)
+      .set('Authorization', authHeader(harness.adminId))
+      .send({ reason: 'Hide this listing review for testing.' })
+      .expect(200);
+    await listingReviewList(scenario.listingId).expect(200).then((hidden) => {
+      expect(hidden.body.reviews).toEqual([]);
+    });
+  });
+
+  test('FR-27b: public listing reviews paginate and enforce seller-review limit bounds', async () => {
+    const scenarios = [];
+    for (let index = 0; index < 2; index += 1) {
+      const scenario = await createReviewScenario();
+      await submitPair(scenario, { buyerBody: `Listing page review ${index}.` });
+      scenarios.push(scenario);
+    }
+    await db.query(
+      'UPDATE reviews SET created_at = $2::timestamptz WHERE order_id = $1',
+      [scenarios[0].orderId, '2026-03-20T00:00:00.001Z']
+    );
+    await db.query(
+      'UPDATE reviews SET created_at = $2::timestamptz WHERE order_id = $1',
+      [scenarios[1].orderId, '2026-03-20T00:00:00.002Z']
+    );
+
+    const first = await listingReviewList(scenarios[0].listingId, { limit: 1 }).expect(200);
+    expect(first.body.reviews).toHaveLength(1);
+    expect(first.body.nextCursor).toBeTruthy();
+    const second = await listingReviewList(scenarios[0].listingId, {
+      limit: 1,
+      cursor: first.body.nextCursor,
+    }).expect(200);
+    expect(second.body.reviews).toHaveLength(1);
+    expect(second.body.nextCursor).toBeNull();
+    await listingReviewList(scenarios[0].listingId, { limit: 0 }).expect(400);
+    await listingReviewList(scenarios[0].listingId, { limit: 101 }).expect(400);
+  });
+
+  test('FR-27b: public listing review statuses are 404, 410, sold and unavailable as specified', async () => {
+    await listingReviewList('00000000-0000-4000-8000-000000000000').expect(404);
+    await listingReviewList(harness.fixture.listingId).expect(404);
+
+    const removed = await createReviewScenario();
+    await db.query("UPDATE listings SET status = 'removed' WHERE id = $1", [removed.listingId]);
+    await listingReviewList(removed.listingId).expect(410);
+
+    const sold = await createReviewScenario();
+    await submitPair(sold);
+    await db.query("UPDATE listings SET status = 'sold' WHERE id = $1", [sold.listingId]);
+    await listingReviewList(sold.listingId).expect(200);
+
+    const paused = await createReviewScenario();
+    await submitPair(paused);
+    await db.query("UPDATE listings SET status = 'paused' WHERE id = $1", [paused.listingId]);
+    await listingReviewList(paused.listingId).expect(200);
   });
 
   test('FR-27b: unrevealed buyer ratings are excluded until the seller review reveals the pair', async () => {

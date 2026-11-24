@@ -498,6 +498,27 @@ async function getListingDetail(listingKey) {
   return detail;
 }
 
+/** FR-27b: resolve public listing reviews through the listing's public live-status and seller. */
+async function listPublicListingReviews(listingKey, { cursor, limit = 20 } = {}) {
+  const parsedKey = parseListingUrlKey(listingKey);
+  if (!parsedKey) return { notFound: true };
+  const keyColumn = parsedKey.listingId ? 'l.id' : 'l.short_id';
+  const keyValue = parsedKey.listingId || parsedKey.shortId;
+  const { rows } = await db.read(
+    `SELECT l.id, l.seller_id, l.status,
+            ${availability.reservedPredicateSql('l')} AS has_reservation,
+            ${availability.soldPredicateSql('l')} AS has_sold
+       FROM listings l
+      WHERE ${keyColumn} = $1`,
+    [keyValue]
+  );
+  if (!rows[0]) return { notFound: true };
+  const liveStatus = getLiveStatus(rows[0]);
+  if (!liveStatus) return { notFound: true };
+  if (liveStatus === 'removed') return { removed: true };
+  return reviews.listPublicSellerReviews(rows[0].seller_id, { cursor, limit });
+}
+
 async function getSimilarListings(listing) {
   const { rows } = await db.read(
     `SELECT ${PUBLIC_LISTING_COLUMNS},
@@ -610,6 +631,6 @@ async function getSellerPublicCard(sellerId) {
 }
 
 module.exports = {
-  searchListings, filterListings, getListingDetail, getListingStatus, addFavorite, removeFavorite, getFavorites,
+  searchListings, filterListings, getListingDetail, listPublicListingReviews, getListingStatus, addFavorite, removeFavorite, getFavorites,
   buildShareUrl, getSellerPublicCard, getSearchVocabulary,
 };
