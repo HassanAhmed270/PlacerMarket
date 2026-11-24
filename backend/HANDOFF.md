@@ -24,6 +24,7 @@ Stage P5-S8: Settlement consistency job (migration 042, `consistency_findings`, 
 Stage P5-S8b: Commission validation fix; test flake fixes; SEC-31 exception re-accepted until 2026-12-10.
 Stage P5-S9b (merged to main): Collision-free test phone numbers after a rare `users_phone_key` flake seen on 2026-11-19.
 Stage P5-S9c: Test phone numbers no longer depend on process id length (collision risk across test files removed).
+Stage 6.3 - reviews: the public listing review endpoint, lazy public Reviews section and report flow, shared review moderation queue, Moderator /moderation view, and Admin /admin/reviews view are implemented. Public listing reviews show visible buyer-to-seller reviews only and keep review, order, seller and email identifiers out of public responses. Moderators can hide reviews; only Admins can restore hidden reviews. Existing review reports, hide/restore permissions and blind reveal rules are unchanged. Moderators use /moderation; Admins use /admin/reviews. Backend unit 68 suites / 1030 tests; integration 47 suites / 590 tests (three clean runs); frontend 94 tests, lint clean, build and bundle check passed (largest public route 77.9 KB gzip).
 
 ## 0. Inspect before you propose anything
 
