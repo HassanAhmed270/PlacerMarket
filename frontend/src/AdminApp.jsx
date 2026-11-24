@@ -14,6 +14,7 @@ import AdminSellerPayouts from './AdminSellerPayouts.jsx'
 import AdminSellerPayoutDetail from './AdminSellerPayoutDetail.jsx'
 import AdminHeldFunds from './AdminHeldFunds.jsx'
 import AdminPayoutSettings from './AdminPayoutSettings.jsx'
+import AdminReviews from './AdminReviews.jsx'
 import './AdminWorkspace.css'
 
 function isAdminOrderAccessError(error) {
@@ -175,6 +176,7 @@ export default function AdminApp({ path }) {
   else if (path === '/admin/exceptions') page = <AdminExceptions />
   else if (path === '/admin/disputes') page = <AdminDisputes />
   else if (path === '/admin/delivery-cities') page = <AdminDeliveryCities />
+  else if (path === '/admin/reviews') page = <AdminReviews />
   else page = <AdminOrders />
 
   return <AdminLayout onLogout={signOut} role={currentRole}>{page}</AdminLayout>
