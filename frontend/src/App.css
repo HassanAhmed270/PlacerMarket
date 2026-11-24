@@ -622,6 +622,13 @@ a:focus-visible {
 .similar-listings h2,
 .message-panel h2 { margin: 0 0 14px; color: var(--green-950); font: 400 28px var(--font-display); }
 .seller-card p:not(.eyebrow) { color: var(--muted); font-size: 13px; }
+.listing-reviews { margin-top: 44px; padding: 24px; border: 1px solid var(--cream-200); background: var(--color-cream-card); }
+.listing-reviews h2 { margin: 0 0 18px; color: var(--green-950); font: 400 28px var(--font-display); }
+.listing-review-list { display: grid; gap: 16px; padding: 0; list-style: none; }
+.listing-review { display: grid; gap: 6px; padding: 16px 0; border-top: 1px solid var(--cream-200); }
+.listing-review p { margin: 0; }
+.listing-review form { display: grid; gap: 8px; max-width: 640px; }
+.listing-review textarea { min-height: 92px; width: 100%; padding: 10px; border: 1px solid var(--color-control-border); font: inherit; }
 .similar-listings { margin-top: 54px; }
 .action-message { color: var(--green-900); font-size: 13px; }
 .message-panel { margin-top: 24px; padding: 18px; border: 1px solid var(--cream-200); background: var(--color-cream-card); }

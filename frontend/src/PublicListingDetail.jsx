@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { ListingGrid } from './BrowseComponents.jsx'
 import { api } from './lib/api.js'
 import { getBuyDestination, getListingViewState } from './lib/browse.js'
 import { POLL_INTERVALS, schedulePolling } from './lib/polling.js'
 import { getMessageErrorMessage } from './lib/seoValidation.js'
+
+const ListingReviews = lazy(() => import('./ListingReviews.jsx'))
 
 function PublicListingDetail({ id }) {
   const [listing, setListing] = useState(null)
@@ -298,6 +300,9 @@ function PublicListingDetail({ id }) {
         {listing.seller.averageRating != null && <p>{Number(listing.seller.averageRating).toFixed(1)} rating · {listing.seller.ratingCount} reviews</p>}
         {listing.seller.joinDate && <p>On Poshaak since {new Date(listing.seller.joinDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })}</p>}
       </aside>}
+      <Suspense fallback={<section className="listing-reviews" aria-live="polite"><p>Loading reviews…</p></section>}>
+        <ListingReviews listingKey={listing.canonicalKey || id} />
+      </Suspense>
       {viewState === 'sold' && listing.similarItems?.length > 0 && <section className="similar-listings" aria-labelledby="similar-title">
         <p className="eyebrow">More to discover</p><h2 id="similar-title">Similar pieces</h2>
         <ListingGrid listings={listing.similarItems} />
