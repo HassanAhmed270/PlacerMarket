@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
-import { getReviewModerationActions } from './lib/reviewHelpers.js'
-import { getOrderFlowError } from './lib/orderFlows.js'
+import { getReviewModerationActions, getReviewStateLabel } from './lib/reviewHelpers.js'
+import { getOrderFlowError, getReviewActionError } from './lib/orderFlows.js'
 
 export default function ReviewModerationQueue({ canRestore }) {
   const [reviews, setReviews] = useState([])
@@ -11,7 +11,9 @@ export default function ReviewModerationQueue({ canRestore }) {
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [reasons, setReasons] = useState({})
+  const [restoreReasons, setRestoreReasons] = useState({})
   const [confirmId, setConfirmId] = useState('')
+  const [confirmRestoreId, setConfirmRestoreId] = useState('')
 
   async function refresh(cursor = null) {
     setLoading(true)
@@ -60,22 +62,24 @@ export default function ReviewModerationQueue({ canRestore }) {
       setMessage('Review hidden.')
       await refresh()
     } catch (cause) {
-      setError(getOrderFlowError(cause))
+      setError(getReviewActionError(cause))
     } finally {
       setPendingId('')
     }
   }
 
   async function restoreReview(reviewId) {
+    const reason = (restoreReasons[reviewId] || '').trim()
     setPendingId(reviewId)
     setError('')
     setMessage('')
     try {
-      await api.restoreReview(reviewId, 'Restored after moderation review.')
+      await api.restoreReview(reviewId, reason)
+      setConfirmRestoreId('')
       setMessage('Review restored.')
       await refresh()
     } catch (cause) {
-      setError(getOrderFlowError(cause))
+      setError(getReviewActionError(cause))
     } finally {
       setPendingId('')
     }
@@ -98,7 +102,7 @@ export default function ReviewModerationQueue({ canRestore }) {
               {review.body && <p>{review.body}</p>}
               <p>{review.reportCount || reports.length} report(s)</p>
               {reports.map((report, index) => <p key={`${review.id}-${index}`}>{report.reason}</p>)}
-              <p>Status: {review.state}</p>
+              <p>Status: {getReviewStateLabel(review.state)}</p>
               {actions.canHide && confirmId !== review.id && (
                 <>
                   <label>Hide reason<textarea value={reasons[review.id] || ''} maxLength="300" onChange={(event) => setReasons((current) => ({ ...current, [review.id]: event.target.value }))} /></label>
@@ -113,7 +117,32 @@ export default function ReviewModerationQueue({ canRestore }) {
                 </div>
               )}
               {actions.canRestore && (
-                <button className="button button-secondary" type="button" disabled={pendingId === review.id} onClick={() => restoreReview(review.id)}>Restore</button>
+                <>
+                  <label>Restore reason
+                    <textarea
+                      value={restoreReasons[review.id] || ''}
+                      maxLength="300"
+                      onChange={(event) => setRestoreReasons((current) => ({ ...current, [review.id]: event.target.value }))}
+                    />
+                  </label>
+                  {confirmRestoreId !== review.id && (
+                    <button
+                      className="text-button"
+                      type="button"
+                      disabled={(restoreReasons[review.id] || '').trim().length < 3}
+                      onClick={() => setConfirmRestoreId(review.id)}
+                    >
+                      Restore review
+                    </button>
+                  )}
+                  {confirmRestoreId === review.id && (
+                    <div className="admin-inline-confirm" role="group" aria-label="Confirm restoring review">
+                      <p>Restore this review?</p>
+                      <button className="button button-primary" type="button" disabled={pendingId === review.id} onClick={() => restoreReview(review.id)}>Confirm restore</button>
+                      <button className="text-button" type="button" onClick={() => setConfirmRestoreId('')}>Cancel</button>
+                    </div>
+                  )}
+                </>
               )}
             </article>
           )

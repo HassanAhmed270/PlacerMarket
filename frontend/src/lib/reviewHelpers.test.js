@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { formatPublicReview, getReviewModerationActions } from './reviewHelpers.js'
+import { formatPublicReview, getReviewModerationActions, getReviewStateLabel } from './reviewHelpers.js'
 
 test('public review formatter handles complete, optional and missing fields', () => {
   assert.deepEqual(formatPublicReview({
@@ -36,4 +36,13 @@ test('moderation action table hides already-hidden and gates restore', () => {
     canHide: false,
     canRestore: false,
   })
+})
+
+test('review state labels translate known states and hide unknown state values', () => {
+  assert.equal(getReviewStateLabel('visible'), 'Visible')
+  assert.equal(getReviewStateLabel('hidden_by_admin'), 'Hidden by a moderator')
+  assert.equal(getReviewStateLabel('hidden_until_reveal'), 'Waiting for both reviews')
+  assert.equal(getReviewStateLabel('unexpected'), 'Status unavailable')
+  assert.equal(getReviewStateLabel('__proto__'), 'Status unavailable')
+  assert.equal(getReviewStateLabel(null), 'Status unavailable')
 })

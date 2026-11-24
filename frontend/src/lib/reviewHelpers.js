@@ -17,3 +17,16 @@ export function getReviewModerationActions(review, canRestore) {
     canRestore: Boolean(canRestore) && state === 'hidden_by_admin',
   }
 }
+
+export function getReviewStateLabel(state) {
+  switch (state) {
+    case 'visible':
+      return 'Visible'
+    case 'hidden_by_admin':
+      return 'Hidden by a moderator'
+    case 'hidden_until_reveal':
+      return 'Waiting for both reviews'
+    default:
+      return 'Status unavailable'
+  }
+}

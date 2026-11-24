@@ -24,6 +24,11 @@ export function getOrderFlowError(error) {
 
 export const getSellerFlowError = getOrderFlowError
 
+export function getReviewActionError(error) {
+  if (error?.status === 403) return "Your account can't do this."
+  return getOrderFlowError(error)
+}
+
 
 export function getReturnFlowLabel(status) {
   const labels = {

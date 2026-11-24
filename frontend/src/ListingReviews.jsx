@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
 import { formatPublicReview } from './lib/reviewHelpers.js'
 import { getBuyDestination } from './lib/browse.js'
-import { getOrderFlowError } from './lib/orderFlows.js'
+import { getOrderFlowError, getReviewActionError } from './lib/orderFlows.js'
 
 export default function ListingReviews({ listingKey }) {
   const [reviews, setReviews] = useState([])
@@ -11,9 +11,9 @@ export default function ListingReviews({ listingKey }) {
   const [error, setError] = useState('')
   const [reportingId, setReportingId] = useState('')
   const [reason, setReason] = useState('')
-  const [actionMessage, setActionMessage] = useState('')
-  const [actionError, setActionError] = useState('')
+  const [reportMessage, setReportMessage] = useState(null)
   const [pendingId, setPendingId] = useState('')
+  const [refreshingId, setRefreshingId] = useState('')
 
   async function load(cursor = null) {
     setLoading(true)
@@ -56,18 +56,42 @@ export default function ListingReviews({ listingKey }) {
     window.location.assign(destination.url)
   }
 
+  async function openReport(reviewId) {
+    setReportMessage(null)
+    if (api.isAuthenticated()) {
+      setReason('')
+      setReportingId(reviewId)
+      return
+    }
+
+    setRefreshingId(reviewId)
+    try {
+      const session = await api.refresh()
+      api.setAccessToken(session.accessToken)
+      setReason('')
+      setReportingId(reviewId)
+    } catch {
+      signInToReport()
+    } finally {
+      setRefreshingId('')
+    }
+  }
+
   async function submitReport(event, reviewId) {
     event.preventDefault()
-    setActionError('')
-    setActionMessage('')
+    setReportMessage(null)
     setPendingId(reviewId)
     try {
       await api.reportReview(reviewId, reason)
-      setActionMessage('Thanks. A moderator will look at this review.')
+      setReportMessage({
+        reviewId,
+        kind: 'success',
+        text: 'Thanks. A moderator will look at this review.',
+      })
       setReportingId('')
       setReason('')
     } catch (cause) {
-      setActionError(getOrderFlowError(cause))
+      setReportMessage({ reviewId, kind: 'error', text: getReviewActionError(cause) })
     } finally {
       setPendingId('')
     }
@@ -80,8 +104,6 @@ export default function ListingReviews({ listingKey }) {
       {loading && reviews.length === 0 && <p role="status">Loading reviews…</p>}
       {error && <p className="workspace-error" role="alert">{error}</p>}
       {!loading && !error && reviews.length === 0 && <p>No reviews yet</p>}
-      {actionMessage && <p role="status">{actionMessage}</p>}
-      {actionError && <p className="workspace-error" role="alert">{actionError}</p>}
       <ol className="listing-review-list">
         {reviews.map((review) => {
           const display = formatPublicReview(review)
@@ -92,15 +114,23 @@ export default function ListingReviews({ listingKey }) {
               {display.itemRating && <p>{display.itemRating}</p>}
               {review.body && <p>{review.body}</p>}
               <p>{display.date}</p>
-              {api.isAuthenticated()
-                ? <button className="text-button" type="button" onClick={() => { setReportingId(review.id); setReason('') }}>Report</button>
-                : <button className="text-button" type="button" onClick={signInToReport}>Sign in to report a review</button>}
+              <button
+                className="text-button"
+                type="button"
+                disabled={refreshingId === review.id}
+                onClick={() => openReport(review.id)}
+              >
+                {refreshingId === review.id ? 'Checking sign-in…' : 'Report'}
+              </button>
               {reportingId === review.id && (
                 <form onSubmit={(event) => submitReport(event, review.id)}>
                   <label htmlFor={`review-reason-${review.id}`}>Reason</label>
                   <textarea id={`review-reason-${review.id}`} minLength="3" maxLength="300" value={reason} onChange={(event) => setReason(event.target.value)} required />
                   <button className="button button-secondary" type="submit" disabled={pendingId === review.id}>Submit report</button>
                 </form>
+              )}
+              {reportMessage?.reviewId === review.id && (
+                <p role={reportMessage.kind === 'success' ? 'status' : 'alert'}>{reportMessage.text}</p>
               )}
             </li>
           )

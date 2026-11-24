@@ -5,6 +5,7 @@ import {
   getDisputeFlowLabel,
   getBuyerOrderAllowedActions,
   getOrderFlowError,
+  getReviewActionError,
   getReviewFlowLabel,
   getReturnFlowLabel,
   getSellerFlowError,
@@ -65,6 +66,12 @@ test('seller flow error rule c uses server messages for validation and conflict 
 test('seller flow error rule d gives session guidance for unauthorized responses', () => {
   assert.equal(getSellerFlowError({ status: 401 }), 'Your session expired. Sign in again.')
   assert.equal(getSellerFlowError({ status: 403 }), 'Your session expired. Sign in again.')
+})
+
+test('review action 403 errors use the account permission message', () => {
+  assert.equal(getReviewActionError({ status: 403 }), "Your account can't do this.")
+  assert.equal(getReviewActionError({ status: 409, payload: { error: 'Already reported.' } }), 'Already reported.')
+  assert.equal(getReviewActionError({ status: 500 }), 'The request could not be completed. Please try again.')
 })
 
 test('seller flow error rule e maps missing items to a designed message', () => {
