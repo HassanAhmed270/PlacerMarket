@@ -190,6 +190,10 @@ export function createApiClient({
     approveListingRevision: (id) => post(`listings/revisions/${encodeURIComponent(id)}/approve`, {}, { authenticated: true }),
     rejectListingRevision: (id, reason) => post(`listings/revisions/${encodeURIComponent(id)}/reject`, { reason }, { authenticated: true }),
     getPublicListing: (id) => get(`discovery/listings/${encodeURIComponent(id)}`),
+    getListingReviews: (listingKey, options = {}) => {
+      if (typeof listingKey !== 'string' || !listingKey.trim()) throw new Error('A listing is required.')
+      return get(`discovery/listings/${encodeURIComponent(listingKey)}/reviews${queryString(options)}`)
+    },
     getListingStatus: (id) => get(`discovery/listings/${encodeURIComponent(id)}/status`),
     buyListing: (id, input) => post(`listings/${encodeURIComponent(id)}/buy`, input, { authenticated: true }),
     fileDispute: (id, input) => post(`disputes/orders/${encodeURIComponent(id)}`, input, { authenticated: true }),
@@ -296,6 +300,21 @@ export function createApiClient({
         throw new Error('Report reason must be 3 to 300 characters.')
       }
       return post(`reviews/${encodeURIComponent(reviewId)}/reports`, { reason: reason.trim() }, { authenticated: true })
+    },
+    getReviewModerationQueue: (options = {}) => get(`reviews/moderation-queue${queryString(options)}`, { authenticated: true }),
+    hideReview: (reviewId, reason) => {
+      if (typeof reviewId !== 'string' || !reviewId.trim()) throw new Error('A review is required.')
+      if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 300) {
+        throw new Error('Hide reason must be 3 to 300 characters.')
+      }
+      return post(`reviews/${encodeURIComponent(reviewId)}/hide`, { reason: reason.trim() }, { authenticated: true })
+    },
+    restoreReview: (reviewId, reason) => {
+      if (typeof reviewId !== 'string' || !reviewId.trim()) throw new Error('A review is required.')
+      if (typeof reason !== 'string' || reason.trim().length < 3 || reason.trim().length > 300) {
+        throw new Error('Restore reason must be 3 to 300 characters.')
+      }
+      return post(`reviews/${encodeURIComponent(reviewId)}/restore`, { reason: reason.trim() }, { authenticated: true })
     },
     getSellerReviews: (sellerId, options = {}) => {
       if (typeof sellerId !== 'string' || !sellerId.trim()) throw new Error('A seller is required.')

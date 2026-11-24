@@ -47,6 +47,33 @@ test('public search client encodes the query in the existing discovery endpoint'
   assert.deepEqual(result, { items: [], nextCursor: null, hasNextPage: false })
 })
 
+test('Stage 6.3 review APIs use public and staff review routes exactly', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({ reviews: [], nextCursor: null }) }
+    },
+  })
+  await client.getListingReviews('listing/a', { limit: 20, cursor: 'review-cursor' })
+  client.setAccessToken('staff-memory-token')
+  await client.getReviewModerationQueue({ limit: 50, cursor: 'queue-cursor' })
+  await client.hideReview('review/1', 'Hide this inappropriate review.')
+  await client.restoreReview('review/2', 'Restore this review after review.')
+
+  assert.deepEqual(calls.map(({ url, options }) => [url, options.method, options.body]), [
+    ['https://api.example.test/api/discovery/listings/listing%2Fa/reviews?limit=20&cursor=review-cursor', 'GET', undefined],
+    ['https://api.example.test/api/reviews/moderation-queue?limit=50&cursor=queue-cursor', 'GET', undefined],
+    ['https://api.example.test/api/reviews/review%2F1/hide', 'POST', JSON.stringify({ reason: 'Hide this inappropriate review.' })],
+    ['https://api.example.test/api/reviews/review%2F2/restore', 'POST', JSON.stringify({ reason: 'Restore this review after review.' })],
+  ])
+  assert.equal(calls[0].options.headers.Authorization, undefined)
+  assert.equal(calls[1].options.headers.Authorization, 'Bearer staff-memory-token')
+  assert.throws(() => client.hideReview('review-1', 'no'), /Hide reason/)
+  assert.throws(() => client.restoreReview('review-1', 'no'), /Restore reason/)
+})
+
 test('API client reports non-success responses without exposing response content', async () => {
   const client = createApiClient({
     baseUrl: 'http://localhost:3000/api',
