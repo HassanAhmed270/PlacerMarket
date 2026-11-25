@@ -313,3 +313,7 @@ export function chargebackStatusLabel(status) {
   })
   return typeof status === 'string' && labels[status] ? labels[status] : 'Status unavailable'
 }
+
+export function canResolveDispute(canResolve, unresolved) {
+  return canResolve !== false && unresolved
+}

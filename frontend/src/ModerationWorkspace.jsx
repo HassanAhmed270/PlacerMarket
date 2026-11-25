@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
 import WorkspaceFrame, { ErrorMessage } from './WorkspaceFrame.jsx'
 import ReviewModerationQueue from './ReviewModerationQueue.jsx'
+import AdminDisputes from './AdminDisputes.jsx'
 
 function ModeratorImage({ src }) {
   const [objectUrl, setObjectUrl] = useState('')
@@ -144,6 +145,10 @@ function ModerationWorkspace({ onSignOut }) {
         {attributeQueue.length === 0 && !attributeQueueError && <p>No custom values awaiting approval.</p>}
       </section>
       <ReviewModerationQueue canRestore={false} />
+      <section className="listing-panel">
+        <h2>Disputes</h2>
+        <AdminDisputes canResolve={false} />
+      </section>
     </WorkspaceFrame>
   )
 }

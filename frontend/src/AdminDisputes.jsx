@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { api } from './lib/api.js'
-import { adminErrorMessage, adminStatusLabel, formatAdminDate, validateDisputeResolution } from './lib/admin.js'
+import { adminErrorMessage, adminStatusLabel, formatAdminDate, validateDisputeResolution, canResolveDispute } from './lib/admin.js'
 
 const DISPUTE_STATUSES = ['open', 'seller_responded', 'resolved_refund', 'resolved_release']
 
-export default function AdminDisputes() {
+export default function AdminDisputes({ canResolve = true }) {
   const [status, setStatus] = useState('')
   const [disputes, setDisputes] = useState([])
   const [loading, setLoading] = useState(true)
@@ -57,6 +57,7 @@ export default function AdminDisputes() {
             <DisputeRow
               key={dispute.id}
               dispute={dispute}
+              canResolve={canResolve}
               onError={setError}
               onResolved={reloadDisputes}
             />
@@ -66,7 +67,7 @@ export default function AdminDisputes() {
   )
 }
 
-function DisputeRow({ dispute, onError, onResolved }) {
+function DisputeRow({ dispute, canResolve, onError, onResolved }) {
   const [evidence, setEvidence] = useState(null)
   const [evidenceLoading, setEvidenceLoading] = useState(false)
   const [pending, setPending] = useState(false)
@@ -139,7 +140,7 @@ function DisputeRow({ dispute, onError, onResolved }) {
           ))}
         </ul>
         : <p role="status">No evidence attached.</p>)}
-      {unresolved ? (
+      {canResolveDispute(canResolve, unresolved) ? (
         <form className="admin-form admin-inline-confirm" onSubmit={submit}>
           <p>This records the decision only and moves no money. Resolving for the seller lets an Admin release the manual payout from the order page. Resolving for the buyer creates a &quot;refund required&quot; exception that must be handled manually under Exceptions.</p>
           <label>Resolution amount to buyer
@@ -151,7 +152,8 @@ function DisputeRow({ dispute, onError, onResolved }) {
             {pending ? 'Resolving…' : 'Resolve dispute'}
           </button>
         </form>
-      ) : <p>Dispute resolved. No further resolution action is available.</p>}
+      ) : unresolved ? <p>Read-only evidence view. Resolution is not available in this account.</p>
+        : <p>Dispute resolved. No further resolution action is available.</p>}
     </article>
   )
 }

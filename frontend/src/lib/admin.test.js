@@ -28,6 +28,7 @@ import {
   deliveryOutcomeEligibility,
   returnStatusLabel,
   chargebackStatusLabel,
+  canResolveDispute,
 } from './admin.js'
 
 test('Stage 6.4: return and chargeback operations validate the backend forms', () => {
@@ -42,6 +43,12 @@ test('Stage 6.4: return and chargeback operations validate the backend forms', (
   assert.equal(returnStatusLabel('unknown'), 'Status unavailable')
   assert.equal(chargebackStatusLabel('open'), 'Open')
   assert.equal(chargebackStatusLabel('unknown'), 'Status unavailable')
+})
+
+test('Stage 6.4: Moderator dispute view never allows resolution', () => {
+  assert.equal(canResolveDispute(true, true), true)
+  assert.equal(canResolveDispute(false, true), false)
+  assert.equal(canResolveDispute(false, false), false)
 })
 
 test('Stage 6.4: delivery outcome eligibility follows handed-out statuses only', () => {

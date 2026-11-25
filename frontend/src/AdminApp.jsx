@@ -17,6 +17,7 @@ import AdminPayoutSettings from './AdminPayoutSettings.jsx'
 import AdminReviews from './AdminReviews.jsx'
 import AdminReturns from './AdminReturns.jsx'
 import AdminChargebacks from './AdminChargebacks.jsx'
+import AdminConsistency from './AdminConsistency.jsx'
 import './AdminWorkspace.css'
 
 function isAdminOrderAccessError(error) {
@@ -195,6 +196,7 @@ export default function AdminApp({ path }) {
   else if (path === '/admin/returns') page = <AdminReturns />
   else if (chargebackId) page = <AdminChargebacks chargebackId={chargebackId} />
   else if (path === '/admin/chargebacks') page = <AdminChargebacks />
+  else if (path === '/admin/consistency') page = <AdminConsistency />
   else page = <AdminOrders />
 
   return <AdminLayout onLogout={signOut} role={currentRole}>{page}</AdminLayout>
