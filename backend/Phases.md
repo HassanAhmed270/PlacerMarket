@@ -1,7 +1,7 @@
 # Phases.md — build order (backend and frontend in parallel)
 
 Created 2026-10-13, **consolidated 2026-10-14** with the Poshaak scale, auth and
-listing-media decisions. **Current phase: Phase 5 backend complete (stages 5.1 to 5.8b on main 0460ecc51c26da877f294177174ab7453b018da9, verified 2026-11-19); Phase 6 not started.**
+listing-media decisions. **Current phase: Phase 6 complete (stages 6.0 to 6.4); Phase 7 not started.**
 
 ## How phases work
 
