@@ -380,6 +380,84 @@ export function createApiClient({
     getAdminOrder: (id) => get(`admin/orders/${encodeURIComponent(id)}`, { authenticated: true }),
     getAdminManualRefunds: (filters = {}) => get(`admin/refunds${queryString(filters)}`, { authenticated: true }),
     getAdminManualRefund: (id) => get(`admin/refunds/${encodeURIComponent(id)}`, { authenticated: true }),
+    getAdminReturns: (filters = {}) => get(`admin/returns${queryString(filters)}`, { authenticated: true }),
+    getAdminReturn: (id) => get(`admin/returns/${encodeURIComponent(id)}`, { authenticated: true }),
+    decideAdminReturn: (id, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).some((key) => !['decision', 'decisionNote', 'sellerAtFault', 'stepUpGrant'].includes(key)) ||
+          !['approve_refund', 'reject'].includes(input.decision) ||
+          typeof input.decisionNote !== 'string' ||
+          input.decisionNote.trim().length < 3 || input.decisionNote.trim().length > 300 ||
+          typeof input.stepUpGrant !== 'string' || !input.stepUpGrant.trim()) {
+        throw new Error('A valid return decision and step-up grant are required.')
+      }
+      if (input.sellerAtFault !== undefined && typeof input.sellerAtFault !== 'boolean') {
+        throw new Error('Seller at fault must be a boolean.')
+      }
+      return post(`admin/returns/${encodeURIComponent(id)}/decide`, {
+        decision: input.decision,
+        decisionNote: input.decisionNote.trim(),
+        ...(input.decision === 'approve_refund' && typeof input.sellerAtFault === 'boolean'
+          ? { sellerAtFault: input.sellerAtFault } : {}),
+        stepUpGrant: input.stepUpGrant,
+      }, { authenticated: true })
+    },
+    getAdminChargebacks: (filters = {}) => get(`admin/chargebacks${queryString(filters)}`, { authenticated: true }),
+    getAdminChargeback: (id) => get(`admin/chargebacks/${encodeURIComponent(id)}`, { authenticated: true }),
+    recordAdminChargeback: (orderId, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).some((key) => !['amount', 'reference', 'note', 'stepUpGrant'].includes(key)) ||
+          typeof input.amount !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(input.amount.trim()) ||
+          input.amount.trim() === '0' || typeof input.reference !== 'string' ||
+          input.reference.trim().length < 3 || input.reference.trim().length > 100 ||
+          typeof input.note !== 'string' || input.note.trim().length < 3 || input.note.trim().length > 300 ||
+          typeof input.stepUpGrant !== 'string' || !input.stepUpGrant.trim()) {
+        throw new Error('A valid chargeback form and step-up grant are required.')
+      }
+      return post(`admin/orders/${encodeURIComponent(orderId)}/chargebacks`, {
+        amount: input.amount.trim(),
+        reference: input.reference.trim(),
+        note: input.note.trim(),
+        stepUpGrant: input.stepUpGrant,
+      }, { authenticated: true })
+    },
+    resolveAdminChargeback: (id, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          !['won', 'lost'].includes(input.outcome) ||
+          typeof input.resolutionNote !== 'string' ||
+          input.resolutionNote.trim().length < 3 || input.resolutionNote.trim().length > 300 ||
+          typeof input.stepUpGrant !== 'string' || !input.stepUpGrant.trim()) {
+        throw new Error('A valid chargeback resolution and step-up grant are required.')
+      }
+      return post(`admin/chargebacks/${encodeURIComponent(id)}/resolve`, {
+        outcome: input.outcome,
+        resolutionNote: input.resolutionNote.trim(),
+        stepUpGrant: input.stepUpGrant,
+      }, { authenticated: true })
+    },
+    recordAdminRefusedDelivery: (orderId, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).some((key) => key !== 'note') ||
+          typeof input.note !== 'string' ||
+          input.note.trim().length < 3 || input.note.trim().length > 300) {
+        throw new Error('Refused-delivery note must be 3 to 300 characters.')
+      }
+      return post(`admin/orders/${encodeURIComponent(orderId)}/refused-delivery`, { note: input.note.trim() }, { authenticated: true })
+    },
+    markAdminDeliveryLost: (orderId, input) => {
+      if (!input || typeof input !== 'object' || Array.isArray(input) ||
+          Object.keys(input).some((key) => !['reason', 'stepUpGrant'].includes(key)) ||
+          typeof input.reason !== 'string' ||
+          input.reason.trim().length < 3 || input.reason.trim().length > 300 ||
+          typeof input.stepUpGrant !== 'string' || !input.stepUpGrant.trim()) {
+        throw new Error('A lost-delivery reason and step-up grant are required.')
+      }
+      return post(`admin/orders/${encodeURIComponent(orderId)}/lost-delivery`, {
+        reason: input.reason.trim(),
+        stepUpGrant: input.stepUpGrant,
+      }, { authenticated: true })
+    },
+    getAdminConsistencyFindings: (filters = {}) => get(`admin/consistency-findings${queryString(filters)}`, { authenticated: true }),
     getAdminRefundsNeedingAttention: (filters = {}) => get(`admin/refunds/attention${queryString(filters)}`, { authenticated: true }),
     retryAdminFailedRefund: (id) => post(`admin/refunds/${encodeURIComponent(id)}/retry`, {}, { authenticated: true }),
     getAdminRefundableBalance: (orderId) => get(`admin/orders/${encodeURIComponent(orderId)}/refundable-balance`, { authenticated: true }),

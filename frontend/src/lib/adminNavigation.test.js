@@ -4,11 +4,14 @@ import { visibleAdminLinks } from './adminNavigation.js'
 
 test('Admin navigation includes all payout links for Admin', () => {
   const links = visibleAdminLinks('admin').map((link) => link.href)
-  assert.equal(links.length, 9)
+  assert.equal(links.length, 12)
   assert.ok(links.includes('/admin/seller-payouts'))
   assert.ok(links.includes('/admin/held-funds'))
   assert.ok(links.includes('/admin/payout-settings'))
   assert.ok(links.includes('/admin/reviews'))
+  assert.ok(links.includes('/admin/returns'))
+  assert.ok(links.includes('/admin/chargebacks'))
+  assert.ok(links.includes('/admin/consistency'))
 })
 
 test('Moderator navigation hides Admin-only payout links', () => {

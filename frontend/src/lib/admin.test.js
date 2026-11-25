@@ -22,7 +22,34 @@ import {
   validateHandoverForm,
   validateManualRefundReason,
   validatePayoutForm,
+  validateReturnDecisionForm,
+  validateChargebackRecordForm,
+  validateChargebackResolveForm,
+  deliveryOutcomeEligibility,
+  returnStatusLabel,
+  chargebackStatusLabel,
 } from './admin.js'
+
+test('Stage 6.4: return and chargeback operations validate the backend forms', () => {
+  assert.equal(validateReturnDecisionForm({ decision: 'approve_refund', decisionNote: 'Approved after evidence review', sellerAtFault: true }), '')
+  assert.match(validateReturnDecisionForm({ decision: 'reject', decisionNote: 'Rejected after review', sellerAtFault: true }), /only/)
+  assert.match(validateReturnDecisionForm({ decision: 'approve_refund', decisionNote: 'x', sellerAtFault: false }), /3 to 300/)
+  assert.equal(validateChargebackRecordForm({ amount: '1250.50', reference: 'CB-123', note: 'Card chargeback recorded' }), '')
+  assert.match(validateChargebackRecordForm({ amount: '0', reference: 'CB-123', note: 'Card chargeback recorded' }), /greater than zero/)
+  assert.equal(validateChargebackResolveForm({ outcome: 'won', resolutionNote: 'Issuer confirmed the seller position' }), '')
+  assert.match(validateChargebackResolveForm({ outcome: 'other', resolutionNote: 'Invalid outcome' }), /Choose/)
+  assert.equal(returnStatusLabel('seller_responded'), 'Seller responded')
+  assert.equal(returnStatusLabel('unknown'), 'Status unavailable')
+  assert.equal(chargebackStatusLabel('open'), 'Open')
+  assert.equal(chargebackStatusLabel('unknown'), 'Status unavailable')
+})
+
+test('Stage 6.4: delivery outcome eligibility follows handed-out statuses only', () => {
+  assert.equal(deliveryOutcomeEligibility({ status: 'handed_to_delivery', deliveredAt: null }), true)
+  assert.equal(deliveryOutcomeEligibility({ status: 'out_for_delivery', deliveredAt: null }), true)
+  assert.equal(deliveryOutcomeEligibility({ status: 'delivered', deliveredAt: '2026-11-24T10:00:00Z' }), false)
+  assert.equal(deliveryOutcomeEligibility({ status: 'funded', deliveredAt: null }), false)
+})
 
 test('FR-72: handover form rejects future times, empty notes, and notes over 500 characters', () => {
   const now = Date.parse('2026-11-07T10:00:00.000Z')

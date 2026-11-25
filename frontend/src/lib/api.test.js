@@ -47,6 +47,44 @@ test('public search client encodes the query in the existing discovery endpoint'
   assert.deepEqual(result, { items: [], nextCursor: null, hasNextPage: false })
 })
 
+test('Stage 6.4 admin operations use exact encoded URLs, methods, bodies, and authentication', async () => {
+  const calls = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({ ok: true }) }
+    },
+  })
+  client.setAccessToken('staff-memory-token')
+  await client.getAdminReturns({ status: 'requested', limit: 50 })
+  await client.getAdminReturn('return/1')
+  await client.decideAdminReturn('return/1', { decision: 'approve_refund', decisionNote: 'Approved after review', sellerAtFault: true, stepUpGrant: 'grant-a' })
+  await client.getAdminChargebacks({ status: 'open', limit: 50 })
+  await client.getAdminChargeback('chargeback/1')
+  await client.recordAdminChargeback('order/1', { amount: '1250.50', reference: 'CB-123', note: 'Card chargeback recorded', stepUpGrant: 'grant-b' })
+  await client.resolveAdminChargeback('chargeback/1', { outcome: 'won', resolutionNote: 'Issuer confirmed the seller position', stepUpGrant: 'grant-c' })
+  await client.recordAdminRefusedDelivery('order/1', { note: 'Buyer refused at door' })
+  await client.markAdminDeliveryLost('order/1', { reason: 'Courier confirmed parcel lost', stepUpGrant: 'grant-d' })
+  await client.getAdminConsistencyFindings({ limit: 20, cursor: 'cursor-a' })
+
+  assert.deepEqual(calls.map(({ url, options }) => [url, options.method, options.body]), [
+    ['https://api.example.test/api/admin/returns?status=requested&limit=50', 'GET', undefined],
+    ['https://api.example.test/api/admin/returns/return%2F1', 'GET', undefined],
+    ['https://api.example.test/api/admin/returns/return%2F1/decide', 'POST', JSON.stringify({ decision: 'approve_refund', decisionNote: 'Approved after review', sellerAtFault: true, stepUpGrant: 'grant-a' })],
+    ['https://api.example.test/api/admin/chargebacks?status=open&limit=50', 'GET', undefined],
+    ['https://api.example.test/api/admin/chargebacks/chargeback%2F1', 'GET', undefined],
+    ['https://api.example.test/api/admin/orders/order%2F1/chargebacks', 'POST', JSON.stringify({ amount: '1250.50', reference: 'CB-123', note: 'Card chargeback recorded', stepUpGrant: 'grant-b' })],
+    ['https://api.example.test/api/admin/chargebacks/chargeback%2F1/resolve', 'POST', JSON.stringify({ outcome: 'won', resolutionNote: 'Issuer confirmed the seller position', stepUpGrant: 'grant-c' })],
+    ['https://api.example.test/api/admin/orders/order%2F1/refused-delivery', 'POST', JSON.stringify({ note: 'Buyer refused at door' })],
+    ['https://api.example.test/api/admin/orders/order%2F1/lost-delivery', 'POST', JSON.stringify({ reason: 'Courier confirmed parcel lost', stepUpGrant: 'grant-d' })],
+    ['https://api.example.test/api/admin/consistency-findings?limit=20&cursor=cursor-a', 'GET', undefined],
+  ])
+  assert.ok(calls.every(({ options }) => options.headers.Authorization === 'Bearer staff-memory-token'))
+  assert.throws(() => client.decideAdminReturn('return-1', { decision: 'reject', decisionNote: 'x', stepUpGrant: 'grant' }), /valid return decision/)
+  assert.throws(() => client.recordAdminChargeback('order-1', { amount: '0', reference: 'CB-123', note: 'Valid note', stepUpGrant: 'grant' }), /valid chargeback form/)
+})
+
 test('Stage 6.3 review APIs use public and staff review routes exactly', async () => {
   const calls = []
   const client = createApiClient({

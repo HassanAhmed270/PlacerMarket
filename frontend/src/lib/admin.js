@@ -21,7 +21,7 @@ const STATUS_LABELS = Object.freeze({
 const ERROR_MESSAGES = Object.freeze({
   400: 'The request could not be accepted. Check the fields and try again.',
   401: 'Your Admin session has expired. Sign in again.',
-  403: 'Your account does not have permission to do this.',
+  403: "Your account can't do this.",
   404: 'The requested record could not be found.',
   409: 'The record changed or is not eligible for this action.',
   422: 'The server could not process this request.',
@@ -244,4 +244,72 @@ export function localDateTimeToIsoWithOffset(value, offsetMinutes) {
   const absoluteOffset = Math.abs(localOffset)
   const offset = `${sign}${String(Math.floor(absoluteOffset / 60)).padStart(2, '0')}:${String(absoluteOffset % 60).padStart(2, '0')}`
   return `${value}:00${offset}`
+}
+
+export function validateReturnDecisionForm({ decision, decisionNote, sellerAtFault = false }) {
+  if (!['approve_refund', 'reject'].includes(decision)) {
+    return 'Choose approve refund or reject.'
+  }
+  if (typeof decisionNote !== 'string' ||
+      decisionNote.trim().length < 3 || decisionNote.trim().length > 300) {
+    return 'Decision note must be 3 to 300 characters.'
+  }
+  if (typeof sellerAtFault !== 'boolean') {
+    return 'Seller-at-fault must be a boolean.'
+  }
+  if (decision === 'reject' && sellerAtFault) {
+    return 'Seller at fault can only be selected when approving a refund.'
+  }
+  return ''
+}
+
+export function validateChargebackRecordForm({ amount, reference, note }) {
+  if (typeof amount !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(amount.trim()) ||
+      amount.trim() === '0' || amount.trim() === '0.00') {
+    return 'Enter a valid chargeback amount greater than zero.'
+  }
+  if (typeof reference !== 'string' ||
+      reference.trim().length < 3 || reference.trim().length > 100) {
+    return 'Reference must be 3 to 100 characters.'
+  }
+  if (typeof note !== 'string' ||
+      note.trim().length < 3 || note.trim().length > 300) {
+    return 'Note must be 3 to 300 characters.'
+  }
+  return ''
+}
+
+export function validateChargebackResolveForm({ outcome, resolutionNote }) {
+  if (!['won', 'lost'].includes(outcome)) {
+    return 'Choose won or lost.'
+  }
+  if (typeof resolutionNote !== 'string' ||
+      resolutionNote.trim().length < 3 || resolutionNote.trim().length > 300) {
+    return 'Resolution note must be 3 to 300 characters.'
+  }
+  return ''
+}
+
+export function deliveryOutcomeEligibility(order) {
+  return ['handed_to_delivery', 'out_for_delivery'].includes(order?.status) &&
+    order?.deliveredAt === null
+}
+
+export function returnStatusLabel(status) {
+  const labels = Object.freeze({
+    requested: 'Requested',
+    seller_responded: 'Seller responded',
+    approved: 'Approved',
+    rejected: 'Rejected',
+  })
+  return typeof status === 'string' && labels[status] ? labels[status] : 'Status unavailable'
+}
+
+export function chargebackStatusLabel(status) {
+  const labels = Object.freeze({
+    open: 'Open',
+    won: 'Won',
+    lost: 'Lost',
+  })
+  return typeof status === 'string' && labels[status] ? labels[status] : 'Status unavailable'
 }

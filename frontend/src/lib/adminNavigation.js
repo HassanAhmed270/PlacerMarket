@@ -9,6 +9,9 @@ export function visibleAdminLinks(role) {
     { href: '/admin/payout-settings', label: 'Payout settings' },
     { href: '/admin/delivery-cities', label: 'Delivery cities' },
     { href: '/admin/reviews', label: 'Reviews' },
+    { href: '/admin/returns', label: 'Returns' },
+    { href: '/admin/chargebacks', label: 'Chargebacks' },
+    { href: '/admin/consistency', label: 'Consistency' },
   ]
   if (role === 'admin') return adminLinks
   if (role === 'moderator') return adminLinks.filter((link) => link.href === '/admin/disputes')
