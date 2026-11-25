@@ -16,6 +16,7 @@ import AdminHeldFunds from './AdminHeldFunds.jsx'
 import AdminPayoutSettings from './AdminPayoutSettings.jsx'
 import AdminReviews from './AdminReviews.jsx'
 import AdminReturns from './AdminReturns.jsx'
+import AdminChargebacks from './AdminChargebacks.jsx'
 import './AdminWorkspace.css'
 
 function isAdminOrderAccessError(error) {
@@ -39,6 +40,11 @@ function sellerPayoutIdFromPath(path) {
 
 function returnIdFromPath(path) {
   const match = /^\/admin\/returns\/([^/]+)$/.exec(path)
+  return match ? match[1] : ''
+}
+
+function chargebackIdFromPath(path) {
+  const match = /^\/admin\/chargebacks\/([^/]+)$/.exec(path)
   return match ? match[1] : ''
 }
 
@@ -171,6 +177,7 @@ export default function AdminApp({ path }) {
   const refundId = refundIdFromPath(path)
   const sellerPayoutId = sellerPayoutIdFromPath(path)
   const returnId = returnIdFromPath(path)
+  const chargebackId = chargebackIdFromPath(path)
   let page
   if (orderId) page = <AdminOrders orderId={orderId} />
   else if (path === '/admin/refunds/request') page = <AdminRefundRequest />
@@ -186,6 +193,8 @@ export default function AdminApp({ path }) {
   else if (path === '/admin/reviews') page = <AdminReviews />
   else if (returnId) page = <AdminReturns returnId={returnId} />
   else if (path === '/admin/returns') page = <AdminReturns />
+  else if (chargebackId) page = <AdminChargebacks chargebackId={chargebackId} />
+  else if (path === '/admin/chargebacks') page = <AdminChargebacks />
   else page = <AdminOrders />
 
   return <AdminLayout onLogout={signOut} role={currentRole}>{page}</AdminLayout>

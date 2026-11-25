@@ -13,6 +13,8 @@ import {
   payoutReleaseMessage,
   validateHandoverForm,
   validatePayoutForm,
+  deliveryOutcomeEligibility,
+  validateChargebackRecordForm,
 } from './lib/admin.js'
 
 const ORDER_STATUSES = [
@@ -203,6 +205,27 @@ function AdminOrderDetail({ orderId }) {
       </section>
 
       <section className="admin-card">
+        <h2>Returns and chargebacks</h2>
+        <p>
+          <a href="/admin/returns">View order returns</a>
+          {' · '}
+          <a href="/admin/chargebacks">View order chargebacks</a>
+        </p>
+      </section>
+
+      <section className="admin-card">
+        <h2>Delivery outcomes</h2>
+        {order.deliveryOutcomes?.length
+          ? <ul>{order.deliveryOutcomes.map((outcome) => (
+              <li key={outcome.id || `${outcome.outcome}-${outcome.recordedAt}`}>
+                <strong>{adminStatusLabel(outcome.outcome)}</strong> · {formatAdminDate(outcome.recordedAt)}
+                {outcome.note ? ` · ${outcome.note}` : ''}
+              </li>
+            ))}</ul>
+          : <p>No delivery outcomes recorded.</p>}
+      </section>
+
+      <section className="admin-card">
         <h2>Payout hold</h2>
         <dl className="admin-data-grid">
           <div><dt>State</dt><dd>{adminStatusLabel(order.payoutHold?.state)}</dd></div>
@@ -240,6 +263,13 @@ function AdminOrderDetail({ orderId }) {
           onError={setError}
         />
       )}
+      {deliveryOutcomeEligibility(order) && (
+        <>
+          <RefusedDeliveryForm order={order} onSuccess={refresh} onError={setError} onNotice={setNotice} />
+          <LostDeliveryForm order={order} onSuccess={refresh} onError={setError} onNotice={setNotice} />
+        </>
+      )}
+      <ChargebackRecordForm order={order} onSuccess={refresh} onError={setError} onNotice={setNotice} />
       {payoutReceipt?.payout && (
         <section className="admin-card" role="status">
           <h2>Recorded payout amounts</h2>
@@ -408,6 +438,168 @@ function PayoutForm({ order, onSuccess, onError }) {
         <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I confirm this manual payout is complete and the reference is correct.</label>
         <button className="admin-button admin-button-primary" type="submit" disabled={pending || !confirmed}>
           {pending ? 'Recording payout…' : 'Record payout release'}
+        </button>
+      </form>
+    </section>
+  )
+}
+
+function RefusedDeliveryForm({ order, onSuccess, onError, onNotice }) {
+  const [pending, setPending] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+
+  async function submit(event) {
+    event.preventDefault()
+    const note = String(new FormData(event.currentTarget).get('note') || '').trim()
+    if (note.length < 3 || note.length > 300) {
+      onError('A note of 3 to 300 characters is required.')
+      return
+    }
+    if (!confirmed) {
+      onError('Confirm that the refused delivery record is accurate.')
+      return
+    }
+    setPending(true)
+    onError('')
+    onNotice('')
+    try {
+      await api.recordAdminRefusedDelivery(order.orderId, { note })
+      onNotice('Refused delivery recorded. Order details were refreshed.')
+      await onSuccess()
+    } catch (cause) {
+      onError(adminErrorMessage(cause))
+    } finally {
+      setPending(false)
+    }
+  }
+
+  return (
+    <section className="admin-card">
+      <h2>Record refused delivery</h2>
+      <form className="admin-form" onSubmit={submit}>
+        <label>Note<textarea name="note" required minLength="3" maxLength="300" /></label>
+        <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I confirm this refused-delivery record is accurate.</label>
+        <button className="admin-button admin-button-primary" type="submit" disabled={pending || !confirmed}>
+          {pending ? 'Recording…' : 'Record refused delivery'}
+        </button>
+      </form>
+    </section>
+  )
+}
+
+function LostDeliveryForm({ order, onSuccess, onError, onNotice }) {
+  const [pending, setPending] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+  const [authenticatorCode, setAuthenticatorCode] = useState('')
+
+  async function submit(event) {
+    event.preventDefault()
+    const reason = String(new FormData(event.currentTarget).get('reason') || '').trim()
+    if (reason.length < 3 || reason.length > 300) {
+      onError('A reason of 3 to 300 characters is required.')
+      return
+    }
+    if (!authenticatorCode.trim()) {
+      onError('Enter your authenticator code.')
+      return
+    }
+    if (!confirmed) {
+      onError('Confirm that the lost-delivery action is accurate.')
+      return
+    }
+    setPending(true)
+    onError('')
+    onNotice('')
+    try {
+      const stepUp = await api.createStepUpGrant('refund.decide', authenticatorCode.trim())
+      await api.markAdminDeliveryLost(order.orderId, { reason, stepUpGrant: stepUp.grant })
+      onNotice('Lost delivery recorded. Order details were refreshed.')
+      await onSuccess()
+      setAuthenticatorCode('')
+      setConfirmed(false)
+    } catch (cause) {
+      onError(adminErrorMessage(cause))
+    } finally {
+      setPending(false)
+      setAuthenticatorCode('')
+    }
+  }
+
+  return (
+    <section className="admin-card">
+      <h2>Mark delivery lost</h2>
+      <p className="admin-warning">This refunds the buyer in full and fails any payout that has not been paid. A payout that was already paid is not changed.</p>
+      <form className="admin-form" onSubmit={submit}>
+        <label>Reason<textarea name="reason" required minLength="3" maxLength="300" /></label>
+        <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I confirm this lost-delivery action.</label>
+        <label>Authenticator code
+          <input value={authenticatorCode} onChange={(event) => setAuthenticatorCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" required />
+        </label>
+        <button className="admin-button admin-button-primary" type="submit" disabled={pending || !confirmed}>
+          {pending ? 'Submitting…' : 'Mark delivery lost'}
+        </button>
+      </form>
+    </section>
+  )
+}
+
+function ChargebackRecordForm({ order, onSuccess, onError, onNotice }) {
+  const [pending, setPending] = useState(false)
+  const [confirmed, setConfirmed] = useState(false)
+  const [authenticatorCode, setAuthenticatorCode] = useState('')
+
+  async function submit(event) {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const input = {
+      amount: String(form.get('amount') || ''),
+      reference: String(form.get('reference') || ''),
+      note: String(form.get('note') || ''),
+    }
+    const validation = validateChargebackRecordForm(input)
+    if (validation) {
+      onError(validation)
+      return
+    }
+    if (!authenticatorCode.trim()) {
+      onError('Enter your authenticator code.')
+      return
+    }
+    if (!confirmed) {
+      onError('Confirm that the chargeback record is accurate.')
+      return
+    }
+    setPending(true)
+    onError('')
+    onNotice('')
+    try {
+      const stepUp = await api.createStepUpGrant('refund.decide', authenticatorCode.trim())
+      await api.recordAdminChargeback(order.orderId, { ...input, stepUpGrant: stepUp.grant })
+      onNotice('Chargeback recorded. Order details were refreshed.')
+      await onSuccess()
+      setAuthenticatorCode('')
+      setConfirmed(false)
+    } catch (cause) {
+      onError(adminErrorMessage(cause))
+    } finally {
+      setPending(false)
+      setAuthenticatorCode('')
+    }
+  }
+
+  return (
+    <section className="admin-card">
+      <h2>Record chargeback</h2>
+      <form className="admin-form" onSubmit={submit}>
+        <label>Amount<input name="amount" inputMode="decimal" required /></label>
+        <label>Reference<input name="reference" required minLength="3" maxLength="100" /></label>
+        <label>Note<textarea name="note" required minLength="3" maxLength="300" /></label>
+        <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /> I confirm this chargeback record is accurate.</label>
+        <label>Authenticator code
+          <input value={authenticatorCode} onChange={(event) => setAuthenticatorCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" required />
+        </label>
+        <button className="admin-button admin-button-primary" type="submit" disabled={pending || !confirmed}>
+          {pending ? 'Submitting…' : 'Record chargeback'}
         </button>
       </form>
     </section>
