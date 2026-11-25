@@ -23,6 +23,8 @@ import {
   validateManualRefundReason,
   validatePayoutForm,
   validateReturnDecisionForm,
+  returnDecisionSummary,
+  isValidPositiveChargebackAmount,
   validateChargebackRecordForm,
   validateChargebackResolveForm,
   deliveryOutcomeEligibility,
@@ -49,6 +51,48 @@ test('Stage 6.4: Moderator dispute view never allows resolution', () => {
   assert.equal(canResolveDispute(true, true), true)
   assert.equal(canResolveDispute(false, true), false)
   assert.equal(canResolveDispute(false, false), false)
+})
+
+test('Stage 6.4b: return decision summaries describe refund and payout outcomes', () => {
+  const cases = [
+    { input: { decision: '', sellerAtFault: false }, expected: '' },
+    {
+      input: { decision: 'reject', sellerAtFault: false },
+      expected: 'Reject: no refund is issued and payout records are unchanged. A shared payout hold may be cleared if no other payout issue remains.',
+    },
+    {
+      input: { decision: 'approve_refund', sellerAtFault: false },
+      expected: 'Approve refund: the buyer is refunded the remaining item price. Initiated payouts are failed; already-paid payouts are unchanged.',
+    },
+    {
+      input: { decision: 'approve_refund', sellerAtFault: true },
+      expected: 'Approve refund: the buyer is refunded the remaining item price and the remaining delivery fee. Initiated payouts are failed; already-paid payouts are unchanged.',
+    },
+  ]
+
+  for (const { input, expected } of cases) {
+    assert.equal(returnDecisionSummary(input), expected)
+  }
+  assert.doesNotMatch(returnDecisionSummary(cases[2].input), /delivery fee/i)
+  assert.match(returnDecisionSummary(cases[3].input), /delivery fee/i)
+})
+
+test('Stage 6.4b: chargeback amounts reject zero spellings and accept positive decimals', () => {
+  for (const amount of ['0', '0.0', '0.00']) {
+    assert.equal(isValidPositiveChargebackAmount(amount), false)
+    assert.match(
+      validateChargebackRecordForm({ amount, reference: 'CB-123', note: 'Chargeback recorded' }),
+      /greater than zero/
+    )
+  }
+  for (const amount of ['0.01', '10.50']) {
+    assert.equal(isValidPositiveChargebackAmount(amount), true)
+    assert.equal(validateChargebackRecordForm({
+      amount,
+      reference: 'CB-123',
+      note: 'Chargeback recorded',
+    }), '')
+  }
 })
 
 test('Stage 6.4: delivery outcome eligibility follows handed-out statuses only', () => {

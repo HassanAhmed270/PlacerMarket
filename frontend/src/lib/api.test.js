@@ -85,6 +85,36 @@ test('Stage 6.4 admin operations use exact encoded URLs, methods, bodies, and au
   assert.throws(() => client.recordAdminChargeback('order-1', { amount: '0', reference: 'CB-123', note: 'Valid note', stepUpGrant: 'grant' }), /valid chargeback form/)
 })
 
+test('Stage 6.4b: recordAdminChargeback rejects zero spellings and accepts positive decimals', async () => {
+  const requests = []
+  const client = createApiClient({
+    baseUrl: 'https://api.example.test/api',
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options })
+      return { ok: true, status: 200, json: async () => ({ ok: true }) }
+    },
+  })
+
+  for (const amount of ['0', '0.0', '0.00']) {
+    assert.throws(() => client.recordAdminChargeback('order-1', {
+      amount,
+      reference: 'CB-123',
+      note: 'Valid note',
+      stepUpGrant: 'grant',
+    }), /valid chargeback form/)
+  }
+  for (const amount of ['0.01', '10.50']) {
+    await client.recordAdminChargeback('order-1', {
+      amount,
+      reference: 'CB-123',
+      note: 'Valid note',
+      stepUpGrant: 'grant',
+    })
+  }
+
+  assert.deepEqual(requests.map(({ options }) => JSON.parse(options.body).amount), ['0.01', '10.50'])
+})
+
 test('Stage 6.3 review APIs use public and staff review routes exactly', async () => {
   const calls = []
   const client = createApiClient({

@@ -1,3 +1,5 @@
+import { isValidPositiveChargebackAmount } from './admin.js'
+
 export const DEV_FAKES_BANNER = Boolean(import.meta.env?.DEV && import.meta.env?.VITE_DEV_FAKES === '1')
 let accessTokenInMemory = null
 
@@ -407,8 +409,7 @@ export function createApiClient({
     recordAdminChargeback: (orderId, input) => {
       if (!input || typeof input !== 'object' || Array.isArray(input) ||
           Object.keys(input).some((key) => !['amount', 'reference', 'note', 'stepUpGrant'].includes(key)) ||
-          typeof input.amount !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(input.amount.trim()) ||
-          input.amount.trim() === '0' || typeof input.reference !== 'string' ||
+          !isValidPositiveChargebackAmount(input.amount) || typeof input.reference !== 'string' ||
           input.reference.trim().length < 3 || input.reference.trim().length > 100 ||
           typeof input.note !== 'string' || input.note.trim().length < 3 || input.note.trim().length > 300 ||
           typeof input.stepUpGrant !== 'string' || !input.stepUpGrant.trim()) {

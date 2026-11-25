@@ -3,6 +3,7 @@ import { api } from './lib/api.js'
 import {
   adminErrorMessage,
   formatAdminDate,
+  returnDecisionSummary,
   returnStatusLabel,
   validateReturnDecisionForm,
 } from './lib/admin.js'
@@ -176,7 +177,6 @@ function AdminReturnDetail({ returnId }) {
       {canDecide ? (
         <section className="admin-card">
           <h2>Decide return</h2>
-          <p>Approve refund: the buyer is refunded and any payout not yet paid is failed. Reject: no refund or payout change is made.</p>
           <form className="admin-form" onSubmit={submit}>
             <label>Decision
               <select value={decision} onChange={(event) => setDecision(event.target.value)} required>
@@ -185,6 +185,7 @@ function AdminReturnDetail({ returnId }) {
                 <option value="reject">Reject</option>
               </select>
             </label>
+            <p>{returnDecisionSummary({ decision, sellerAtFault })}</p>
             <label>Decision note<textarea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} required minLength="3" maxLength="300" /></label>
             {decision === 'approve_refund' && (
               <label><input type="checkbox" checked={sellerAtFault} onChange={(event) => setSellerAtFault(event.target.checked)} /> Seller at fault</label>

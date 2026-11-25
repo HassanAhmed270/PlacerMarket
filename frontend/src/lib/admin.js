@@ -263,9 +263,28 @@ export function validateReturnDecisionForm({ decision, decisionNote, sellerAtFau
   return ''
 }
 
+export function returnDecisionSummary({ decision, sellerAtFault }) {
+  if (decision === 'approve_refund') {
+    const deliveryFee = sellerAtFault ? ' and the remaining delivery fee' : ''
+    return `Approve refund: the buyer is refunded the remaining item price${deliveryFee}. Initiated payouts are failed; already-paid payouts are unchanged.`
+  }
+  if (decision === 'reject') {
+    return 'Reject: no refund is issued and payout records are unchanged. A shared payout hold may be cleared if no other payout issue remains.'
+  }
+  return ''
+}
+
+const CHARGEBACK_AMOUNT_PATTERN = /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/
+const ZERO_CHARGEBACK_AMOUNT_PATTERN = /^0(?:\.0{1,2})?$/
+
+export function isValidPositiveChargebackAmount(amount) {
+  if (typeof amount !== 'string') return false
+  const value = amount.trim()
+  return CHARGEBACK_AMOUNT_PATTERN.test(value) && !ZERO_CHARGEBACK_AMOUNT_PATTERN.test(value)
+}
+
 export function validateChargebackRecordForm({ amount, reference, note }) {
-  if (typeof amount !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/.test(amount.trim()) ||
-      amount.trim() === '0' || amount.trim() === '0.00') {
+  if (!isValidPositiveChargebackAmount(amount)) {
     return 'Enter a valid chargeback amount greater than zero.'
   }
   if (typeof reference !== 'string' ||

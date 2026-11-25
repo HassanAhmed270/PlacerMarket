@@ -207,10 +207,11 @@ function AdminOrderDetail({ orderId }) {
       <section className="admin-card">
         <h2>Returns and chargebacks</h2>
         <p>
-          <a href="/admin/returns">View order returns</a>
+          <a href="/admin/returns">All returns</a>
           {' · '}
-          <a href="/admin/chargebacks">View order chargebacks</a>
+          <a href="/admin/chargebacks">All chargebacks</a>
         </p>
+        <p>Filtering by order is not available yet.</p>
       </section>
 
       <section className="admin-card">
