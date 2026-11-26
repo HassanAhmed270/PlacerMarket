@@ -1,7 +1,7 @@
 # Phases.md — build order (backend and frontend in parallel)
 
 Created 2026-10-13, **consolidated 2026-10-14** with the Poshaak scale, auth and
-listing-media decisions. **Current phase: Phase 6 complete (stages 6.0 to 6.4); Phase 7 not started.**
+listing-media decisions. **Current phase: Phase 6 in progress. Admin console stages 6.0 to 6.4 complete (main 673dd3b7c45320d0544cd7c9276026d6561dbdb2); launch readiness (security rows, deployment, monitoring, load tests, runbooks, frontend launch items) is open. See backend/PHASE6_LAUNCH_READINESS_REPORT.md.**
 
 ## How phases work
 
