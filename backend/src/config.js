@@ -66,6 +66,19 @@ function positiveInteger(env, key, fallback = DEFAULTS[key]) {
   return value;
 }
 
+function parseTrustProxyHops(env = process.env) {
+  const raw = env.TRUST_PROXY_HOPS;
+  if (raw === undefined || raw === '') return 1;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 10) {
+    if (env.NODE_ENV === 'production') {
+      throw new Error('Configuration error: TRUST_PROXY_HOPS must be an integer from 0 to 10.');
+    }
+    return 1;
+  }
+  return value;
+}
+
 function assertCredential(env, key, { minimumBytes = 1 } = {}) {
   const value = env[key];
   if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') < minimumBytes || PLACEHOLDER.test(value)) {
@@ -105,6 +118,7 @@ function getSecurityLimits(env = process.env) {
 
 function getRuntimeConfig(env = process.env) {
   const production = env.NODE_ENV === 'production';
+  const trustProxyHops = parseTrustProxyHops(env);
   const jwt = getJwtConfig(env);
   const origins = parseAllowedOrigins(env.CORS_ORIGINS || '');
   if (production && origins.size === 0) {
@@ -144,6 +158,7 @@ function getRuntimeConfig(env = process.env) {
   const jwtConfig = { ...jwt };
   return Object.freeze({
     production,
+    trustProxyHops,
     port: positiveInteger(env, 'PORT', 3000),
     jwt: jwtConfig,
     corsOrigins: origins,
@@ -161,5 +176,6 @@ module.exports = {
   DEFAULTS,
   getSecurityLimits,
   getRuntimeConfig,
+  parseTrustProxyHops,
   validatePaymentsAdminCount,
 };

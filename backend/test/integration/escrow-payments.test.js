@@ -339,7 +339,10 @@ describe('FR-60a hosted checkout intent', () => {
     jest.isolateModules(() => {
       productionApp = require('../../src/app');
     });
-    await request(productionApp).get('/fake-gateway/checkout/fake_ref').expect(404);
+    await request(productionApp)
+      .get('/fake-gateway/checkout/fake_ref')
+      .set('X-Forwarded-Proto', 'https')
+      .expect(404);
   });
 });
 

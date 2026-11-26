@@ -10,11 +10,13 @@ const helmet = require('helmet');
 const routes = require('./routes');
 const errorHandler = require('./middleware/errorHandler');
 const requestId = require('./middleware/requestId');
+const requireHttps = require('./middleware/requireHttps');
 const { createCorsMiddleware } = require('./middleware/cors');
 const { cachePolicy, pageCachePolicy } = require('./middleware/cachePolicy');
 const pageSnapshots = require('./modules/pageSnapshots.service');
 const { NotFoundError } = require('./lib/errors');
 const paymentWebhooks = require('./routes/paymentWebhooks.routes');
+const { parseTrustProxyHops } = require('./config');
 
 // modules/notifications.service.js registers its eventBus listeners as a
 // side effect of being required — requiring the routes above already pulls
@@ -23,7 +25,9 @@ const paymentWebhooks = require('./routes/paymentWebhooks.routes');
 require('./modules/notifications.service');
 
 const app = express();
+app.set('trust proxy', parseTrustProxyHops(process.env));
 app.use(requestId);
+app.use(requireHttps);
 app.use(helmet());
 app.use('/api', cachePolicy);
 app.use('/api', createCorsMiddleware());
