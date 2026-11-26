@@ -7,6 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { sslOptionFor, urlFor } = require('../src/lib/databaseConnection');
 
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
 const MIGRATIONS_TABLE = 'schema_migrations';
@@ -123,7 +124,12 @@ async function assertInitialSchemaCompatible(pool, schema) {
 
 async function inspectDatabase(databaseUrl, schema = 'public') {
   if (!databaseUrl) throw new Error('DATABASE_URL is required for database migrations.');
-  const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 1000 });
+  const pool = new Pool({
+    connectionString: databaseUrl,
+    ssl: sslOptionFor(process.env),
+    max: 1,
+    connectionTimeoutMillis: 1000,
+  });
   try {
     return { pool, state: await getSchemaState(pool, schema) };
   } catch (error) {
@@ -133,7 +139,7 @@ async function inspectDatabase(databaseUrl, schema = 'public') {
 }
 
 async function runMigrations({
-  databaseUrl = process.env.DATABASE_URL,
+  databaseUrl = urlFor('migrator', process.env),
   migrationsDir = MIGRATIONS_DIR,
   schema = 'public',
   baselineExisting = false,

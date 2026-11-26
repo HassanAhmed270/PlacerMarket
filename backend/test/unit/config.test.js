@@ -4,6 +4,7 @@ function validProductionEnv(overrides = {}) {
   return {
     NODE_ENV: 'production',
     DATABASE_URL: 'postgres://app:strong-db-secret@db.test:5432/poshaak',
+    DATABASE_SSL: 'verify-full',
     REDIS_URL: 'rediss://cache.test:6380',
     JWT_ACCESS_SECRET: 'j'.repeat(48),
     JWT_ACCESS_TTL_SECONDS: '900',

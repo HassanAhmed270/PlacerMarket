@@ -1,5 +1,9 @@
 /** FR-77: the separate worker process consumes durable PostgreSQL jobs. */
 
+const { urlFor } = require('./src/lib/databaseConnection');
+if (process.env.DATABASE_URL_WORKER) {
+  process.env.DATABASE_URL = urlFor('worker', process.env);
+}
 const { createQueueClient, startProducer, stopProducer, QUEUES, WORKER_CONCURRENCY } = require('./src/lib/queue');
 const { createRedisClient } = require('./src/lib/redis');
 const notifications = require('./src/modules/notifications.service');
@@ -120,7 +124,7 @@ async function startWorker({
     })
       : null);
   const redis = createRedisClient();
-  const databaseUrl = process.env.QUEUE_DATABASE_URL || process.env.DATABASE_URL;
+  const databaseUrl = process.env.QUEUE_DATABASE_URL || process.env.DATABASE_URL_WORKER || process.env.DATABASE_URL;
   const queue = createQueueClient({ connectionString: databaseUrl, worker: true });
   try {
     await redis.start();

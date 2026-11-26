@@ -5,6 +5,7 @@
  */
 const { Pool } = require('pg');
 const { ServiceUnavailableError } = require('./lib/errors');
+const { sslOptionFor } = require('./lib/databaseConnection');
 
 const RETRYABLE_TRANSACTION_CODES = new Set(['55P03', '40P01', '40001']);
 
@@ -18,6 +19,7 @@ function positiveInteger(name, fallback) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: sslOptionFor(process.env),
   max: positiveInteger('DB_POOL_MAX', 10),
   connectionTimeoutMillis: positiveInteger('DB_CONNECTION_TIMEOUT_MS', 1000),
   idleTimeoutMillis: positiveInteger('DB_IDLE_TIMEOUT_MS', 30000),
@@ -28,6 +30,7 @@ const pool = new Pool({
 
 const searchPool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: sslOptionFor(process.env),
   max: positiveInteger('SEARCH_DB_POOL_MAX', 2),
   connectionTimeoutMillis: positiveInteger('SEARCH_DB_CONNECTION_TIMEOUT_MS', 1000),
   idleTimeoutMillis: positiveInteger('SEARCH_DB_IDLE_TIMEOUT_MS', 30000),

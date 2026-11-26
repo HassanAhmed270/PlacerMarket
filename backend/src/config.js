@@ -130,6 +130,9 @@ function getRuntimeConfig(env = process.env) {
   let payoutKeyProvider = null;
   if (production) {
     database = assertUrl(env, 'DATABASE_URL', ['postgres:', 'postgresql:']);
+    if (env.DATABASE_SSL !== 'verify-full') {
+      throw new Error('Configuration error: DATABASE_SSL must be verify-full in production.');
+    }
     if (database.pathname.toLowerCase().includes('testing_only')) {
       throw new Error('Configuration error: DATABASE_URL cannot target testing_only in production.');
     }

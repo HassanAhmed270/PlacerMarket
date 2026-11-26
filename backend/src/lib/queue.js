@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const requestContext = require('./requestContext');
+const { sslOptionFor } = require('./databaseConnection');
 let defaultPgBossPromise;
 
 async function loadPgBoss() {
@@ -142,6 +143,7 @@ function createQueueClient({
 
   let boss = PgBossClass ? new PgBossClass({
     connectionString,
+    ssl: sslOptionFor(process.env),
     schema: 'pgboss',
     migrate: false,
     createSchema: false,
@@ -174,6 +176,7 @@ function createQueueClient({
       const PgBoss = await loadPgBoss();
       boss = new PgBoss({
         connectionString,
+        ssl: sslOptionFor(process.env),
         schema: 'pgboss',
         migrate: false,
         createSchema: false,
