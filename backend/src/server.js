@@ -5,6 +5,7 @@ const { getJwtConfig } = require('./lib/jwt');
 const { getRuntimeConfig } = require('./config');
 const { passwordHashPool } = require('./lib/passwordHashPool');
 const { assertPaymentsAdminGate } = require('./lib/paymentsAdminGate');
+const { shutdownTimeout, withDeadline } = require('./lib/shutdown');
 
 function safeConfigurationMessage(error) {
   const message = error?.message;
@@ -26,6 +27,7 @@ async function startServer({
   hashPool = passwordHashPool,
   logger = console,
 } = {}) {
+  const shutdownTimeoutMs = shutdownTimeout(process.env);
   let redis;
   let queueStartAttempted = false;
   let stage = 'configuration';
@@ -54,12 +56,14 @@ async function startServer({
       if (shuttingDown) return shuttingDown;
       shuttingDown = (async () => {
         logger.log(`Poshaak backend shutting down (${signal})`);
-        await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-        await queueClient.stopProducer();
-        await redis.stop();
-        await hashPool.close();
-        await dbPool.end();
-        await searchPool.end();
+        await withDeadline(async () => {
+          await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+          await queueClient.stopProducer();
+          await redis.stop();
+          await hashPool.close();
+          await dbPool.end();
+          await searchPool.end();
+        }, shutdownTimeoutMs, logger);
       })();
       return shuttingDown;
     }

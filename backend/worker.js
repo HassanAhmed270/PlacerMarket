@@ -25,6 +25,7 @@ const sellerPayouts = require('./src/modules/sellerPayouts.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 const { assertPaymentsAdminGate } = require('./src/lib/paymentsAdminGate');
 const settlementConsistency = require('./src/modules/settlementConsistency.service');
+const { shutdownTimeout, withDeadline } = require('./src/lib/shutdown');
 
 async function registerMoneyMaintenanceSchedules(boss) {
   await boss.schedule(
@@ -106,6 +107,7 @@ async function startWorker({
   logger = console,
   validatePaymentsGate = assertPaymentsAdminGate,
 } = {}) {
+  const shutdownTimeoutMs = shutdownTimeout(process.env);
   await validatePaymentsGate();
   if (process.env.NODE_ENV === 'production') keyProviderFromEnv(process.env);
   const selectedCdnPurger = cdnPurger || createCdnPurger({
@@ -192,9 +194,14 @@ async function startWorker({
       shuttingDown = (async () => {
         // eslint-disable-next-line no-console
         console.log(`Poshaak worker shutting down (${signal})`);
-        await queue.stop();
-        await stopProducer();
-        await redis.stop();
+        await withDeadline(async () => {
+          await queue.stop();
+          await stopProducer();
+          await redis.stop();
+          const db = require('./src/db.service');
+          await db.pool.end();
+          await db.searchPool.end();
+        }, shutdownTimeoutMs, console);
       })();
       return shuttingDown;
     }

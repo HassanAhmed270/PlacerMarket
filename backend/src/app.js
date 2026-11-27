@@ -17,6 +17,7 @@ const pageSnapshots = require('./modules/pageSnapshots.service');
 const { NotFoundError } = require('./lib/errors');
 const paymentWebhooks = require('./routes/paymentWebhooks.routes');
 const { parseTrustProxyHops } = require('./config');
+const healthRoutes = require('./routes/health.routes');
 
 // modules/notifications.service.js registers its eventBus listeners as a
 // side effect of being required — requiring the routes above already pulls
@@ -27,6 +28,7 @@ require('./modules/notifications.service');
 const app = express();
 app.set('trust proxy', parseTrustProxyHops(process.env));
 app.use(requestId);
+app.use(healthRoutes);
 app.use(requireHttps);
 app.use(helmet());
 app.use('/api', helmet({
