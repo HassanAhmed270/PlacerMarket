@@ -128,7 +128,7 @@ describe('FR-65 manual reservation-backed payout release', () => {
     const before = await getPayoutState(scenario.orderId);
     const response = await releaseRequest(harness.adminId, scenario.orderId);
     expect(response.status).toBe(409);
-    expect(response.body.error).toMatch(/earliest release time is .*Z/);
+    expect(response.body.error).toMatch(/earliest release time is .*PKT/);
     expect(await getPayoutState(scenario.orderId)).toEqual(before);
   });
 
