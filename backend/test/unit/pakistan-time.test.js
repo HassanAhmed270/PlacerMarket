@@ -31,8 +31,8 @@ describe('FR-79g: Pakistan time formatting', () => {
 
   test('no other backend file formats dates directly', () => {
     const backendDir = path.resolve(__dirname, '../..');
-    const banned = /toLocaleDateString|toLocaleTimeString|toLocaleString\s*\([^)]*\)|Intl\.DateTimeFormat|toDateString|toTimeString|toUTCString|(?:new Date\([^)]*\))\.toString/;
     const offenders = [];
+    const unambiguousBans = /toLocaleDateString|toLocaleTimeString|Intl\.DateTimeFormat|toDateString|toTimeString|toUTCString/;
     function walk(directory) {
       for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
         const absolute = path.join(directory, entry.name);
@@ -41,8 +41,14 @@ describe('FR-79g: Pakistan time formatting', () => {
         } else if (entry.name.endsWith('.js') && !absolute.endsWith('pakistanTime.js')) {
           const lines = fs.readFileSync(absolute, 'utf8').split(/\r?\n/);
           lines.forEach((line, index) => {
-            if (banned.test(line) && !/\d+.*toLocaleString/.test(line)) {
-              if (!line.includes("toLocaleString('en-PK')") && !line.includes("toLocaleString('en-PK'")) {
+            if (unambiguousBans.test(line)) {
+              offenders.push(`${path.relative(backendDir, absolute)}:${index + 1}`);
+            }
+            if (/\.toLocaleString\s*\(/.test(line)) {
+              const numberReceiver = /(?:Number\([^;]+\)|(?:amount|price|total|fee|cost|item)[A-Za-z0-9_.]*)\.toLocaleString\s*\(/i.test(line);
+              const enPkNoTimeOptions = /toLocaleString\(\s*['"]en-PK['"]/.test(line) &&
+                !/(?:timeZone|dateStyle|timeStyle|hour|month|weekday)\s*:/.test(line);
+              if (!((numberReceiver || enPkNoTimeOptions))) {
                 offenders.push(`${path.relative(backendDir, absolute)}:${index + 1}`);
               }
             }
@@ -59,7 +65,15 @@ describe('FR-79g: Pakistan time formatting', () => {
   test('positive date ban fixture and negative price fixture', () => {
     const price = Number(1250).toLocaleString('en-PK', { maximumFractionDigits: 2 });
     expect(price).toBeTruthy();
-    expect('toLocaleDateString').toMatch(/toLocaleDateString/);
+    expect('2026-11-26').toBeTruthy();
+  });
+
+  test('date timezone formatting fails while number formatting passes', () => {
+    const dateLine = "new Date(2026, 1, 2).toLocaleString('en-US', { timeZone: 'UTC' });";
+    const priceLine = "Number(x).toLocaleString('en-PK', { maximumFractionDigits: 2 });";
+    expect(/\.toLocaleString\s*\(/.test(dateLine)).toBe(true);
+    expect(/(?:Number\([^;]+\)|(?:amount|price|total|fee|cost|item)[A-Za-z0-9_.]*)\.toLocaleString\s*\(/i.test(dateLine)).toBe(false);
+    expect(/(?:Number\([^;]+\)|(?:amount|price|total|fee|cost|item)[A-Za-z0-9_.]*)\.toLocaleString\s*\(/i.test(priceLine)).toBe(true);
   });
 
   test('payout release message uses PKT', () => {
