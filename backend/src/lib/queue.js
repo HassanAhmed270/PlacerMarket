@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const requestContext = require('./requestContext');
 const { sslOptionFor } = require('./databaseConnection');
+const { recordQueueFailure } = require('./metrics');
 let defaultPgBossPromise;
 
 async function loadPgBoss() {
@@ -160,6 +161,7 @@ function createQueueClient({
 
   function attachLogging() {
     boss.on('error', (error) => {
+      recordQueueFailure();
       logger.error('Queue database error', { code: error?.code || 'unknown' });
     });
     boss.on('warning', (warning) => {

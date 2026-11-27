@@ -12,9 +12,19 @@ const { requireAuth, requirePermission } = require('../middleware/auth');
 const { ValidationError, NotFoundError } = require('../lib/errors');
 const { createConfiguredRateLimiters } = require('../middleware/rateLimit');
 const deliveryRoutes = require('./delivery.routes');
+const { snapshotMetrics } = require('../lib/metrics');
 
 const router = Router();
 const limiters = createConfiguredRateLimiters();
+
+router.get(
+  '/metrics',
+  noStoreOrderResponses,
+  requireAuth,
+  requirePermission('operations.view'),
+  limiters.adminOps,
+  async (_req, res) => res.status(200).json(snapshotMetrics())
+);
 
 function noStoreOrderResponses(_req, res, next) {
   res.set('Cache-Control', 'private, no-store');
