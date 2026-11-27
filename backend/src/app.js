@@ -29,6 +29,14 @@ app.set('trust proxy', parseTrustProxyHops(process.env));
 app.use(requestId);
 app.use(requireHttps);
 app.use(helmet());
+app.use('/api', helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+    },
+  },
+}));
 app.use('/api', cachePolicy);
 app.use('/api', createCorsMiddleware());
 app.use('/api/webhooks/payments', paymentWebhooks);

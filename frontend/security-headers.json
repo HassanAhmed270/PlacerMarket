@@ -1,0 +1,7 @@
+{
+  "csp": "default-src 'self'; img-src 'self' data: __STORAGE_ORIGIN__; connect-src 'self' __API_ORIGIN__; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains"
+}

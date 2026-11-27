@@ -1,0 +1,88 @@
+services:
+  - type: web
+    name: poshaak-web
+    env: node
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: DATABASE_SSL
+        value: verify-full
+      - key: SHUTDOWN_TIMEOUT_MS
+        value: "25000"
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_WORKER
+        sync: false
+      - key: DATABASE_URL_MIGRATOR
+        sync: false
+      - key: QUEUE_DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: EMAIL_PROVIDER_API_KEY
+        sync: false
+      - key: EMAIL_QUEUE_ENCRYPTION_SECRET
+        sync: false
+      - key: STAFF_TOTP_ENCRYPTION_SECRET
+        sync: false
+      - key: PAYOUT_ENCRYPTION_KEYS_JSON
+        sync: false
+      - key: PAYOUT_ENCRYPTION_ACTIVE_KEY_ID
+        sync: false
+      - key: MEDIA_SIGNING_SECRET
+        sync: false
+      - key: CHALLENGE_PROVIDER_KEY
+        sync: false
+      - key: EMAIL_SENDER_ADAPTER
+        value: provider
+      - key: CHALLENGE_VERIFIER_ADAPTER
+        value: provider
+      - key: PUBLIC_BASE_URL
+        sync: false
+  - type: worker
+    name: poshaak-worker
+    env: node
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: DATABASE_SSL
+        value: verify-full
+      - key: SHUTDOWN_TIMEOUT_MS
+        value: "25000"
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_WORKER
+        sync: false
+      - key: QUEUE_DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: EMAIL_PROVIDER_API_KEY
+        sync: false
+      - key: EMAIL_QUEUE_ENCRYPTION_SECRET
+        sync: false
+      - key: STAFF_TOTP_ENCRYPTION_SECRET
+        sync: false
+      - key: PAYOUT_ENCRYPTION_KEYS_JSON
+        sync: false
+      - key: PAYOUT_ENCRYPTION_ACTIVE_KEY_ID
+        sync: false
+      - key: MEDIA_SIGNING_SECRET
+        sync: false
+      - key: CHALLENGE_PROVIDER_KEY
+        sync: false
+      - key: EMAIL_SENDER_ADAPTER
+        value: provider
+      - key: CHALLENGE_VERIFIER_ADAPTER
+        value: provider
