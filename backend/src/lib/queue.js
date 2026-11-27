@@ -134,6 +134,18 @@ function validatePayload(data) {
   }
 }
 
+function withQueueFailureCounter(handler) {
+  if (typeof handler !== 'function') throw new TypeError('Queue handler must be a function.');
+  return async function countedQueueHandler(...args) {
+    try {
+      return await handler(...args);
+    } catch (error) {
+      recordQueueFailure();
+      throw error;
+    }
+  };
+}
+
 function createQueueClient({
   connectionString = process.env.DATABASE_URL,
   worker = false,
@@ -324,6 +336,7 @@ module.exports = {
   createPaymentWebhookInboxReceiver,
   deterministicJobId,
   asQueueDatabase,
+  withQueueFailureCounter,
   startProducer,
   stopProducer,
   enqueue,

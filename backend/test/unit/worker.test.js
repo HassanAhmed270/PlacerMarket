@@ -20,6 +20,7 @@ const mockQueue = {
     refunds: 2,
   },
   createQueueClient: jest.fn(),
+  withQueueFailureCounter: (handler) => handler,
   startProducer: jest.fn().mockResolvedValue(undefined),
   stopProducer: jest.fn().mockResolvedValue(undefined),
 };

@@ -4,7 +4,7 @@ const { urlFor } = require('./src/lib/databaseConnection');
 if (process.env.DATABASE_URL_WORKER) {
   process.env.DATABASE_URL = urlFor('worker', process.env);
 }
-const { createQueueClient, startProducer, stopProducer, QUEUES, WORKER_CONCURRENCY } = require('./src/lib/queue');
+const { createQueueClient, startProducer, stopProducer, QUEUES, WORKER_CONCURRENCY, withQueueFailureCounter } = require('./src/lib/queue');
 const { createRedisClient } = require('./src/lib/redis');
 const notifications = require('./src/modules/notifications.service');
 // FR-45, FR-69: register the order-exception owner for refund-worker transactions.
@@ -135,54 +135,54 @@ async function startWorker({
     await queue.boss.work(
       QUEUES.NOTIFICATIONS,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.NOTIFICATIONS], transactional: true },
-      async ([job], transactionDb) => notifications.processNotificationJob(job.data, transactionDb)
+      withQueueFailureCounter(async ([job], transactionDb) => notifications.processNotificationJob(job.data, transactionDb))
     );
     await queue.boss.work(
       QUEUES.EMAIL,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.EMAIL], transactional: false },
-      async ([job]) => {
+      withQueueFailureCounter(async ([job]) => {
         if (!selectedEmailSender) throw new Error('No email sender is configured for queued email delivery.');
         const message = decryptEmailPayload(job.data?.encryptedPayload);
         await selectedEmailSender.send(message);
-      }
+      })
     );
     await pageSnapshots.enqueueFullSnapshotRebuild();
     await queue.boss.work(
       QUEUES.MEDIA,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.MEDIA], transactional: false },
-      async ([job]) => media.processListingImage(job.data?.listingImageId)
+      withQueueFailureCounter(async ([job]) => media.processListingImage(job.data?.listingImageId))
     );
     await queue.boss.work(
       QUEUES.LISTING_SEARCH,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.LISTING_SEARCH], transactional: false },
-      async ([job]) => listingSearch.processListingSearchJob(job.data)
+      withQueueFailureCounter(async ([job]) => listingSearch.processListingSearchJob(job.data))
     );
     await queue.boss.work(
       QUEUES.PAGE_SNAPSHOTS,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.PAGE_SNAPSHOTS], transactional: false },
-      async ([job]) => {
+      withQueueFailureCounter(async ([job]) => {
         const result = await pageSnapshots.processSnapshotJob(job.data);
         if (result.outcome === 'regenerated' && result.paths.length) {
           await selectedCdnPurger.purge(result.paths);
         }
-      }
+      })
     );
     await queue.boss.work(
       QUEUES.PAYMENT_WEBHOOKS,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.PAYMENT_WEBHOOKS], transactional: false },
-      async ([job]) => escrowPayments.processPaymentWebhookJob({
+      withQueueFailureCounter(async ([job]) => escrowPayments.processPaymentWebhookJob({
         webhookInboxId: job.data?.webhookInboxId,
-      })
+      }))
     );
     await queue.boss.work(
       QUEUES.REFUNDS,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.REFUNDS], transactional: false },
-      async ([job]) => escrowPayments.processRefundJob({ refundId: job.data?.refundId })
+      withQueueFailureCounter(async ([job]) => escrowPayments.processRefundJob({ refundId: job.data?.refundId }))
     );
     await queue.boss.work(
       QUEUES.MONEY_MAINTENANCE,
       { batchSize: 1, localConcurrency: WORKER_CONCURRENCY[QUEUES.MONEY_MAINTENANCE], transactional: false },
-      async ([job]) => processMoneyMaintenanceJob(job)
+      withQueueFailureCounter(async ([job]) => processMoneyMaintenanceJob(job))
     );
     await registerMoneyMaintenanceSchedules(queue.boss);
     // eslint-disable-next-line no-console

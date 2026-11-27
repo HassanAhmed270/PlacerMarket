@@ -2,6 +2,7 @@ const { EventEmitter } = require('events');
 
 const queue = require('../../src/lib/queue');
 const requestContext = require('../../src/lib/requestContext');
+const { snapshotMetrics } = require('../../src/lib/metrics');
 
 function fakeBossFactory() {
   const instance = new EventEmitter();
@@ -43,6 +44,14 @@ function fakeBossFactory() {
 }
 
 describe('FR-77, FR-77a: PostgreSQL queue configuration and durable enqueue API', () => {
+  test('FR-79h: queue handler throws increment the real job failure counter', async () => {
+    const before = snapshotMetrics().queueFailures;
+    const counted = queue.withQueueFailureCounter(async () => {
+      throw new Error('forced queue job failure');
+    });
+    await expect(counted()).rejects.toThrow('forced queue job failure');
+    expect(snapshotMetrics().queueFailures).toBe(before + 1);
+  });
   test('FR-77a, FR-77b: queue setup applies retry, FIFO, and dead-letter behavior to the webhook queue', async () => {
     const fakeBoss = fakeBossFactory();
     const client = queue.createQueueClient({ connectionString: 'postgres://local/db', PgBossClass: fakeBoss });
