@@ -56,7 +56,8 @@ describe('db.service helpers', () => {
     );
     try {
       mockPoolErrorHandlers[poolIndex](error);
-      expect(output).toHaveBeenCalledWith(message, { code: 'XX000' });
+      expect(output).toHaveBeenCalledWith(expect.stringContaining(message));
+      expect(output).toHaveBeenCalledWith(expect.stringContaining('XX000'));
       const logged = JSON.stringify(output.mock.calls);
       for (const sensitiveValue of [
         'secret-token-step-up-grant',

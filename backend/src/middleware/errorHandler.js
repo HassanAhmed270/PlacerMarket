@@ -5,6 +5,7 @@
  * lib/errors.js carries a statusCode; unknown failures become a generic 500.
  * Unknown server errors are logged with a request ID, never returned raw.
  */
+const { logger } = require('../lib/logger');
 
 // eslint-disable-next-line no-unused-vars
 function errorHandler(err, req, res, next) {
@@ -13,7 +14,7 @@ function errorHandler(err, req, res, next) {
       ? `${req.baseUrl || ''}${req.route.path}`
       : 'unknown';
     // eslint-disable-next-line no-console
-    console.warn({ code: err.code, route });
+    logger.warn('Database busy', { code: err.code, route });
     res.setHeader('Retry-After', '1');
     return res.status(503).json({ code: 'busy_try_again' });
   }
@@ -33,7 +34,7 @@ function errorHandler(err, req, res, next) {
   if (err.frCode) body.frCode = err.frCode; // NotYetSpecifiedError
   if (statusCode >= 500) {
     // eslint-disable-next-line no-console
-    console.error('Request failed', {
+    logger.error('Request failed', {
       requestId: req.requestId,
       errorName: err.name || 'Error',
       code: err.code || 'unknown',

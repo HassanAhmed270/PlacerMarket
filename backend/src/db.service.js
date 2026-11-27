@@ -6,6 +6,7 @@
 const { Pool } = require('pg');
 const { ServiceUnavailableError } = require('./lib/errors');
 const { sslOptionFor } = require('./lib/databaseConnection');
+const { logger } = require('./lib/logger');
 
 const RETRYABLE_TRANSACTION_CODES = new Set(['55P03', '40P01', '40001']);
 
@@ -41,13 +42,13 @@ const searchPool = new Pool({
 
 pool.on('error', (err) => {
   // eslint-disable-next-line no-console
-  console.error('Unexpected error on idle Postgres client', {
+  logger.error('Unexpected error on idle Postgres client', {
     code: /^[0-9A-Z]{5}$/.test(err?.code || '') ? err.code : 'unknown',
   });
 });
 searchPool.on('error', (err) => {
   // eslint-disable-next-line no-console
-  console.error('Unexpected error on idle search Postgres client', {
+  logger.error('Unexpected error on idle search Postgres client', {
     code: /^[0-9A-Z]{5}$/.test(err?.code || '') ? err.code : 'unknown',
   });
 });

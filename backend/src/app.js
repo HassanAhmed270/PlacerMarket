@@ -18,6 +18,8 @@ const { NotFoundError } = require('./lib/errors');
 const paymentWebhooks = require('./routes/paymentWebhooks.routes');
 const { parseTrustProxyHops } = require('./config');
 const healthRoutes = require('./routes/health.routes');
+const accessLog = require('./middleware/accessLog');
+const metricsMiddleware = require('./middleware/metricsMiddleware');
 
 // modules/notifications.service.js registers its eventBus listeners as a
 // side effect of being required — requiring the routes above already pulls
@@ -28,6 +30,8 @@ require('./modules/notifications.service');
 const app = express();
 app.set('trust proxy', parseTrustProxyHops(process.env));
 app.use(requestId);
+app.use(accessLog);
+app.use(metricsMiddleware);
 app.use(healthRoutes);
 app.use(requireHttps);
 app.use(helmet());

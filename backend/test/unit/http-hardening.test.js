@@ -35,7 +35,8 @@ describe('SEC-28: unexpected server errors are generic and traceable', () => {
     errorHandler(new Error('database password must not leak'), { requestId: 'req-123' }, res, jest.fn());
     expect(res.statusCode).toBe(500);
     expect(res.body).toEqual({ error: 'Internal server error', requestId: 'req-123' });
-    expect(log).toHaveBeenCalledWith('Request failed', expect.objectContaining({ requestId: 'req-123' }));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('Request failed'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('req-123'));
     expect(JSON.stringify(log.mock.calls)).not.toContain('database password must not leak');
     log.mockRestore();
   });
@@ -45,7 +46,7 @@ describe('database contention errors', () => {
   test.each(['55P03', '40P01', '40001'])(
     'maps PostgreSQL code %s to a clean retry response',
     (code) => {
-      const log = jest.spyOn(console, 'warn').mockImplementation(() => {});
+      const log = jest.spyOn(console, 'error').mockImplementation(() => {});
       const res = mockResponse();
       const error = Object.assign(
         new Error('SELECT secret FROM private_table WHERE id = 42'),
@@ -59,7 +60,8 @@ describe('database contention errors', () => {
       expect(res.headers['Retry-After']).toBe('1');
       expect(res.body).toEqual({ code: 'busy_try_again' });
       expect(JSON.stringify(res.body)).not.toMatch(/SELECT|private_table|sensitive-value|42/);
-      expect(log).toHaveBeenCalledWith({ code, route: '/api/orders/:id/cancel' });
+      expect(log).toHaveBeenCalledWith(expect.stringContaining(code));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('/api/orders/:id/cancel'));
       expect(JSON.stringify(log.mock.calls)).not.toMatch(/SELECT|private_table|sensitive-value|42/);
       log.mockRestore();
     }
