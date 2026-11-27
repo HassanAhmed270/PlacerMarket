@@ -29,6 +29,7 @@ const db = require('../db.service');
 const orders = require('./orders.service');
 const disputes = require('./disputes.service');
 const settlement = require('./settlement.service');
+const { formatPakistanDateTime } = require('../lib/pakistanTime');
 const listings = require('./listings.service');
 const reservations = require('./reservations.service');
 const users = require('./users.service');
@@ -421,7 +422,7 @@ async function releaseReservationPayout(orderId, adminId, input) {
     const timing = timingRows[0];
     if (!timing.windows_elapsed) {
       throw new ConflictError(
-        `Payout windows have not elapsed; earliest release time is ${new Date(timing.earliest_release_at).toISOString()}.`
+        `Payout windows have not elapsed; earliest release time is ${formatPakistanDateTime(timing.earliest_release_at)}.`
       );
     }
 
