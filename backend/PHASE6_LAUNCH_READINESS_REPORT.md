@@ -349,3 +349,11 @@ references in repository docs/source/build output, not exposed values.
 - The 21 generic credential-assignment matches are in test fixtures; their
   values were deliberately not printed. Confirm fixture-only classification
   before a final secrets sign-off.
+
+## Stage 6.6/6.7 outcome
+
+Stage 6.6/6.7 implementation is in progress on the launch-hardening branch.
+Phases 0 to 8 have implementation or verification boundaries recorded in
+commits. Phase 9 records status only. No checkbox in `specs.md`,
+`security.md`, or `Phases.md` was changed. The owner decision for SEC-14 is
+dated 2026-11-26 and remains not adopted.

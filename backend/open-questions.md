@@ -12,6 +12,24 @@ Marketplace-chat entries with the register in the Poshaak handoff.
 
 ## Open
 
+### Owner decisions 2026-11-26 — Stage 6.6/6.7
+- D1: `TRUST_PROXY_HOPS` is an integer 0–10, default 1, and is production-validated.
+- D2: HSTS keeps Helmet defaults; no preload. Production HTTP is refused except health routes.
+- D3: production database TLS requires `DATABASE_SSL=verify-full`; `DATABASE_CA_CERT` is optional PEM text.
+- D4: `DATABASE_URL_WORKER` and `DATABASE_URL_MIGRATOR` fallback to `DATABASE_URL`; queue precedence keeps `QUEUE_DATABASE_URL` first.
+- D5: `/api` uses strict `default-src 'none'` and `frame-ancestors 'none'`; dev fake/dev routes are exempt.
+- D6: frontend policy is host-neutral and generated for Vercel and nginx.
+- D7: Render manifest defines web and worker only, with placeholders and no secrets.
+- D8: secret and source-map mutation-checked tests are in place.
+- D9: `/healthz` and `/readyz` are public, no-store health routes.
+- D10: `SHUTDOWN_TIMEOUT_MS` defaults to 25000 and rejects non-positive values.
+- D11: process-local search single-flight and event bus behavior are retained/documented; local-disk media remains infrastructure.
+- D12: JSON production logs and redacted access logs are implemented.
+- D13: process-local metrics counters are exposed only through the Admin operations permission.
+- D14: server-generated human-visible dates use `Asia/Karachi` and `PKT`; API timestamps remain UTC ISO.
+- D15: SEC-14 is not adopted; revisit if app-layer ownership tests prove difficult to keep complete.
+- D16: final gates require schema check, full unit, three integration runs, Pago_Pago integration, and audits/build checks.
+
 ### Needed by Stage P5-S2c
 - 2026-11-15 · FR-65 · Forfeiture of long-held unverified seller funds is undecided; the default is no forfeiture, and no automatic refund to buyers or automatic release is allowed. Resolve before any forfeiture workflow is designed. P7, P10, and P3 remain open.
 - 2026-11-16 · D1 · Commission change has no step-up grant; hardening candidate. The current UI must not add one without a product decision.
