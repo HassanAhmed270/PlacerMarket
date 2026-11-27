@@ -1,5 +1,7 @@
 const { sslOptionFor, urlFor } = require('../../src/lib/databaseConnection');
 const { getRuntimeConfig } = require('../../src/config');
+const fs = require('node:fs');
+const path = require('node:path');
 
 describe('FR-79g: database TLS and role URLs', () => {
   test('FR-79g: production refuses startup without DATABASE_SSL=verify-full', () => {
@@ -48,5 +50,23 @@ describe('FR-79g: database TLS and role URLs', () => {
       NODE_ENV: 'production',
       DATABASE_URL: 'postgres://hidden-user:hidden-password@db.test/poshaak',
     })).not.toThrow(/postgres:\/\/|hidden-password/);
+  });
+
+  test('FR-79g: the roles runbook lists every table that has an append-only trigger', () => {
+    const roots = [
+      path.join(__dirname, '../../schema.sql'),
+      path.join(__dirname, '../../db/migrations'),
+    ];
+    let sql = fs.readFileSync(roots[0], 'utf8');
+    for (const file of fs.readdirSync(roots[1]).filter((name) => name.endsWith('.sql'))) {
+      sql += `\n${fs.readFileSync(path.join(roots[1], file), 'utf8')}`;
+    }
+    const appendOnlyTables = [...sql.matchAll(/CREATE TRIGGER\s+([a-z0-9_]+)_no_(?:update_delete|truncate)\s+[\s\S]*?\sON\s+([a-z0-9_]+)/gi)]
+      .map((match) => match[2].toLowerCase())
+      .filter((table, index, tables) => tables.indexOf(table) === index);
+    const runbook = fs.readFileSync(path.join(__dirname, '../../RUNBOOK_DATABASE_ROLES.md'), 'utf8');
+    for (const table of appendOnlyTables) {
+      expect(runbook).toContain(`REVOKE UPDATE, DELETE, TRUNCATE ON ${table} FROM web, worker`);
+    }
   });
 });

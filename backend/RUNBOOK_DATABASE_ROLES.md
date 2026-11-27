@@ -15,14 +15,45 @@ GRANT USAGE ON SCHEMA public TO web, worker, migrator, readonly;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO web, worker;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO web, worker;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO web, worker;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO web, worker;
 
 GRANT USAGE, CREATE ON SCHEMA public TO migrator;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO migrator;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO migrator;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO migrator;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO migrator;
+
+-- Apply to objects created later by the migrator role.
+ALTER DEFAULT PRIVILEGES FOR ROLE migrator IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO web, worker;
+ALTER DEFAULT PRIVILEGES FOR ROLE migrator IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO web, worker;
+ALTER DEFAULT PRIVILEGES FOR ROLE migrator IN SCHEMA public
+  GRANT SELECT ON TABLES TO readonly;
+ALTER DEFAULT PRIVILEGES FOR ROLE migrator IN SCHEMA public
+  GRANT ALL PRIVILEGES ON TABLES TO migrator;
+ALTER DEFAULT PRIVILEGES FOR ROLE migrator IN SCHEMA public
+  GRANT ALL PRIVILEGES ON SEQUENCES TO migrator;
 ```
 
-Restrict web and worker from updating or deleting append-only tables and ledgers (for example, money audit, ledger, and webhook inbox tables) with the database role's policy or separate non-superuser ownership rules. Migrator owns DDL and should not be used by web or worker processes.
+The `FOR ROLE migrator` clauses ensure these defaults apply to tables and sequences created by the migrator, not only by the role running the statement.
+
+Apply these concrete revoke statements to append-only tables:
+
+```sql
+REVOKE UPDATE, DELETE, TRUNCATE ON ledger_entries FROM web, worker;
+REVOKE UPDATE, DELETE, TRUNCATE ON money_audit_events FROM web, worker;
+REVOKE UPDATE, DELETE, TRUNCATE ON review_moderation_events FROM web, worker;
+REVOKE UPDATE, DELETE, TRUNCATE ON consistency_findings FROM web, worker;
+```
+
+`webhook_inbox` is not included because the worker legitimately updates delivery status, attempts, and payment references. `refunds` is also not append-only: application code legitimately changes refund state. Migrator owns DDL and should not be used by web or worker processes.
+
+## Verify
+
+Run these read-only checks with the role-creating operator:
+
+```sql
+SELECT has_table_privilege('web', 'ledger_entries', 'UPDATE') AS web_can_update;
+SELECT has_table_privilege('worker', 'money_audit_events', 'DELETE') AS worker_can_delete;
+SELECT has_table_privilege('worker', 'webhook_inbox', 'UPDATE') AS worker_can_update_webhook;
+```
+
+Expected: the first two results are `false`; the webhook result is `true` because the worker owns inbox processing updates.
