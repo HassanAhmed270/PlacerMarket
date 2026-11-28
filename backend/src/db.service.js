@@ -41,13 +41,11 @@ const searchPool = new Pool({
 });
 
 pool.on('error', (err) => {
-  // eslint-disable-next-line no-console
   logger.error('Unexpected error on idle Postgres client', {
     code: /^[0-9A-Z]{5}$/.test(err?.code || '') ? err.code : 'unknown',
   });
 });
 searchPool.on('error', (err) => {
-  // eslint-disable-next-line no-console
   logger.error('Unexpected error on idle search Postgres client', {
     code: /^[0-9A-Z]{5}$/.test(err?.code || '') ? err.code : 'unknown',
   });

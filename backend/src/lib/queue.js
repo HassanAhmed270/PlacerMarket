@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const requestContext = require('./requestContext');
 const { sslOptionFor } = require('./databaseConnection');
 const { recordQueueFailure } = require('./metrics');
+const { logger: defaultLogger } = require('./logger');
 let defaultPgBossPromise;
 
 async function loadPgBoss() {
@@ -150,7 +151,7 @@ function createQueueClient({
   connectionString = process.env.DATABASE_URL,
   worker = false,
   PgBossClass,
-  logger = console,
+  logger = defaultLogger,
 } = {}) {
   if (!connectionString) throw new Error('DATABASE_URL is required to connect the PostgreSQL queue.');
 

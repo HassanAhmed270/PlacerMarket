@@ -55,11 +55,84 @@ jest.mock('../../src/modules/disputes.service', () => mockDisputes);
 jest.mock('../../src/modules/sellerPayouts.service', () => mockSellerPayouts);
 jest.mock('../../src/modules/settlementConsistency.service', () => mockSettlementConsistency);
 
-const { startWorker } = require('../../worker');
+const { startWorker, startWorkerHeartbeat } = require('../../worker');
 
 describe('FR-77, FR-77a, FR-77d: notification worker startup', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  test('FR-79h: worker heartbeat logs every 60 seconds and clears on shutdown', () => {
+    jest.useFakeTimers();
+    const workerLogger = { info: jest.fn() };
+    const stop = startWorkerHeartbeat(workerLogger);
+    try {
+      jest.advanceTimersByTime(60000);
+      expect(workerLogger.info).toHaveBeenCalledWith('worker heartbeat');
+      stop();
+      jest.advanceTimersByTime(60000);
+      expect(workerLogger.info).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+      jest.useRealTimers();
+    }
+  });
+
+  test('FR-79g: production worker startup emits a JSON log line with UTC time', async () => {
+    const saved = {};
+    for (const key of ['NODE_ENV', 'LOG_LEVEL', 'PAYOUT_ENCRYPTION_ACTIVE_KEY_ID', 'PAYOUT_ENCRYPTION_KEYS_JSON', 'QUEUE_DATABASE_URL', 'DATABASE_URL', 'EMAIL_QUEUE_ENCRYPTION_SECRET']) {
+      saved[key] = process.env[key];
+    }
+    const output = jest.spyOn(console, 'log').mockImplementation(() => {});
+    const errorOutput = jest.spyOn(console, 'error').mockImplementation(() => {});
+    const boss = new EventEmitter();
+    boss.work = jest.fn().mockResolvedValue(undefined);
+    boss.schedule = jest.fn().mockResolvedValue(undefined);
+    const queue = { boss, start: jest.fn().mockResolvedValue(undefined), stop: jest.fn().mockResolvedValue(undefined) };
+    const redis = { start: jest.fn().mockResolvedValue(undefined), stop: jest.fn().mockResolvedValue(undefined) };
+    const sigintBefore = new Set(process.listeners('SIGINT'));
+    const sigtermBefore = new Set(process.listeners('SIGTERM'));
+    jest.useFakeTimers();
+    try {
+      process.env.NODE_ENV = 'production';
+      process.env.LOG_LEVEL = 'info';
+      process.env.PAYOUT_ENCRYPTION_ACTIVE_KEY_ID = 'key';
+      process.env.PAYOUT_ENCRYPTION_KEYS_JSON = JSON.stringify({ key: Buffer.alloc(32).toString('base64') });
+      process.env.QUEUE_DATABASE_URL = 'postgres://worker/db';
+      process.env.DATABASE_URL = 'postgres://worker/db';
+      process.env.EMAIL_QUEUE_ENCRYPTION_SECRET = 'test-email-queue-key-material-over-32-bytes';
+      mockQueue.createQueueClient.mockReturnValue(queue);
+      mockRedis.createRedisClient.mockReturnValue(redis);
+      const emailSender = { send: jest.fn().mockResolvedValue({ accepted: true }) };
+      const purger = { kind: 'live', purge: jest.fn().mockResolvedValue({ purged: 1 }) };
+      mockPageSnapshots.enqueueFullSnapshotRebuild.mockResolvedValue('startup-job');
+      await startWorker({
+        emailSender,
+        cdnPurger: purger,
+        validatePaymentsGate: jest.fn().mockResolvedValue(undefined),
+      });
+      jest.advanceTimersByTime(60000);
+      const lines = output.mock.calls.map(([line]) => JSON.parse(line));
+      expect(lines).toEqual(expect.arrayContaining([
+        expect.objectContaining({ msg: 'Poshaak worker started', level: 'info', time: expect.stringMatching(/T.*Z$/) }),
+        expect.objectContaining({ msg: 'worker heartbeat', level: 'info', time: expect.stringMatching(/T.*Z$/) }),
+      ]));
+      expect(lines.every(({ time }) => /T.*Z$/.test(time))).toBe(true);
+    } finally {
+      jest.useRealTimers();
+      output.mockRestore();
+      errorOutput.mockRestore();
+      for (const listener of process.listeners('SIGINT')) {
+        if (!sigintBefore.has(listener)) process.off('SIGINT', listener);
+      }
+      for (const listener of process.listeners('SIGTERM')) {
+        if (!sigtermBefore.has(listener)) process.off('SIGTERM', listener);
+      }
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   test('FR-79f: production worker refuses invalid payout keys before opening Redis', async () => {

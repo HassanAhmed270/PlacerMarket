@@ -13,7 +13,6 @@ function errorHandler(err, req, res, next) {
     const route = typeof req.route?.path === 'string'
       ? `${req.baseUrl || ''}${req.route.path}`
       : 'unknown';
-    // eslint-disable-next-line no-console
     logger.warn('Database busy', { code: err.code, route });
     res.setHeader('Retry-After', '1');
     return res.status(503).json({ code: 'busy_try_again' });
@@ -33,7 +32,6 @@ function errorHandler(err, req, res, next) {
   if (statusCode >= 500) body.requestId = req.requestId;
   if (err.frCode) body.frCode = err.frCode; // NotYetSpecifiedError
   if (statusCode >= 500) {
-    // eslint-disable-next-line no-console
     logger.error('Request failed', {
       requestId: req.requestId,
       errorName: err.name || 'Error',

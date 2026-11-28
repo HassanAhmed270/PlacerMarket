@@ -6,6 +6,7 @@
 const db = require('../db.service');
 const sellerPayouts = require('./sellerPayouts.service');
 const { ValidationError } = require('../lib/errors');
+const { logger: defaultLogger } = require('../lib/logger');
 
 const CHECKS = [
   {
@@ -254,7 +255,7 @@ function encodeCursor(row) {
 }
 
 /** FR-70: run read-only money consistency checks and append one finding per subject and business day. */
-async function runSettlementConsistencyCheck({ logger = console, transaction } = {}) {
+async function runSettlementConsistencyCheck({ logger = defaultLogger, transaction } = {}) {
   if (transaction && typeof transaction.query !== 'function') {
     throw new ValidationError('transaction must provide a query function.');
   }

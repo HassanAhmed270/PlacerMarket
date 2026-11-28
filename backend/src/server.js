@@ -6,6 +6,7 @@ const { getRuntimeConfig } = require('./config');
 const { passwordHashPool } = require('./lib/passwordHashPool');
 const { assertPaymentsAdminGate } = require('./lib/paymentsAdminGate');
 const { shutdownTimeout, withDeadline } = require('./lib/shutdown');
+const { logger: defaultLogger } = require('./lib/logger');
 
 function safeConfigurationMessage(error) {
   const message = error?.message;
@@ -25,7 +26,7 @@ async function startServer({
   validateConfiguration = getRuntimeConfig,
   validatePaymentsGate = assertPaymentsAdminGate,
   hashPool = passwordHashPool,
-  logger = console,
+  logger = defaultLogger,
 } = {}) {
   const shutdownTimeoutMs = shutdownTimeout(process.env);
   let redis;
@@ -49,13 +50,13 @@ async function startServer({
       const listener = app.listen(port, () => resolve(listener));
       listener.once('error', reject);
     });
-    logger.log(`Poshaak backend listening on port ${port}`);
+    logger.info(`Poshaak backend listening on port ${port}`);
 
     let shuttingDown;
     async function shutdown(signal) {
       if (shuttingDown) return shuttingDown;
       shuttingDown = (async () => {
-        logger.log(`Poshaak backend shutting down (${signal})`);
+        logger.info(`Poshaak backend shutting down (${signal})`);
         await withDeadline(async () => {
           await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
           await queueClient.stopProducer();

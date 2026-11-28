@@ -1,6 +1,7 @@
 /** FR-77: manage the Redis connection shared by the web and worker processes. */
 
 const { createClient } = require('redis');
+const { logger: defaultLogger } = require('./logger');
 
 let sharedClient = null;
 
@@ -12,7 +13,7 @@ function getSharedRedisClient() {
   return sharedClient;
 }
 
-function createRedisClient({ url = process.env.REDIS_URL, clientFactory = createClient, logger = console } = {}) {
+function createRedisClient({ url = process.env.REDIS_URL, clientFactory = createClient, logger = defaultLogger } = {}) {
   if (!url) throw new Error('REDIS_URL is required to start the Redis client.');
   const parsed = new URL(url);
   if (!['redis:', 'rediss:'].includes(parsed.protocol) || !parsed.hostname) {

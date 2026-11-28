@@ -119,6 +119,9 @@ function getSecurityLimits(env = process.env) {
 function getRuntimeConfig(env = process.env) {
   const production = env.NODE_ENV === 'production';
   const trustProxyHops = parseTrustProxyHops(env);
+  if (env.LOG_LEVEL && !['debug', 'info', 'warn', 'error'].includes(String(env.LOG_LEVEL).toLowerCase())) {
+    if (production) throw new Error('Configuration error: LOG_LEVEL must be debug, info, warn, or error.');
+  }
   const jwt = getJwtConfig(env);
   const origins = parseAllowedOrigins(env.CORS_ORIGINS || '');
   if (production && origins.size === 0) {

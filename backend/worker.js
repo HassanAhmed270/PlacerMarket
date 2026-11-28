@@ -26,6 +26,13 @@ const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 const { assertPaymentsAdminGate } = require('./src/lib/paymentsAdminGate');
 const settlementConsistency = require('./src/modules/settlementConsistency.service');
 const { shutdownTimeout, withDeadline } = require('./src/lib/shutdown');
+const { logger } = require('./src/lib/logger');
+
+function startWorkerHeartbeat(workerLogger = logger) {
+  const timer = setInterval(() => workerLogger.info('worker heartbeat'), 60000);
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
 
 async function registerMoneyMaintenanceSchedules(boss) {
   await boss.schedule(
@@ -104,7 +111,7 @@ async function processMoneyMaintenanceJob(job) {
 async function startWorker({
   emailSender,
   cdnPurger,
-  logger = console,
+  logger: workerLogger = logger,
   validatePaymentsGate = assertPaymentsAdminGate,
 } = {}) {
   const shutdownTimeoutMs = shutdownTimeout(process.env);
@@ -185,15 +192,15 @@ async function startWorker({
       withQueueFailureCounter(async ([job]) => processMoneyMaintenanceJob(job))
     );
     await registerMoneyMaintenanceSchedules(queue.boss);
-    // eslint-disable-next-line no-console
-    console.log('Poshaak worker started');
+    workerLogger.info('Poshaak worker started');
+    const stopHeartbeat = startWorkerHeartbeat(workerLogger);
 
     let shuttingDown;
     async function shutdown(signal) {
       if (shuttingDown) return shuttingDown;
       shuttingDown = (async () => {
-        // eslint-disable-next-line no-console
-        console.log(`Poshaak worker shutting down (${signal})`);
+        stopHeartbeat();
+        workerLogger.info(`Poshaak worker shutting down (${signal})`);
         await withDeadline(async () => {
           await queue.stop();
           await stopProducer();
@@ -201,16 +208,16 @@ async function startWorker({
           const db = require('./src/db.service');
           await db.pool.end();
           await db.searchPool.end();
-        }, shutdownTimeoutMs, console);
+        }, shutdownTimeoutMs, workerLogger);
       })();
       return shuttingDown;
     }
     process.once('SIGINT', () => shutdown('SIGINT').catch((error) => {
-      console.error('Worker shutdown failed', { code: error?.code || 'unknown' });
+      workerLogger.error('Worker shutdown failed', { code: error?.code || 'unknown' });
       process.exitCode = 1;
     }));
     process.once('SIGTERM', () => shutdown('SIGTERM').catch((error) => {
-      console.error('Worker shutdown failed', { code: error?.code || 'unknown' });
+      workerLogger.error('Worker shutdown failed', { code: error?.code || 'unknown' });
       process.exitCode = 1;
     }));
     return { queue, shutdown };
@@ -225,12 +232,12 @@ async function startWorker({
 if (require.main === module) {
   startWorker().catch((error) => {
     if (/^Configuration error: PAYMENTS_ENABLED=/.test(error?.message || '')) {
-      console.error(error.message);
+      logger.error(error.message);
     } else if (process.env.NODE_ENV === 'production' && /^PAYOUT_ENCRYPTION_(?:KEYS_JSON|ACTIVE_KEY_ID)/.test(error?.message || '')) {
-      console.error(error.message);
-    } else console.error('Worker startup failed', { code: error?.code || 'unknown' });
+      logger.error(error.message);
+    } else logger.error('Worker startup failed', { code: error?.code || 'unknown' });
     process.exitCode = 1;
   });
 }
 
-module.exports = { startWorker, registerMoneyMaintenanceSchedules, processMoneyMaintenanceJob };
+module.exports = { startWorker, registerMoneyMaintenanceSchedules, processMoneyMaintenanceJob, startWorkerHeartbeat };

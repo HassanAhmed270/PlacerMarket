@@ -32,6 +32,7 @@ const orders = require('./orders.service');
 const { validateSeoChoice, buildSeoPayload, generateSeoRecommendation } = require('../lib/listingSeo');
 const { canonicalListingUrl } = require('../lib/listingUrls');
 const { performance } = require('node:perf_hooks');
+const { logger: defaultLogger } = require('../lib/logger');
 const {
   NotFoundError, ValidationError, ForbiddenError, ConflictError, ConfigurationError,
 } = require('../lib/errors');
@@ -161,7 +162,7 @@ async function expireOneDueReservation(reservationId) {
 }
 
 /** FR-63a: expire due unpaid reservations in bounded, independent transactions. */
-async function expireDueReservations({ limit = 100, timeBudgetMs = 20000, logger = console } = {}) {
+async function expireDueReservations({ limit = 100, timeBudgetMs = 20000, logger = defaultLogger } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw new ValidationError('Reservation expiry batch limit must be from 1 to 100.');
   }

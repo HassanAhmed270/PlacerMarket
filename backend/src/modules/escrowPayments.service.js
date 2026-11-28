@@ -4,6 +4,7 @@
  */
 
 const db = require('../db.service');
+const { logger: defaultLogger } = require('../lib/logger');
 const { randomUUID } = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const queue = require('../lib/queue');
@@ -1461,12 +1462,13 @@ async function processRefundJob({ refundId, gateway } = {}) {
     if (failedRefund) {
       emitRefundStatusChange({ id: failedRefund.id, order_id: failedRefund.order_id, status: failedRefund.status });
       if (failedRefund.newlyNeedsAttention && failedRefund.needs_attention_at) {
-        console.error(JSON.stringify({
+        const { logger } = require('../lib/logger');
+        logger.error('Refund alert', {
           refundId,
           orderId: failedRefund.order_id,
           trigger: failedRefund.trigger,
           code: failureCode,
-        }));
+        });
       }
     }
     throw new PaymentGatewayUnavailableError();
@@ -2372,7 +2374,7 @@ async function processPaymentWebhookJob({ webhookInboxId }) {
 }
 
 /** FR-72: sweep due handovers and issue timeout refunds through the existing idempotent path. */
-async function sweepUnhandedOverOrders({ limit = 100, timeBudgetMs = 20000, logger = console } = {}) {
+async function sweepUnhandedOverOrders({ limit = 100, timeBudgetMs = 20000, logger = defaultLogger } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw new ValidationError('Handover sweep batch limit must be from 1 to 100.');
   }
@@ -2490,7 +2492,7 @@ async function reconcilePendingPayment(paymentContext, gateway) {
 }
 
 /** FR-70: requeue orphan money work and recover missed gateway outcomes via the normal inbox path. */
-async function reconcileMoneyState({ limit = 100, timeBudgetMs = 20000, logger = console, gateway } = {}) {
+async function reconcileMoneyState({ limit = 100, timeBudgetMs = 20000, logger = defaultLogger, gateway } = {}) {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw new ValidationError('Money reconciliation batch limit must be from 1 to 100.');
   }

@@ -32,6 +32,37 @@ describe('FR-77d: notification event listeners enqueue durable jobs', () => {
     expect(db.query).not.toHaveBeenCalled();
   });
 
+  test('FR-79g: notification enqueue failures emit production JSON with UTC time', async () => {
+    const previous = {
+      nodeEnv: process.env.NODE_ENV,
+      logLevel: process.env.LOG_LEVEL,
+    };
+    const stderr = jest.spyOn(console, 'error').mockImplementation(() => {});
+    process.env.NODE_ENV = 'production';
+    process.env.LOG_LEVEL = 'info';
+    queue.enqueue.mockRejectedValueOnce(Object.assign(new Error('private details'), { code: 'QUEUE_DOWN' }));
+    try {
+      eventBus.emit(events.LISTING_STATUS_CHANGED, { listingId: 'listing-42', status: 'published' });
+      await new Promise((resolve) => setImmediate(resolve));
+      const entries = stderr.mock.calls.map(([line]) => JSON.parse(line));
+      expect(entries).toEqual([
+        expect.objectContaining({
+          level: 'error',
+          msg: 'Notification job enqueue failed',
+          time: expect.stringMatching(/T.*Z$/),
+          code: 'QUEUE_DOWN',
+        }),
+      ]);
+      expect(JSON.stringify(entries)).not.toContain('private details');
+    } finally {
+      stderr.mockRestore();
+      if (previous.nodeEnv === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = previous.nodeEnv;
+      if (previous.logLevel === undefined) delete process.env.LOG_LEVEL;
+      else process.env.LOG_LEVEL = previous.logLevel;
+    }
+  });
+
   test('FR-43c: evidence notification jobs are idempotent and identify only the submitting party', async () => {
     const payload = {
       disputeId: 'dispute-1',

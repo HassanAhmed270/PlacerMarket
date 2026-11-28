@@ -23,6 +23,11 @@ function validProductionEnv(overrides = {}) {
 }
 
 describe('FR-84c: production configuration validation', () => {
+  test('FR-79g: production startup rejects an unsupported LOG_LEVEL', () => {
+    expect(() => getRuntimeConfig(validProductionEnv({ LOG_LEVEL: 'verbose' })))
+      .toThrow('LOG_LEVEL must be debug, info, warn, or error');
+  });
+
   test('FR-69: payment config requires two distinct enrolled, non-suspended Admins only for enabled production', () => {
     const enabledProduction = { NODE_ENV: 'production', PAYMENTS_ENABLED: '1' };
     for (const count of [0, 1, null, undefined]) {
