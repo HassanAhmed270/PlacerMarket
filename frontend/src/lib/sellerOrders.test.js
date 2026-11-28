@@ -43,7 +43,7 @@ test('FR-34: seller order labels cover every funded and delivery status', () => 
 
 test('FR-34: seller handover deadline labels apply only to funded orders', () => {
   const deadline = '2026-11-07T10:00:00.000Z'
-  const deadlineText = `Handover deadline: ${new Date(deadline).toLocaleString()}`
+  const deadlineText = 'Handover deadline: 7 Nov 2026, 3:00 PM PKT'
   assert.deepEqual(getSellerHandoverDeadline('funded', deadline, Date.parse('2026-11-07T10:00:01.000Z')), {
     text: deadlineText,
     overdue: true,

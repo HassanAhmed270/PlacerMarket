@@ -1,3 +1,5 @@
+import { formatPakistanDateTime } from './pakistanTime.js'
+
 const STATUS_MESSAGES = {
   funded: {
     title: 'Paid',
@@ -39,7 +41,7 @@ export function getSellerHandoverDeadline(status, deadlineAt, now) {
   if (!Number.isFinite(deadline)) return { text: '', overdue: false }
 
   return {
-    text: `Handover deadline: ${new Date(deadline).toLocaleString()}`,
+    text: `Handover deadline: ${formatPakistanDateTime(deadline)}`,
     overdue: deadline < now,
   }
 }

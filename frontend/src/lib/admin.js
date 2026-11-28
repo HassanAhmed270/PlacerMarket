@@ -128,15 +128,10 @@ export function formatAdminAmount(amount, currency) {
   return currency ? `${currency} ${amount}` : amount
 }
 
-export function formatAdminDate(value, options = {}) {
-  if (!value) return '—'
-  const date = new Date(value)
-  if (!Number.isFinite(date.getTime())) return '—'
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    ...options,
-  }).format(date)
+import { formatPakistanDateTime } from './pakistanTime.js'
+
+export function formatAdminDate(value, _options = {}) {
+  return formatPakistanDateTime(value)
 }
 
 export function payoutReleaseMessage(hold, now = Date.now()) {

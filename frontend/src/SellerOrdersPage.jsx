@@ -7,6 +7,7 @@ import {
   getSellerPayoutStatusLabel,
 } from './lib/sellerOrders.js'
 import { getDeliveryOutcomeLabel, getDisputeFlowLabel, getReturnFlowLabel } from './lib/orderFlows.js'
+import { formatPakistanDate } from './lib/pakistanTime.js'
 
 const PAGE_SIZE = 20
 
@@ -105,7 +106,7 @@ function SellerOrdersPage() {
                     <span>{order.deliveryCity}</span>
                     {order.fundedAt && (
                       <time dateTime={order.fundedAt}>
-                        Funded {new Date(order.fundedAt).toLocaleDateString()}
+                        Funded {formatPakistanDate(order.fundedAt)}
                       </time>
                     )}
                     {deadline?.text && (

@@ -168,7 +168,7 @@ test('FR-68: order list query builder includes status and cursor without empty v
 test('Admin helpers format server decimal strings and dates without money arithmetic', () => {
   assert.equal(formatAdminAmount('1200.50', 'PKR'), 'PKR 1200.50')
   assert.equal(formatAdminAmount('1200.50'), '1200.50')
-  assert.match(formatAdminDate('2026-11-07T10:00:00.000Z', { timeZone: 'UTC' }), /2026/)
+  assert.equal(formatAdminDate('2026-11-07T10:00:00.000Z', { timeZone: 'UTC' }), '7 Nov 2026, 3:00 PM PKT')
   assert.equal(formatAdminDate('invalid'), '—')
   assert.equal(adminStatusLabel('handed_to_delivery'), 'Handed to delivery')
   assert.equal(adminStatusLabel('dispute_refund_required'), 'Dispute refund required (manual)')

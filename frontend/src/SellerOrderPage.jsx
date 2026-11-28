@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './lib/api.js'
+import { formatPakistanDateTime } from './lib/pakistanTime.js'
 import {
   getHeldFundsBanner,
   getSellerDisputeLabel,
@@ -243,14 +244,14 @@ function SellerOrderPage({ orderId }) {
           {order.fundedAt && (
             <div>
               <dt>Funded</dt>
-              <dd><time dateTime={order.fundedAt}>{new Date(order.fundedAt).toLocaleString()}</time></dd>
+              <dd><time dateTime={order.fundedAt}>{formatPakistanDateTime(order.fundedAt)}</time></dd>
             </div>
           )}
           {deadline?.text && (
             <div>
               <dt>Handover deadline</dt>
               <dd>
-                <time dateTime={order.handoverDeadlineAt}>{new Date(order.handoverDeadlineAt).toLocaleString()}</time>
+                <time dateTime={order.handoverDeadlineAt}>{formatPakistanDateTime(order.handoverDeadlineAt)}</time>
                 {deadline.overdue && <strong className="seller-order-overdue"> Overdue</strong>}
               </dd>
             </div>
@@ -258,19 +259,19 @@ function SellerOrderPage({ orderId }) {
           {order.handedOverAt && (
             <div>
               <dt>Handed over</dt>
-              <dd><time dateTime={order.handedOverAt}>{new Date(order.handedOverAt).toLocaleString()}</time></dd>
+              <dd><time dateTime={order.handedOverAt}>{formatPakistanDateTime(order.handedOverAt)}</time></dd>
             </div>
           )}
           {order.deliveredAt && (
             <div>
               <dt>Delivered</dt>
-              <dd><time dateTime={order.deliveredAt}>{new Date(order.deliveredAt).toLocaleString()}</time></dd>
+              <dd><time dateTime={order.deliveredAt}>{formatPakistanDateTime(order.deliveredAt)}</time></dd>
             </div>
           )}
           {order.cancelledAt && (
             <div>
               <dt>Cancelled</dt>
-              <dd><time dateTime={order.cancelledAt}>{new Date(order.cancelledAt).toLocaleString()}</time></dd>
+              <dd><time dateTime={order.cancelledAt}>{formatPakistanDateTime(order.cancelledAt)}</time></dd>
             </div>
           )}
           <div><dt>Payout</dt><dd>{getSellerPayoutLabel(order.payoutHoldState)}</dd></div>
@@ -283,7 +284,7 @@ function SellerOrderPage({ orderId }) {
             <p>{getDeliveryOutcomeLabel(order.deliveryOutcome)}</p>
             {order.deliveryOutcome.recordedAt && (
               <time dateTime={order.deliveryOutcome.recordedAt}>
-                Recorded {new Date(order.deliveryOutcome.recordedAt).toLocaleString()}
+                Recorded {formatPakistanDateTime(order.deliveryOutcome.recordedAt)}
               </time>
             )}
           </section>
@@ -296,9 +297,9 @@ function SellerOrderPage({ orderId }) {
             <dl className="seller-flow-details">
               <div><dt>Buyer reason</dt><dd>{order.returnRequest.reason || 'Reason unavailable'}</dd></div>
               {order.returnRequest.sellerNote && <div><dt>Your response</dt><dd>{order.returnRequest.sellerNote}</dd></div>}
-              {order.returnRequest.createdAt && <div><dt>Requested</dt><dd><time dateTime={order.returnRequest.createdAt}>{new Date(order.returnRequest.createdAt).toLocaleString()}</time></dd></div>}
-              {order.returnRequest.respondedAt && <div><dt>Responded</dt><dd><time dateTime={order.returnRequest.respondedAt}>{new Date(order.returnRequest.respondedAt).toLocaleString()}</time></dd></div>}
-              {order.returnRequest.decidedAt && <div><dt>Decided</dt><dd><time dateTime={order.returnRequest.decidedAt}>{new Date(order.returnRequest.decidedAt).toLocaleString()}</time></dd></div>}
+              {order.returnRequest.createdAt && <div><dt>Requested</dt><dd><time dateTime={order.returnRequest.createdAt}>{formatPakistanDateTime(order.returnRequest.createdAt)}</time></dd></div>}
+              {order.returnRequest.respondedAt && <div><dt>Responded</dt><dd><time dateTime={order.returnRequest.respondedAt}>{formatPakistanDateTime(order.returnRequest.respondedAt)}</time></dd></div>}
+              {order.returnRequest.decidedAt && <div><dt>Decided</dt><dd><time dateTime={order.returnRequest.decidedAt}>{formatPakistanDateTime(order.returnRequest.decidedAt)}</time></dd></div>}
             </dl>
             {allowedActions.includes('respond_to_return') && (
               <form className="seller-flow-form" onSubmit={respondToReturn}>
@@ -321,14 +322,14 @@ function SellerOrderPage({ orderId }) {
             <p>{getDisputeFlowLabel(order.disputeStatus)}</p>
             {order.disputeReason && <p><strong>Resolution reason:</strong> {order.disputeReason}</p>}
             {order.disputeDecidedAt && (
-              <p>Decided <time dateTime={order.disputeDecidedAt}>{new Date(order.disputeDecidedAt).toLocaleString()}</time></p>
+              <p>Decided <time dateTime={order.disputeDecidedAt}>{formatPakistanDateTime(order.disputeDecidedAt)}</time></p>
             )}
             {Array.isArray(order.disputeTimeline) && order.disputeTimeline.length > 0 && (
               <ul className="seller-flow-timeline">
                 {order.disputeTimeline.map((item, index) => (
                   <li key={`${item.event}-${item.at}-${index}`}>
                     {item.event.replaceAll('_', ' ')}
-                    {item.at && <> — <time dateTime={item.at}>{new Date(item.at).toLocaleString()}</time></>}
+                    {item.at && <> — <time dateTime={item.at}>{formatPakistanDateTime(item.at)}</time></>}
                   </li>
                 ))}
               </ul>

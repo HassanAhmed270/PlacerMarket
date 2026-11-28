@@ -4,6 +4,7 @@ import { api } from './lib/api.js'
 import { getBuyDestination, getListingViewState } from './lib/browse.js'
 import { POLL_INTERVALS, schedulePolling } from './lib/polling.js'
 import { getMessageErrorMessage } from './lib/seoValidation.js'
+import { formatPakistanDate } from './lib/pakistanTime.js'
 
 const ListingReviews = lazy(() => import('./ListingReviews.jsx'))
 
@@ -298,7 +299,7 @@ function PublicListingDetail({ id }) {
       {listing.seller && <aside className="seller-card">
         <p className="eyebrow">Seller</p><h2>Meet the seller</h2>
         {listing.seller.averageRating != null && <p>{Number(listing.seller.averageRating).toFixed(1)} rating · {listing.seller.ratingCount} reviews</p>}
-        {listing.seller.joinDate && <p>On Poshaak since {new Date(listing.seller.joinDate).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })}</p>}
+        {listing.seller.joinDate && <p>On Poshaak since {formatPakistanDate(listing.seller.joinDate)}</p>}
       </aside>}
       <Suspense fallback={<section className="listing-reviews" aria-live="polite"><p>Loading reviews…</p></section>}>
         <ListingReviews listingKey={listing.canonicalKey || id} />

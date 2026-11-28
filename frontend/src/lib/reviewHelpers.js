@@ -1,8 +1,10 @@
+import { formatPakistanDate } from './pakistanTime.js'
+
 export function formatPublicReview(review) {
   const rating = Number.isInteger(review?.rating) ? `${review.rating} star${review.rating === 1 ? '' : 's'}` : 'Rating unavailable'
   const itemRating = Number.isInteger(review?.itemRating) ? `Item rating: ${review.itemRating}/5` : null
   const date = typeof review?.createdAt === 'string' && !Number.isNaN(Date.parse(review.createdAt))
-    ? new Date(review.createdAt).toLocaleDateString()
+    ? formatPakistanDate(review.createdAt)
     : 'Date unavailable'
   const reviewer = typeof review?.reviewer?.displayName === 'string' && review.reviewer.displayName.trim()
     ? review.reviewer.displayName

@@ -14,6 +14,7 @@ import {
   getReturnFlowLabel,
 } from './lib/orderFlows.js'
 import { formatPkr } from './lib/payouts.js'
+import { formatPakistanDateTime } from './lib/pakistanTime.js'
 
 function OrderPage({ orderId }) {
   const [summary, setSummary] = useState(null)
@@ -311,7 +312,7 @@ function OrderPage({ orderId }) {
           </p>
         )}
         {['funded', 'seller_preparing'].includes(summary.status) && summary.handoverDeadlineAt && (
-          <p className="handover-deadline">Seller handover deadline: {new Date(summary.handoverDeadlineAt).toLocaleString()}</p>
+          <p className="handover-deadline">Seller handover deadline: {formatPakistanDateTime(summary.handoverDeadlineAt)}</p>
         )}
 
         <div className="order-actions">
@@ -341,9 +342,9 @@ function OrderPage({ orderId }) {
               <div><dt>Status</dt><dd>{getReturnFlowLabel(summary.returnRequest.status)}</dd></div>
               {summary.returnRequest.reason && <div><dt>Your reason</dt><dd>{summary.returnRequest.reason}</dd></div>}
               {summary.returnRequest.sellerNote && <div><dt>Seller note</dt><dd>{summary.returnRequest.sellerNote}</dd></div>}
-              {summary.returnRequest.createdAt && <div><dt>Requested</dt><dd>{new Date(summary.returnRequest.createdAt).toLocaleString()}</dd></div>}
-              {summary.returnRequest.respondedAt && <div><dt>Seller response</dt><dd>{new Date(summary.returnRequest.respondedAt).toLocaleString()}</dd></div>}
-              {summary.returnRequest.decidedAt && <div><dt>Decided</dt><dd>{new Date(summary.returnRequest.decidedAt).toLocaleString()}</dd></div>}
+              {summary.returnRequest.createdAt && <div><dt>Requested</dt><dd>{formatPakistanDateTime(summary.returnRequest.createdAt)}</dd></div>}
+              {summary.returnRequest.respondedAt && <div><dt>Seller response</dt><dd>{formatPakistanDateTime(summary.returnRequest.respondedAt)}</dd></div>}
+              {summary.returnRequest.decidedAt && <div><dt>Decided</dt><dd>{formatPakistanDateTime(summary.returnRequest.decidedAt)}</dd></div>}
             </dl>
           )}
           {summary.returnFiling?.canRequestReturn && (
@@ -369,12 +370,12 @@ function OrderPage({ orderId }) {
                 <div><dt>Status</dt><dd>{getDisputeFlowLabel(summary.disputeFiling.disputeStatus)}</dd></div>
                 {summary.disputeFiling.outcome && <div><dt>Outcome</dt><dd>{summary.disputeFiling.outcome}</dd></div>}
                 {summary.disputeFiling.reason && <div><dt>Reason</dt><dd>{summary.disputeFiling.reason}</dd></div>}
-                {summary.disputeFiling.decidedAt && <div><dt>Decided</dt><dd>{new Date(summary.disputeFiling.decidedAt).toLocaleString()}</dd></div>}
+                {summary.disputeFiling.decidedAt && <div><dt>Decided</dt><dd>{formatPakistanDateTime(summary.disputeFiling.decidedAt)}</dd></div>}
               </dl>
               {summary.disputeFiling.timeline?.length > 0 && (
                 <ul className="seller-flow-timeline">
                   {summary.disputeFiling.timeline.map((item, index) => (
-                    <li key={`${item.event}-${item.at}-${index}`}>{item.event}: {item.at ? new Date(item.at).toLocaleString() : 'Date unavailable'}</li>
+                    <li key={`${item.event}-${item.at}-${index}`}>{item.event}: {item.at ? formatPakistanDateTime(item.at) : 'Date unavailable'}</li>
                   ))}
                 </ul>
               )}

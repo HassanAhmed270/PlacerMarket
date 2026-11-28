@@ -6,6 +6,31 @@ const {
   formatPakistanDate,
 } = require('../../src/lib/pakistanTime');
 
+function findBackendDateFormattingOffenders(backendDir) {
+  const offenders = [];
+  const unambiguousBans = /toLocaleDateString|toLocaleTimeString|Intl\.DateTimeFormat|toDateString|toTimeString|toUTCString/;
+  function walk(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (!['node_modules', 'test', 'dist'].includes(entry.name)) walk(absolute);
+      } else if (entry.name.endsWith('.js') && !absolute.endsWith('pakistanTime.js')) {
+        const lines = fs.readFileSync(absolute, 'utf8').split(/\r?\n/);
+        lines.forEach((line, index) => {
+          if (unambiguousBans.test(line)) offenders.push(`${path.relative(backendDir, absolute)}:${index + 1}`);
+          if (/\.toLocaleString\s*\(/.test(line)) {
+            const numberReceiver = /Number\([^;]+\)\.toLocaleString\s*\(/.test(line);
+            const dateOptions = /(timeZone|dateStyle|timeStyle|hour|minute|month|weekday|year)\s*:/.test(line);
+            if (!numberReceiver || dateOptions) offenders.push(`${path.relative(backendDir, absolute)}:${index + 1}`);
+          }
+        });
+      }
+    }
+  }
+  walk(path.join(backendDir, 'src'));
+  return offenders;
+}
+
 describe('FR-79g: Pakistan time formatting', () => {
   test('FR-79g: fixed-parts Pakistan date and time fixtures match the owner format', () => {
     expect(PAKISTAN_TIME_ZONE).toBe('Asia/Karachi');
@@ -51,32 +76,7 @@ describe('FR-79g: Pakistan time formatting', () => {
 
   test('no other backend file formats dates directly', () => {
     const backendDir = path.resolve(__dirname, '../..');
-    const offenders = [];
-    const unambiguousBans = /toLocaleDateString|toLocaleTimeString|Intl\.DateTimeFormat|toDateString|toTimeString|toUTCString/;
-    function walk(directory) {
-      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-        const absolute = path.join(directory, entry.name);
-        if (entry.isDirectory()) {
-          if (!['node_modules', 'test', 'dist'].includes(entry.name)) walk(absolute);
-        } else if (entry.name.endsWith('.js') && !absolute.endsWith('pakistanTime.js')) {
-          const lines = fs.readFileSync(absolute, 'utf8').split(/\r?\n/);
-          lines.forEach((line, index) => {
-            if (unambiguousBans.test(line)) {
-              offenders.push(`${path.relative(backendDir, absolute)}:${index + 1}`);
-            }
-            if (/\.toLocaleString\s*\(/.test(line)) {
-              const numberReceiver = /(?:Number\([^;]+\)|(?:amount|price|total|fee|cost|item)[A-Za-z0-9_.]*)\.toLocaleString\s*\(/i.test(line);
-              const enPkNoTimeOptions = /toLocaleString\(\s*['"]en-PK['"]/.test(line) &&
-                !/(?:timeZone|dateStyle|timeStyle|hour|month|weekday)\s*:/.test(line);
-              if (!((numberReceiver || enPkNoTimeOptions))) {
-                offenders.push(`${path.relative(backendDir, absolute)}:${index + 1}`);
-              }
-            }
-          });
-        }
-      }
-    }
-    walk(path.join(backendDir, 'src'));
+    const offenders = findBackendDateFormattingOffenders(backendDir);
     const direct = fs.readFileSync(path.join(backendDir, 'src/modules/payout.service.js'), 'utf8');
     expect(direct).not.toContain('toISOString()');
     expect(offenders).toEqual([]);
@@ -91,9 +91,10 @@ describe('FR-79g: Pakistan time formatting', () => {
   test('date timezone formatting fails while number formatting passes', () => {
     const dateLine = "new Date(2026, 1, 2).toLocaleString('en-US', { timeZone: 'UTC' });";
     const priceLine = "Number(x).toLocaleString('en-PK', { maximumFractionDigits: 2 });";
-    expect(/\.toLocaleString\s*\(/.test(dateLine)).toBe(true);
-    expect(/(?:Number\([^;]+\)|(?:amount|price|total|fee|cost|item)[A-Za-z0-9_.]*)\.toLocaleString\s*\(/i.test(dateLine)).toBe(false);
-    expect(/(?:Number\([^;]+\)|(?:amount|price|total|fee|cost|item)[A-Za-z0-9_.]*)\.toLocaleString\s*\(/i.test(priceLine)).toBe(true);
+    expect(/toLocaleString/.test(dateLine)).toBe(true);
+    expect(/Number\([^;]+\)\.toLocaleString\s*\(/.test(dateLine)).toBe(false);
+    expect(/Number\([^;]+\)\.toLocaleString\s*\(/.test(priceLine)).toBe(true);
+    expect(/(timeZone|dateStyle|timeStyle|hour|minute|month|weekday|year)\s*:/.test(dateLine)).toBe(true);
   });
 
   test('payout release message uses PKT', () => {

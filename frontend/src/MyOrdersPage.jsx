@@ -8,6 +8,7 @@ import {
   getReviewFlowLabel,
 } from './lib/orderFlows.js'
 import { formatPkr } from './lib/payouts.js'
+import { formatPakistanDate } from './lib/pakistanTime.js'
 
 function MyOrdersPage() {
   const [orders, setOrders] = useState([])
@@ -76,7 +77,7 @@ function MyOrdersPage() {
                         : 'Review the seller'}
                     </span>
                   )}
-                  <span className="my-order-date">{new Date(order.createdAt).toLocaleDateString()}</span>
+                  <span className="my-order-date">{formatPakistanDate(order.createdAt)}</span>
                 </a>
               </li>
             )

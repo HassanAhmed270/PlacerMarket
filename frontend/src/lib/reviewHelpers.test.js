@@ -11,7 +11,7 @@ test('public review formatter handles complete, optional and missing fields', ()
   }), {
     rating: '5 stars',
     itemRating: 'Item rating: 4/5',
-    date: new Date('2026-03-20T00:00:00.000Z').toLocaleDateString(),
+    date: '20 Mar 2026',
     reviewer: 'Ada L.',
   })
   assert.deepEqual(formatPublicReview(null), {

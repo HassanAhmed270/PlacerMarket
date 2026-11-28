@@ -3,6 +3,7 @@ import WorkspaceFrame, { ErrorMessage } from './WorkspaceFrame.jsx'
 import { api } from './lib/api.js'
 import { getMessageErrorMessage } from './lib/seoValidation.js'
 import { POLL_INTERVALS, schedulePolling } from './lib/polling.js'
+import { formatPakistanDateTime } from './lib/pakistanTime.js'
 
 function ProtectedCustomerWorkspace({ path, conversationId = '' }) {
   const [state, setState] = useState('checking')
@@ -139,7 +140,7 @@ function InboxWorkspace() {
                   {conversation.last_message_body && <span className="conversation-preview">{conversation.last_message_body}</span>}
                   <span>{conversation.unread_count ? `${conversation.unread_count} unread` : 'No unread messages'}</span>
                 </a>
-                <time dateTime={conversation.last_activity_at}>{new Date(conversation.last_activity_at).toLocaleString()}</time>
+                <time dateTime={conversation.last_activity_at}>{formatPakistanDateTime(conversation.last_activity_at)}</time>
               </li>
             ))}
           </ul>}
@@ -254,7 +255,7 @@ function ConversationWorkspace({ conversationId }) {
           {[...messages].reverse().map((item) => (
             <li key={item.id}>
               <p>{item.body}</p>
-              <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time>
+              <time dateTime={item.created_at}>{formatPakistanDateTime(item.created_at)}</time>
             </li>
           ))}
           {messages.length === 0 && <li>No messages yet.</li>}
@@ -336,7 +337,7 @@ function NotificationsWorkspace() {
               return <li key={item.id} className={item.is_read ? '' : 'notification-unread'}>
                 <div>
                   <strong>{notificationLabel}</strong>
-                  <time dateTime={item.created_at}>{new Date(item.created_at).toLocaleString()}</time>
+                  <time dateTime={item.created_at}>{formatPakistanDateTime(item.created_at)}</time>
                   {conversationLink && <a href={conversationLink}>Open conversation</a>}
                   {orderLink && <a href={orderLink}>Open order</a>}
                 </div>
