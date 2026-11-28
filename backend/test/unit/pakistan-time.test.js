@@ -7,26 +7,46 @@ const {
 } = require('../../src/lib/pakistanTime');
 
 describe('FR-79g: Pakistan time formatting', () => {
-  test('FR-79g: formatPakistanDateTime renders Asia/Karachi with PKT', () => {
+  test('FR-79g: fixed-parts Pakistan date and time fixtures match the owner format', () => {
     expect(PAKISTAN_TIME_ZONE).toBe('Asia/Karachi');
-    const text = formatPakistanDateTime('2026-11-26T10:45:00Z');
-    expect(text).toContain('PKT');
-    expect(text).toContain('2026');
+    const fixtures = [
+      ['2026-11-26T10:45:00Z', '26 Nov 2026, 3:45 PM PKT'],
+      ['2026-11-26T18:45:00Z', '26 Nov 2026, 11:45 PM PKT'],
+      ['2026-11-26T19:30:00Z', '27 Nov 2026, 12:30 AM PKT'],
+      ['2026-11-05T07:00:00Z', '5 Nov 2026, 12:00 PM PKT'],
+    ];
+    fixtures.forEach(([instant, expected]) => {
+      expect(formatPakistanDateTime(instant)).toBe(expected);
+    });
+    expect(formatPakistanDate('2026-11-26T10:45:00Z')).toBe('26 Nov 2026');
+    expect(formatPakistanDate('2026-11-26')).toBe('26 Nov 2026');
   });
 
-  test('FR-79g: Pakistan time output is invariant across process timezone', () => {
-    const textLosAngeles = formatPakistanDateTime('2026-11-26T10:45:00Z');
+  test('FR-79g: output is identical in America/Los_Angeles, Pacific/Pago_Pago and UTC', () => {
     const previous = process.env.TZ;
-    process.env.TZ = 'Pacific/Pago_Pago';
-    const textPagoPago = formatPakistanDateTime('2026-11-26T10:45:00Z');
+    const output = [];
+    for (const timezone of ['America/Los_Angeles', 'Pacific/Pago_Pago', 'UTC']) {
+      process.env.TZ = timezone;
+      output.push(formatPakistanDateTime('2026-11-26T10:45:00Z'));
+    }
     if (previous === undefined) delete process.env.TZ;
     else process.env.TZ = previous;
-    expect(textLosAngeles).toBe(textPagoPago);
+    expect(output).toEqual([
+      '26 Nov 2026, 3:45 PM PKT',
+      '26 Nov 2026, 3:45 PM PKT',
+      '26 Nov 2026, 3:45 PM PKT',
+    ]);
   });
 
   test('no human-visible string contains PST, UTC or GMT', () => {
     const text = `${formatPakistanDateTime('2026-11-26T10:45:00Z')} ${formatPakistanDate('2026-11-26')}`;
     expect(text).not.toMatch(/\b(?:PST|UTC|GMT)\b/);
+  });
+
+  test('FR-79g: formatter source uses the fixed en-US locale', () => {
+    const source = fs.readFileSync(path.join(__dirname, '../../src/lib/pakistanTime.js'), 'utf8');
+    expect(source).toContain("Intl.DateTimeFormat('en-US'");
+    expect(source).not.toContain("'en-PK'");
   });
 
   test('no other backend file formats dates directly', () => {
