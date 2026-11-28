@@ -25,7 +25,7 @@ const sellerPayouts = require('./src/modules/sellerPayouts.service');
 const { createCdnPurger } = require('./src/lib/adapters/cdnPurger');
 const { assertPaymentsAdminGate } = require('./src/lib/paymentsAdminGate');
 const settlementConsistency = require('./src/modules/settlementConsistency.service');
-const { shutdownTimeout, withDeadline } = require('./src/lib/shutdown');
+const { shutdownTimeout, closeWorkerWithDeadline } = require('./src/lib/shutdown');
 const { logger } = require('./src/lib/logger');
 
 function startWorkerHeartbeat(workerLogger = logger) {
@@ -201,14 +201,15 @@ async function startWorker({
       shuttingDown = (async () => {
         stopHeartbeat();
         workerLogger.info(`Poshaak worker shutting down (${signal})`);
-        await withDeadline(async () => {
-          await queue.stop();
-          await stopProducer();
-          await redis.stop();
-          const db = require('./src/db.service');
-          await db.pool.end();
-          await db.searchPool.end();
-        }, shutdownTimeoutMs, workerLogger);
+        const db = require('./src/db.service');
+        await closeWorkerWithDeadline({
+          queue,
+          stopProducer,
+          redis,
+          db,
+          timeoutMs: shutdownTimeoutMs,
+          logger: workerLogger,
+        });
       })();
       return shuttingDown;
     }

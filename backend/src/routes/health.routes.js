@@ -3,6 +3,8 @@ const { pool } = require('../db.service');
 const { getSharedRedisClient } = require('../lib/redis');
 
 const router = express.Router();
+let shuttingDown = false;
+function setShuttingDown(value) { shuttingDown = Boolean(value); }
 
 function withTimeout(promise, milliseconds = 1000) {
   let timer;
@@ -19,6 +21,10 @@ router.get('/healthz', (_req, res) => {
 });
 
 router.get('/readyz', async (_req, res) => {
+  if (shuttingDown) {
+    res.set('Cache-Control', 'no-store').status(503).json({ status: 'unavailable' });
+    return;
+  }
   try {
     const redis = getSharedRedisClient();
     if (!redis || typeof redis.ping !== 'function') throw new Error('Redis unavailable');
@@ -33,3 +39,4 @@ router.get('/readyz', async (_req, res) => {
 });
 
 module.exports = router;
+module.exports.setShuttingDown = setShuttingDown;
