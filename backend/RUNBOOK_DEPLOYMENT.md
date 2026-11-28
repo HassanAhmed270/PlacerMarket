@@ -32,3 +32,5 @@ Deploy the database migrator first, the backend web process second, and the work
 On Vercel, import `frontend/vercel.json`. Replace the clearly marked `__API_ORIGIN__` and `__STORAGE_ORIGIN__` placeholders in `frontend/security-headers.json`, regenerate both output artifacts, and deploy.
 
 For nginx, include `frontend/deploy/nginx-security-headers.conf.example` in the HTTPS server block and replace the placeholders before activation.
+
+Before deployment, run `node frontend/scripts/build-header-configs.js --require-real-origins`. The command exits non-zero until `__API_ORIGIN__`, `__STORAGE_ORIGIN__`, and every other `__*__` placeholder are replaced with real origins.

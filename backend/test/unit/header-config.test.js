@@ -3,6 +3,7 @@ const path = require('node:path');
 const express = require('express');
 const request = require('supertest');
 const { execFileSync } = require('node:child_process');
+const os = require('node:os');
 
 const repositoryDir = path.resolve(__dirname, '../../..');
 
@@ -108,6 +109,33 @@ describe('SEC-21: API and frontend header policy', () => {
       'SHUTDOWN_TIMEOUT_MS',
     ]) {
       expect(yaml).toContain(`key: ${key}`);
+    }
+  });
+
+  test('FR-79h: real-origin header predeploy check fails placeholders and passes real origins', () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poshaak-headers-'));
+    const scriptDir = path.join(tempDir, 'scripts');
+    fs.mkdirSync(scriptDir);
+    fs.copyFileSync(path.join(repositoryDir, 'frontend/scripts/build-header-configs.js'), path.join(scriptDir, 'build-header-configs.js'));
+    fs.writeFileSync(path.join(tempDir, 'security-headers.json'), fs.readFileSync(path.join(repositoryDir, 'frontend/security-headers.json'), 'utf8'));
+    try {
+      let failure;
+      try {
+        execFileSync(process.execPath, [path.join(scriptDir, 'build-header-configs.js'), '--require-real-origins'], { stdio: 'pipe' });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeDefined();
+      expect(failure.status).not.toBe(0);
+      const realPolicy = fs.readFileSync(path.join(repositoryDir, 'frontend/security-headers.json'), 'utf8')
+        .replaceAll('__API_ORIGIN__', 'https://api.poshaak.test')
+        .replaceAll('__STORAGE_ORIGIN__', 'https://storage.poshaak.test');
+      fs.writeFileSync(path.join(tempDir, 'security-headers.json'), realPolicy);
+      expect(() => execFileSync(process.execPath, [path.join(scriptDir, 'build-header-configs.js'), '--require-real-origins'], { stdio: 'pipe' })).not.toThrow();
+      fs.writeFileSync(path.join(tempDir, 'security-headers.json'), realPolicy.replace('https://api.poshaak.test', 'https://api.poshaak.test __extra_2__'));
+      expect(() => execFileSync(process.execPath, [path.join(scriptDir, 'build-header-configs.js'), '--require-real-origins'], { stdio: 'pipe' })).toThrow();
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
     }
   });
 });

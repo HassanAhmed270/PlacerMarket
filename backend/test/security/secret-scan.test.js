@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 
 const repositoryDir = path.resolve(__dirname, '../../..');
@@ -26,6 +27,33 @@ function gitTrackedTextFiles() {
     });
 }
 
+function formatScanHit(type, relative, line) {
+  return `${relative}:${line}:${type}`;
+}
+
+function scanText(text, relative, allowedHits, allowedVite) {
+  const failures = [];
+  text.split(/\r?\n/).forEach((line, index) => {
+    for (const [type, regex] of patterns) {
+      if (regex.test(line)) {
+        const id = `${relative}:${index + 1}:${type}`;
+        if (!allowedHits.has(id)) failures.push(formatScanHit(type, relative, index + 1));
+      }
+    }
+    if (/\bVITE_[A-Z0-9_]+\b/.test(line) && (
+      /\bVITE_[A-Z0-9_]+\s*=/.test(line) ||
+      /import\.meta\.env/.test(line)
+    )) {
+      for (const match of line.matchAll(/\b(VITE_[A-Z0-9_]+)\b/g)) {
+        if (!allowedVite.has(match[1])) {
+          failures.push(formatScanHit('UNEXPECTED_VITE_VARIABLE', relative, index + 1));
+        }
+      }
+    }
+  });
+  return failures;
+}
+
 test('SEC-26: tracked text files contain no unexpected secrets or public VITE variables', () => {
   const allowlist = JSON.parse(fs.readFileSync(allowlistPath, 'utf8'));
   const allowedHits = new Set((allowlist.genericHits || []).map((hit) => `${hit.path}:${hit.line}:${hit.type}`));
@@ -37,25 +65,21 @@ test('SEC-26: tracked text files contain no unexpected secrets or public VITE va
     if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) continue;
     let text;
     try { text = fs.readFileSync(absolute, 'utf8'); } catch { continue; }
-    text.split(/\r?\n/).forEach((line, index) => {
-      for (const [type, regex] of patterns) {
-        if (regex.test(line)) {
-          const id = `${relative}:${index + 1}:${type}`;
-          if (!allowedHits.has(id)) failures.push(`${type} ${relative}:${index + 1}`);
-        }
-      }
-      if (/\bVITE_[A-Z0-9_]+\b/.test(line) && (
-        /\bVITE_[A-Z0-9_]+\s*=/.test(line) ||
-        /import\.meta\.env/.test(line)
-      )) {
-        for (const match of line.matchAll(/\b(VITE_[A-Z0-9_]+)\b/g)) {
-          if (!allowedVite.has(match[1])) {
-            failures.push(`UNEXPECTED_VITE_VARIABLE ${relative}:${index + 1}`);
-          }
-        }
-      }
-    });
+    failures.push(...scanText(text, relative, allowedHits, allowedVite));
   }
 
   expect(failures).toEqual([]);
+});
+
+test('SEC-26: unallowlisted fixture failures print path:line:type without values', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poshaak-secret-scan-'));
+  const copy = path.join(tempDir, 'fixture.txt');
+  try {
+    fs.writeFileSync(copy, `first line\n${'-----BEGIN ' + 'PRIVATE KEY-----'}\n`);
+    const hits = scanText(fs.readFileSync(copy, 'utf8'), 'fixture.txt', new Set(), new Set());
+    expect(hits).toEqual(['fixture.txt:2:PRIVATE_KEY_MARKER']);
+    expect(JSON.stringify(hits)).not.toContain('BEGIN PRIVATE');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });

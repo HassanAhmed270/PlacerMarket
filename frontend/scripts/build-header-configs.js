@@ -21,7 +21,17 @@ const nginx = headers
   .map(({ key, value }) => `add_header ${key} "${value.replace(/"/g, '\\"')}" always;`)
   .join('\n');
 
-if (process.argv.includes('--check')) {
+const requiresRealOrigins = process.argv.includes('--require-real-origins');
+const unresolved = requiresRealOrigins
+  ? Object.entries(policy)
+    .filter(([, value]) => typeof value === 'string')
+    .flatMap(([name, value]) => /__[A-Za-z0-9_]+__/.test(value) ? [name] : [])
+  : [];
+
+if (unresolved.length) {
+  console.error(`Unresolved header origin placeholders: ${unresolved.join(', ')}`);
+  process.exitCode = 1;
+} else if (process.argv.includes('--check')) {
   const vercelPath = path.join(frontendDir, 'vercel.json');
   const nginxPath = path.join(frontendDir, 'deploy', 'nginx-security-headers.conf.example');
   if (fs.readFileSync(vercelPath, 'utf8').trim() !== `${JSON.stringify(vercel, null, 2)}\n`.trim()) process.exitCode = 1;
