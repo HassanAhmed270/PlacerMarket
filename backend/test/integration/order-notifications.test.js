@@ -521,10 +521,10 @@ test('FR-51: a notification listener failure does not fail the cancellation acti
     await global.drainIntegrationListeners(5000);
     const { rows } = await db.query('SELECT status FROM orders WHERE id = $1', [scenario.orderId]);
     expect(rows[0].status).toBe('cancelled');
-    expect(errorLog).toHaveBeenCalledWith(
-      'Notification job enqueue failed',
-      { eventName: events.ORDER_CANCELLED, code: 'unknown' }
-    );
+    expect(errorLog).toHaveBeenCalledTimes(1);
+    expect(errorLog.mock.calls[0][0]).toContain('Notification job enqueue failed');
+    expect(errorLog.mock.calls[0][0]).toContain('order.cancelled');
+    expect(errorLog.mock.calls[0][0]).toContain('unknown');
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain('notification queue unavailable');
   } finally {
     enqueueSpy.mockRestore();
